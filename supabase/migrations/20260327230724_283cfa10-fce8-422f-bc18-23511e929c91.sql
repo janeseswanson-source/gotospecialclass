@@ -1,0 +1,1 @@
+ALTER TABLE public.schools ADD COLUMN IF NOT EXISTS admin_rotation jsonb DEFAULT NULL;

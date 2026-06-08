@@ -1,0 +1,1 @@
+ALTER TABLE public.schedule_blocks ADD COLUMN IF NOT EXISTS week_label text;

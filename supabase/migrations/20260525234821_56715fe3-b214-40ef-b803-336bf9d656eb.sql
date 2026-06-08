@@ -1,0 +1,2 @@
+ALTER TABLE public.schools ADD COLUMN IF NOT EXISTS is_demo boolean NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS idx_schools_workspace_is_demo ON public.schools(workspace_id, is_demo) WHERE is_demo = true;

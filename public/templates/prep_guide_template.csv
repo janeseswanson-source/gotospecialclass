@@ -1,0 +1,6 @@
+teacher_name,grade,room_number,phone,email,team,specialist_name,subject,location,days_at_school,uses_cart,two_schools,second_school_name,second_location,school_name,start_time,end_time,class_duration,planning_minutes,lunch_minutes,passing_time,setup_time,grades_served,am_recess_start,am_recess_end,lunch_start,lunch_end,pm_recess_start,pm_recess_end,recess_grade_band
+Jane Doe,1,101,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+John Smith,2,102,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+,,,,,,Sarah Artist,Art,Art Room,"Mon,Tue,Wed,Thu,Fri",,,,,,,,,,,,,,,,,,,,,
+,,,,,,Mike Coach,PE,Gym,"Mon,Tue,Wed,Thu,Fri",,,,,,,,,,,,,,,,,,,,,
+,,,,,,,,,,,,,,,,08:00,15:00,45,45,30,5,15,"K,1,2,3,4,5",10:00,10:15,12:00,12:30,14:00,14:15,all

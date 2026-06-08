@@ -1,0 +1,1 @@
+ALTER TABLE public.parsed_calendar_events ALTER COLUMN upload_id DROP NOT NULL;

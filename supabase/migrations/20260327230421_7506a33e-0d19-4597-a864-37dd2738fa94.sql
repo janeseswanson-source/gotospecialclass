@@ -1,0 +1,1 @@
+ALTER TABLE public.schools ADD COLUMN IF NOT EXISTS conflict_strategies text[] DEFAULT '{}'::text[];

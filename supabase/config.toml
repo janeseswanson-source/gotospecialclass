@@ -1,0 +1,19 @@
+project_id = "xfvablheccsoskokihkf"
+
+[functions.generate-schedule]
+verify_jwt = false
+
+[functions.parse-calendar]
+verify_jwt = false
+
+[functions.redeem-license]
+verify_jwt = false
+
+[functions.process-onboarding-template]
+verify_jwt = false
+
+[functions.send-notification]
+verify_jwt = false
+
+[functions.delete-user]
+verify_jwt = false

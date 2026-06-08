@@ -1,0 +1,1 @@
+ALTER TABLE public.schedule_generations ADD COLUMN IF NOT EXISTS warnings jsonb DEFAULT '[]'::jsonb;

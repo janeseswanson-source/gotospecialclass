@@ -1,0 +1,206 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Specialist Ops! brand palette — all HSL */
+    --background: 222 33% 97%;
+    --foreground: 215 50% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 215 50% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 50% 10%;
+
+    --primary: 214 54% 40%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 220 30% 96%;
+    --secondary-foreground: 215 50% 10%;
+
+    --muted: 220 25% 94%;
+    --muted-foreground: 218 18% 44%;
+
+    --accent: 28 91% 54%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 152 70% 42%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 43 87% 62%;
+    --warning-foreground: 215 50% 10%;
+
+    --purple: 262 100% 71%;
+    --purple-foreground: 0 0% 100%;
+
+    --border: 218 33% 92%;
+    --input: 218 33% 92%;
+    --ring: 214 54% 40%;
+
+    --radius: 0.625rem;
+
+    --sidebar-background: 214 58% 33%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 214 58% 33%;
+    --sidebar-accent: 214 58% 28%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 214 50% 38%;
+    --sidebar-ring: 28 91% 54%;
+  }
+
+  .dark {
+    --background: 215 50% 7%;
+    --foreground: 220 20% 90%;
+
+    --card: 215 45% 10%;
+    --card-foreground: 220 20% 90%;
+
+    --popover: 215 45% 10%;
+    --popover-foreground: 220 20% 90%;
+
+    --primary: 214 54% 50%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 217 32% 17%;
+    --secondary-foreground: 220 20% 90%;
+
+    --muted: 217 32% 17%;
+    --muted-foreground: 218 18% 60%;
+
+    --accent: 28 91% 54%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 62% 30%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 217 32% 17%;
+    --input: 217 32% 17%;
+    --ring: 214 54% 50%;
+
+    --sidebar-background: 215 50% 7%;
+    --sidebar-foreground: 220 20% 90%;
+    --sidebar-primary: 214 54% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 217 32% 15%;
+    --sidebar-accent-foreground: 220 20% 90%;
+    --sidebar-border: 217 32% 17%;
+    --sidebar-ring: 28 91% 54%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.4s ease-out forwards;
+  }
+  .animate-slide-up {
+    animation: slideUp 0.4s ease-out forwards;
+  }
+  .animate-hover-lift {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .animate-hover-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px -8px hsl(214 54% 40% / 0.15);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Print styles */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+    font-size: 10pt !important;
+  }
+
+  /* Hide non-printable elements */
+  nav, aside, header, footer,
+  .no-print,
+  [data-sidebar],
+  [role="navigation"] {
+    display: none !important;
+  }
+  /* Hide standalone action buttons, but keep schedule cell buttons (inside table) */
+  nav button, aside button, header button, footer button,
+  .no-print button, [data-sidebar] button {
+    display: none !important;
+  }
+
+  /* Make main content full-width */
+  main, [role="main"], .print-full-width {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Schedule grid print styles */
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    font-size: 9pt !important;
+  }
+
+  th, td {
+    border: 1px solid #ccc !important;
+    padding: 4px 6px !important;
+  }
+
+  th {
+    background: #2c4a7c !important;
+    color: white !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Preserve block cell colors */
+  .print\:text-muted-foreground\/60 { color: hsl(218 18% 44% / 0.6) !important; }
+  .print\:text-muted-foreground\/50 { color: hsl(218 18% 44% / 0.5) !important; }
+
+  /* Force color printing for schedule blocks */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Avoid page breaks inside schedule rows */
+  tr {
+    page-break-inside: avoid !important;
+  }
+
+  /* Remove shadows and hover effects */
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+
+  a {
+    text-decoration: none !important;
+    color: inherit !important;
+  }
+}

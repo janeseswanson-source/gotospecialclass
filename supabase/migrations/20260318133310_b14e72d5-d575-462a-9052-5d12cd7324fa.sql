@@ -1,0 +1,1 @@
+ALTER TYPE public.conflict_strategy ADD VALUE IF NOT EXISTS 'extra_rotation';

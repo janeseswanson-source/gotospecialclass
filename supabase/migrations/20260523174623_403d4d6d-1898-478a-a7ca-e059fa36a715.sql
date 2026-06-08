@@ -1,0 +1,1 @@
+ALTER TABLE public.classroom_teachers ADD COLUMN IF NOT EXISTS combo_partner_id uuid;

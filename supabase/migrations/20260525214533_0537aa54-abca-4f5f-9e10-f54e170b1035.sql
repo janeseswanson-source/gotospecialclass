@@ -1,0 +1,1 @@
+ALTER TABLE public.specialists ADD COLUMN IF NOT EXISTS additional_minutes jsonb NOT NULL DEFAULT '[]'::jsonb;

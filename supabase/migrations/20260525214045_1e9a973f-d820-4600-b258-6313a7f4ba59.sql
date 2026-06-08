@@ -1,0 +1,1 @@
+ALTER TABLE public.specialists ADD COLUMN IF NOT EXISTS class_duration int;

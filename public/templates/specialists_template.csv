@@ -1,0 +1,3 @@
+name,subject,working_days,planning_minutes,lunch_minutes,location,uses_cart,two_schools,second_school_name,second_location,is_part_time,part_time_planning,part_time_lunch
+Sarah,Art,"Mon,Tue,Wed,Thu,Fri",45,30,Room 204,no,no,,,no,,
+Mike,PE,"Mon,Wed,Fri",45,30,,no,no,,,no,,

@@ -1,0 +1,1 @@
+ALTER TABLE public.recess_lunch_config ADD CONSTRAINT recess_lunch_config_school_grade_unique UNIQUE (school_id, grade_band);

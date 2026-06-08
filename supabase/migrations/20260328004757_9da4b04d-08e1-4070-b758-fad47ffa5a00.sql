@@ -1,0 +1,1 @@
+ALTER TABLE public.schools ADD COLUMN IF NOT EXISTS big_group_config jsonb DEFAULT '[]'::jsonb;
