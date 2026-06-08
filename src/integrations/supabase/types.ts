@@ -281,6 +281,8 @@ export type Database = {
           school_id: string
           sessions: Json
           start_time: string | null
+          suggested_end_time: string | null
+          suggested_start_time: string | null
         }
         Insert: {
           created_at?: string
@@ -294,6 +296,8 @@ export type Database = {
           school_id: string
           sessions?: Json
           start_time?: string | null
+          suggested_end_time?: string | null
+          suggested_start_time?: string | null
         }
         Update: {
           created_at?: string
@@ -307,6 +311,8 @@ export type Database = {
           school_id?: string
           sessions?: Json
           start_time?: string | null
+          suggested_end_time?: string | null
+          suggested_start_time?: string | null
         }
         Relationships: [
           {
@@ -861,7 +867,6 @@ export type Database = {
           id: string
           is_override: boolean | null
           notes: string | null
-          placement_reason: string | null
           room: string | null
           specialist_id: string | null
           start_time: string
@@ -878,7 +883,6 @@ export type Database = {
           id?: string
           is_override?: boolean | null
           notes?: string | null
-          placement_reason?: string | null
           room?: string | null
           specialist_id?: string | null
           start_time: string
@@ -895,7 +899,6 @@ export type Database = {
           id?: string
           is_override?: boolean | null
           notes?: string | null
-          placement_reason?: string | null
           room?: string | null
           specialist_id?: string | null
           start_time?: string
@@ -933,20 +936,12 @@ export type Database = {
           chosen_strategy: string | null
           created_at: string
           fallback_reason: string | null
-          feedback_signal: string | null
           generated_at: string | null
           id: string
-          manual_edit_count: number | null
           monte_carlo_attempts: number | null
           quote: string | null
-          sa_improvement: number | null
-          sa_iterations: number | null
           school_id: string
-          score_breakdown: Json | null
           status: string | null
-          verify_issues_found: number | null
-          verify_quality_score: number | null
-          verify_summary: string | null
           version: number | null
           warnings: Json | null
           winning_score: number | null
@@ -956,20 +951,12 @@ export type Database = {
           chosen_strategy?: string | null
           created_at?: string
           fallback_reason?: string | null
-          feedback_signal?: string | null
           generated_at?: string | null
           id?: string
-          manual_edit_count?: number | null
           monte_carlo_attempts?: number | null
           quote?: string | null
-          sa_improvement?: number | null
-          sa_iterations?: number | null
           school_id: string
-          score_breakdown?: Json | null
           status?: string | null
-          verify_issues_found?: number | null
-          verify_quality_score?: number | null
-          verify_summary?: string | null
           version?: number | null
           warnings?: Json | null
           winning_score?: number | null
@@ -979,20 +966,12 @@ export type Database = {
           chosen_strategy?: string | null
           created_at?: string
           fallback_reason?: string | null
-          feedback_signal?: string | null
           generated_at?: string | null
           id?: string
-          manual_edit_count?: number | null
           monte_carlo_attempts?: number | null
           quote?: string | null
-          sa_improvement?: number | null
-          sa_iterations?: number | null
           school_id?: string
-          score_breakdown?: Json | null
           status?: string | null
-          verify_issues_found?: number | null
-          verify_quality_score?: number | null
-          verify_summary?: string | null
           version?: number | null
           warnings?: Json | null
           winning_score?: number | null
@@ -1007,44 +986,11 @@ export type Database = {
           },
         ]
       }
-      scoring_weight_profiles: {
-        Row: {
-          created_at: string
-          id: string
-          last_updated: string | null
-          sample_count: number
-          school_id: string
-          weights: Json
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          last_updated?: string | null
-          sample_count?: number
-          school_id: string
-          weights?: Json
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          last_updated?: string | null
-          sample_count?: number
-          school_id?: string
-          weights?: Json
-        }
-        Relationships: [
-          {
-            foreignKeyName: "scoring_weight_profiles_school_id_fkey"
-            columns: ["school_id"]
-            isOneToOne: true
-            referencedRelation: "schools"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       schools: {
         Row: {
           admin_rotation: Json | null
+          am_recess_first_bell: string | null
+          am_recess_minutes: number | null
           big_group_config: Json | null
           class_duration: number | null
           conflict_grades: string[] | null
@@ -1057,6 +1003,7 @@ export type Database = {
           default_am_pm_preference: string | null
           default_day_preference: string | null
           discovered_calendar_url: string | null
+          district_website: string | null
           early_release_day: string | null
           early_release_end_time: string | null
           end_time: string | null
@@ -1064,13 +1011,19 @@ export type Database = {
           grades_served: string[] | null
           id: string
           is_demo: boolean
+          lunch_first_bell: string | null
           lunch_minutes: number | null
+          lunch_minutes_default: number | null
           name: string
           notes: string | null
           passing_time: number | null
           planning_minutes: number | null
           planning_time_when: string
+          plt_label: string
+          pm_recess_first_bell: string | null
+          pm_recess_minutes: number | null
           recess_grade_bands: Json | null
+          rotation_wheel_grades: string[]
           rotations_start_time: string | null
           schedule_type: Database["public"]["Enums"]["schedule_type"] | null
           school_year: string | null
@@ -1084,6 +1037,8 @@ export type Database = {
         }
         Insert: {
           admin_rotation?: Json | null
+          am_recess_first_bell?: string | null
+          am_recess_minutes?: number | null
           big_group_config?: Json | null
           class_duration?: number | null
           conflict_grades?: string[] | null
@@ -1096,6 +1051,7 @@ export type Database = {
           default_am_pm_preference?: string | null
           default_day_preference?: string | null
           discovered_calendar_url?: string | null
+          district_website?: string | null
           early_release_day?: string | null
           early_release_end_time?: string | null
           end_time?: string | null
@@ -1103,13 +1059,19 @@ export type Database = {
           grades_served?: string[] | null
           id?: string
           is_demo?: boolean
+          lunch_first_bell?: string | null
           lunch_minutes?: number | null
+          lunch_minutes_default?: number | null
           name: string
           notes?: string | null
           passing_time?: number | null
           planning_minutes?: number | null
           planning_time_when?: string
+          plt_label?: string
+          pm_recess_first_bell?: string | null
+          pm_recess_minutes?: number | null
           recess_grade_bands?: Json | null
+          rotation_wheel_grades?: string[]
           rotations_start_time?: string | null
           schedule_type?: Database["public"]["Enums"]["schedule_type"] | null
           school_year?: string | null
@@ -1123,6 +1085,8 @@ export type Database = {
         }
         Update: {
           admin_rotation?: Json | null
+          am_recess_first_bell?: string | null
+          am_recess_minutes?: number | null
           big_group_config?: Json | null
           class_duration?: number | null
           conflict_grades?: string[] | null
@@ -1135,6 +1099,7 @@ export type Database = {
           default_am_pm_preference?: string | null
           default_day_preference?: string | null
           discovered_calendar_url?: string | null
+          district_website?: string | null
           early_release_day?: string | null
           early_release_end_time?: string | null
           end_time?: string | null
@@ -1142,13 +1107,19 @@ export type Database = {
           grades_served?: string[] | null
           id?: string
           is_demo?: boolean
+          lunch_first_bell?: string | null
           lunch_minutes?: number | null
+          lunch_minutes_default?: number | null
           name?: string
           notes?: string | null
           passing_time?: number | null
           planning_minutes?: number | null
           planning_time_when?: string
+          plt_label?: string
+          pm_recess_first_bell?: string | null
+          pm_recess_minutes?: number | null
           recess_grade_bands?: Json | null
+          rotation_wheel_grades?: string[]
           rotations_start_time?: string | null
           schedule_type?: Database["public"]["Enums"]["schedule_type"] | null
           school_year?: string | null
@@ -1173,8 +1144,10 @@ export type Database = {
       special_events: {
         Row: {
           created_at: string
+          date_mode: string
           end_time: string | null
           event_date: string | null
+          event_month: string | null
           event_type: string | null
           id: string
           name: string
@@ -1184,8 +1157,10 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          date_mode?: string
           end_time?: string | null
           event_date?: string | null
+          event_month?: string | null
           event_type?: string | null
           id?: string
           name: string
@@ -1195,8 +1170,10 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          date_mode?: string
           end_time?: string | null
           event_date?: string | null
+          event_month?: string | null
           event_type?: string | null
           id?: string
           name?: string
