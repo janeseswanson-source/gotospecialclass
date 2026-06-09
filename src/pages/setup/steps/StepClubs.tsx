@@ -3,10 +3,11 @@ import { SaveStatusIndicator, type SaveStatus } from '@/components/setup/SaveSta
 import { SETUP_STEPS } from '../stepIndex';
 import { useSetup } from '@/contexts/SetupContext';
 import { Button } from '@/components/ui/button';
-import { Plus, Trash2, Loader2, Check, Pencil } from 'lucide-react';
+import { Plus, Trash2, Loader2, Check, Pencil, Sparkles } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { formatTime } from '@/lib/utils';
 import { AddClubModal, ClubDraft, ClubSession, DayKey } from './clubs/AddClubModal';
+import NlImportDialog from '@/components/setup/NlImportDialog';
 
 interface Club {
   id: string;
