@@ -149,6 +149,10 @@ export default function PrepPage() {
       }
       setTeachersByGrade(tByG);
 
+      // ── Contract / scheduler-data feasibility (pre-flight) ──
+      setContractNotes(analyzeContractFeasibility(school, specialistsRes.data ?? [], teachersRes.data ?? []));
+
+
       // ── Coverage forecast: demand vs supply per grade ──
       const PRIORITY = ["6","5","4","3","2","1","K","TK","PreK","Pre-K"];
       const orderedGrades = [...grades].sort((a, b) => {
