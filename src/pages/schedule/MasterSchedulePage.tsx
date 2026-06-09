@@ -179,6 +179,14 @@ export default function MasterSchedulePage() {
     setSpecialists(specRes.data ?? []);
     setTeachers(teachRes.data ?? []);
     setRecessConfig(recessRes.data ?? []);
+    const rawBands = (schoolRes.data as any)?.recess_grade_bands;
+    if (Array.isArray(rawBands)) {
+      const map: Record<string, string> = {};
+      rawBands.forEach((b: any) => { if (b?.key && b?.label) map[b.key] = b.label; });
+      setRecessBandLabels(map);
+    } else {
+      setRecessBandLabels({});
+    }
     setClubs(clubsRes.data ?? []);
     setSchoolYear(schoolRes.data?.school_year ?? undefined);
     setGenerations(genRes.data ?? []);
