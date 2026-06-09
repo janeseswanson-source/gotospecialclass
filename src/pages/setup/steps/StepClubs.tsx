@@ -281,6 +281,35 @@ const StepClubs = () => {
           onSave={persistClub}
         />
       )}
+
+      <NlImportDialog
+        open={nlOpen}
+        onOpenChange={setNlOpen}
+        kind="clubs"
+        onImport={async (rows) => {
+          let ok = 0, skipped = 0;
+          for (const r of rows) {
+            try {
+              const leaderMatch = r.leader
+                ? specialists.find(s => s.name.trim().toLowerCase() === String(r.leader).trim().toLowerCase())
+                : null;
+              const session: ClubSession = {
+                day: (['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(r.day_of_week) ? r.day_of_week : '') as any,
+                time: r.start_time || '',
+              };
+              await persistClub({
+                id: crypto.randomUUID(),
+                name: r.name.trim(),
+                grades: (r.grades as string[]).filter((g: string) => availableGrades.includes(g)),
+                leadSpecialistId: leaderMatch?.id ?? null,
+                sessions: [session],
+              });
+              ok++;
+            } catch (e) { console.error('[StepClubs] NL import row failed', e); skipped++; }
+          }
+          return { ok, skipped };
+        }}
+      />
     </div>
   );
 };
