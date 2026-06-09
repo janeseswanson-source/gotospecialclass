@@ -12,7 +12,8 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Loader2, ChevronDown, Check } from 'lucide-react';
+import { Loader2, ChevronDown, Check, Sparkles, Users2 } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 
 const allGrades = ['K', '1', '2', '3', '4', '5', '6'];
@@ -28,6 +29,11 @@ const StepSchoolInfo = () => {
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const isLoaded = useRef(false);
   const workspaceIdRef = useRef<string | null>(null);
+
+  // New params persisted directly (not yet in SetupContext to avoid a wide types churn).
+  const [keepGradesTogether, setKeepGradesTogether] = useState<boolean>(true);
+  const [suggestExtraPlt, setSuggestExtraPlt] = useState<boolean>(false);
+  const [extraPltTargetMinutes, setExtraPltTargetMinutes] = useState<number | ''>('');
 
   // Load existing school data from DB on mount
   useEffect(() => {
@@ -73,6 +79,21 @@ const StepSchoolInfo = () => {
             defaultAmPmPreference: (existingSchool as any).default_am_pm_preference || '',
             defaultDayPreference: (existingSchool as any).default_day_preference || '',
           });
+          setKeepGradesTogether((existingSchool as any).keep_grades_together ?? true);
+          setSuggestExtraPlt((existingSchool as any).suggest_extra_plt ?? false);
+          setExtraPltTargetMinutes((existingSchool as any).extra_plt_target_minutes ?? '');
+        }
+      } else {
+        // Already have a school id — load just the new params (cast: columns added in a pending migration)
+        const { data: extras } = await (supabase as any)
+          .from('schools')
+          .select('keep_grades_together, suggest_extra_plt, extra_plt_target_minutes')
+          .eq('id', schoolId)
+          .maybeSingle();
+        if (extras) {
+          setKeepGradesTogether(extras.keep_grades_together ?? true);
+          setSuggestExtraPlt(extras.suggest_extra_plt ?? false);
+          setExtraPltTargetMinutes(extras.extra_plt_target_minutes ?? '');
         }
       }
       isLoaded.current = true;
@@ -105,6 +126,9 @@ const StepSchoolInfo = () => {
         early_release_end_time: data.earlyReleaseEndTime || null,
         default_am_pm_preference: null,
         default_day_preference: null,
+        keep_grades_together: keepGradesTogether,
+        suggest_extra_plt: suggestExtraPlt,
+        extra_plt_target_minutes: extraPltTargetMinutes === '' ? null : Number(extraPltTargetMinutes),
         workspace_id: workspaceIdRef.current,
       };
 
@@ -123,7 +147,7 @@ const StepSchoolInfo = () => {
     } catch {
       setSaveStatus('idle');
     }
-  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, schoolId]);
+  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, schoolId]);
 
   useFlushOnUnmount(saveTimer, () => { if (isLoaded.current) autoSave(); });
 
@@ -339,6 +363,46 @@ const StepSchoolInfo = () => {
           </CollapsibleContent>
         </Collapsible>
       )}
+
+      <div className="mt-6 rounded-lg border border-border bg-muted/20 p-4 space-y-4">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-primary" />
+          <h3 className="text-sm font-semibold text-foreground">Scheduling preferences</h3>
+        </div>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Users2 className="h-4 w-4 text-muted-foreground" />
+              <FieldLabel className="text-sm font-medium" tooltip="The scheduler will try to keep all sections of the same grade in adjacent or overlapping blocks. Disable for more flexibility.">
+                Keep grade levels together
+              </FieldLabel>
+            </div>
+            <p className="text-xs text-muted-foreground">All sections of a grade get specials at the same or adjacent times.</p>
+          </div>
+          <Switch checked={keepGradesTogether} onCheckedChange={setKeepGradesTogether} />
+        </div>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <FieldLabel className="text-sm font-medium" tooltip="When feasible, the AI will suggest an additional Planning/Learning Time block so teachers get more prep.">
+              Suggest extra PLT when feasible
+            </FieldLabel>
+            <p className="text-xs text-muted-foreground">AI looks for a common free slot and proposes one extra prep block per week.</p>
+          </div>
+          <Switch checked={suggestExtraPlt} onCheckedChange={setSuggestExtraPlt} />
+        </div>
+        {suggestExtraPlt && (
+          <div className="space-y-2">
+            <FieldLabel className="text-xs" tooltip="Target additional planning minutes per week to aim for">Target extra minutes / week</FieldLabel>
+            <Input
+              type="number"
+              className="h-9 max-w-[160px]"
+              placeholder="e.g. 30"
+              value={extraPltTargetMinutes}
+              onChange={(e) => setExtraPltTargetMinutes(e.target.value === '' ? '' : Number(e.target.value))}
+            />
+          </div>
+        )}
+      </div>
 
       <div className="mt-4 space-y-2">
         <FieldLabel tooltip="Any special scheduling constraints or notes for the algorithm">Notes (optional)</FieldLabel>

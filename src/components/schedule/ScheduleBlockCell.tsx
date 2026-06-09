@@ -111,8 +111,12 @@ export default function ScheduleBlockCell({
         </button>
       )}
       <p className="font-semibold truncate">{subject ?? "—"}</p>
-      {grade && <p className="truncate font-medium text-[10px] print:text-muted-foreground/60">Gr. {grade}</p>}
-      {teacherName && <p className="truncate text-[10px] text-muted-foreground/80">{teacherName}</p>}
+      {teacherName && (
+        <p className="truncate text-[11px] font-medium text-foreground/85">
+          {teacherName}{grade ? ` · Gr. ${grade}` : ''}
+        </p>
+      )}
+      {!teacherName && grade && <p className="truncate font-medium text-[10px] print:text-muted-foreground/60">Gr. {grade}</p>}
       {specialistName && <p className="truncate text-[10px] text-muted-foreground">{specialistName}</p>}
       <p
         className="mt-0.5 text-[10px] opacity-0 group-hover:opacity-60 transition-opacity"

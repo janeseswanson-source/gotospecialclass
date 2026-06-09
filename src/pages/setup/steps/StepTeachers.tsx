@@ -729,7 +729,7 @@ const StepTeachers = () => {
 
       <div className="flex justify-between pt-2">
         <Button variant="outline" onClick={() => setStep(SETUP_STEPS.SPECIALISTS)}>Back</Button>
-        <Button onClick={() => setStep(SETUP_STEPS.ADMIN_ROTATION)}>Continue</Button>
+        <Button onClick={() => setStep(SETUP_STEPS.CONTRACTUAL_MINUTES)}>Continue</Button>
       </div>
     </div>
   );
