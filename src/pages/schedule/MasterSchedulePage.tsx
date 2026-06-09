@@ -20,7 +20,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import SpecialistExportModal from "./exports/SpecialistExportModal";
 import AdminExportModal from "./exports/AdminExportModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { buildTimeSlots, buildRecessBands, computeConflictIds, computeAutoFit } from "@/lib/scheduleGrid";
+import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds, computeAutoFit } from "@/lib/scheduleGrid";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -81,6 +81,8 @@ export default function MasterSchedulePage() {
   const [adminExportOpen, setAdminExportOpen] = useState(false);
   const [replanSuggestion, setReplanSuggestion] = useState<{ specialistId: string; specialistName: string } | null>(null);
   const [replanLoading, setReplanLoading] = useState(false);
+  const [density, setDensity] = useState<"compact" | "fine">("compact");
+
 
   // Locked blocks
   const [lockedIds, setLockedIds] = useState<Set<string>>(new Set());
@@ -255,9 +257,12 @@ export default function MasterSchedulePage() {
   const recessBands = useMemo(() => buildRecessBands(recessConfig), [recessConfig]);
 
   const timeSlots = useMemo(
-    () => buildTimeSlots(schoolStartTime, schoolEndTime, blocks),
-    [schoolStartTime, schoolEndTime, blocks],
+    () => density === "compact"
+      ? buildCompactTimeSlots(schoolStartTime, schoolEndTime, blocks, recessBands)
+      : buildTimeSlots(schoolStartTime, schoolEndTime, blocks),
+    [density, schoolStartTime, schoolEndTime, blocks, recessBands],
   );
+
 
   const conflictIds = useMemo(() => computeConflictIds(blocks), [blocks]);
 
