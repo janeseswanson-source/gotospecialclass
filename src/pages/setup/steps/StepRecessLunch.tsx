@@ -144,22 +144,28 @@ const StepRecessLunch = () => {
 
   // ------- Persistence -------
   const buildPayload = useCallback(() => {
-    // Unique bands across all rows
+    // Unique bands across all rows, keyed by bandKey (defaulting empty -> 'all').
     const bandIndex = new Map<string, StoredBand>();
     PERIOD_ORDER.forEach(p => cards[p].forEach(r => {
-      if (!bandIndex.has(r.bandKey)) {
-        bandIndex.set(r.bandKey, { key: r.bandKey, label: r.label, grades: r.grades });
+      const key = (r.bandKey || 'all').trim() || 'all';
+      if (!bandIndex.has(key)) {
+        bandIndex.set(key, { key, label: r.label, grades: r.grades });
+      } else {
+        // Merge grades so the stored band reflects every row using the same key.
+        const existing = bandIndex.get(key)!;
+        const merged = Array.from(new Set([...existing.grades, ...r.grades]));
+        bandIndex.set(key, { ...existing, grades: merged });
       }
     }));
 
     // Build one recess_lunch_config row per bandKey
     const configRows: any[] = [];
-    bandIndex.forEach((_, bandKey) => {
+    Array.from(bandIndex.keys()).forEach((bandKey) => {
       const row: any = { grade_band: bandKey };
       let hasAny = false;
       PERIOD_ORDER.forEach(p => {
         const cols = periodColumns(p);
-        const r = cards[p].find(x => x.bandKey === bandKey);
+        const r = cards[p].find(x => (x.bandKey || 'all') === bandKey);
         if (r) {
           row[cols.start] = r.start || null;
           row[cols.end] = r.end || null;
@@ -187,12 +193,31 @@ const StepRecessLunch = () => {
     setSaveStatus('saving');
     try {
       const { configRows, storedBands } = buildPayload();
+      const keepBands = configRows.map(r => r.grade_band as string);
 
-      // Selective delete + insert (keeps RLS-safe, simple).
-      await supabase.from('recess_lunch_config').delete().eq('school_id', schoolId);
+      // Selective delete: only rows whose grade_band is no longer present.
+      // Avoids the delete+insert race that surfaced as the toast error.
+      if (keepBands.length > 0) {
+        const inList = `(${keepBands.map(k => `"${k.replace(/"/g, '\\"')}"`).join(',')})`;
+        const { error: delErr } = await supabase
+          .from('recess_lunch_config')
+          .delete()
+          .eq('school_id', schoolId)
+          .not('grade_band', 'in', inList);
+        if (delErr) throw delErr;
+      } else {
+        const { error: delErr } = await supabase
+          .from('recess_lunch_config')
+          .delete()
+          .eq('school_id', schoolId);
+        if (delErr) throw delErr;
+      }
+
       if (configRows.length > 0) {
         const rows = configRows.map(r => ({ ...r, school_id: schoolId }));
-        const { error } = await supabase.from('recess_lunch_config').insert(rows);
+        const { error } = await supabase
+          .from('recess_lunch_config')
+          .upsert(rows, { onConflict: 'school_id,grade_band' });
         if (error) throw error;
       }
 
@@ -221,9 +246,12 @@ const StepRecessLunch = () => {
 
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 1500);
-    } catch (err) {
-      console.error('[StepRecessLunch] save failed', err);
-      toast.error('Failed to save recess configuration');
+    } catch (err: any) {
+      console.error('[StepRecessLunch] save failed', {
+        code: err?.code, details: err?.details, hint: err?.hint, message: err?.message, raw: err,
+      });
+      const msg = err?.message || err?.details || 'unknown error';
+      toast.error(`Failed to save recess configuration: ${msg}`);
       setSaveStatus('idle');
     }
   }, [schoolId, buildPayload, validation.hasError, data.scheduleType, updateData]);
