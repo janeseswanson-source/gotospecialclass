@@ -3,10 +3,11 @@ import { SaveStatusIndicator, type SaveStatus } from '@/components/setup/SaveSta
 import { SETUP_STEPS } from '../stepIndex';
 import { useSetup } from '@/contexts/SetupContext';
 import { Button } from '@/components/ui/button';
-import { Plus, Trash2, Loader2, Check, Pencil } from 'lucide-react';
+import { Plus, Trash2, Loader2, Check, Pencil, Sparkles } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { formatTime } from '@/lib/utils';
 import { AddClubModal, ClubDraft, ClubSession, DayKey } from './clubs/AddClubModal';
+import NlImportDialog from '@/components/setup/NlImportDialog';
 
 interface Club {
   id: string;
@@ -48,6 +49,7 @@ const StepClubs = () => {
   const [specialists, setSpecialists] = useState<SpecialistOpt[]>([]);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [modalOpen, setModalOpen] = useState(false);
+  const [nlOpen, setNlOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [initialDraft, setInitialDraft] = useState<ClubDraft | null>(null);
   const isLoaded = useRef(false);
@@ -254,9 +256,14 @@ const StepClubs = () => {
         })}
       </div>
 
-      <Button size="sm" variant="outline" onClick={() => openAdd()}>
-        <Plus className="h-3 w-3 mr-1" /> Add Lunch Club
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" onClick={() => openAdd()}>
+          <Plus className="h-3 w-3 mr-1" /> Add Lunch Club
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => setNlOpen(true)}>
+          <Sparkles className="h-3 w-3 mr-1" /> Describe in plain English
+        </Button>
+      </div>
 
       <div className="flex justify-between pt-2">
         <Button variant="outline" onClick={() => setStep(SETUP_STEPS.ADMIN_ROTATION)}>Back</Button>
@@ -274,6 +281,35 @@ const StepClubs = () => {
           onSave={persistClub}
         />
       )}
+
+      <NlImportDialog
+        open={nlOpen}
+        onOpenChange={setNlOpen}
+        kind="clubs"
+        onImport={async (rows) => {
+          let ok = 0, skipped = 0;
+          for (const r of rows) {
+            try {
+              const leaderMatch = r.leader
+                ? specialists.find(s => s.name.trim().toLowerCase() === String(r.leader).trim().toLowerCase())
+                : null;
+              const session: ClubSession = {
+                day: (['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].includes(r.day_of_week) ? r.day_of_week : '') as any,
+                time: r.start_time || '',
+              };
+              await persistClub({
+                id: crypto.randomUUID(),
+                name: r.name.trim(),
+                grades: (r.grades as string[]).filter((g: string) => availableGrades.includes(g)),
+                leadSpecialistId: leaderMatch?.id ?? null,
+                sessions: [session],
+              });
+              ok++;
+            } catch (e) { console.error('[StepClubs] NL import row failed', e); skipped++; }
+          }
+          return { ok, skipped };
+        }}
+      />
     </div>
   );
 };

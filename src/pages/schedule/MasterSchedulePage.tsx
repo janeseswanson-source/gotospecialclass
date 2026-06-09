@@ -62,6 +62,7 @@ export default function MasterSchedulePage() {
   const [specialists, setSpecialists] = useState<{ id: string; name: string; subject: string }[]>([]);
   const [teachers, setTeachers] = useState<{ id: string; name: string; grade: string; combo_partner_id?: string | null }[]>([]);
   const [recessConfig, setRecessConfig] = useState<any[]>([]);
+  const [recessBandLabels, setRecessBandLabels] = useState<Record<string, string>>({});
   const [clubs, setClubs] = useState<any[]>([]);
   const [schoolYear, setSchoolYear] = useState<string | undefined>(undefined);
   const [schoolStartTime, setSchoolStartTime] = useState<string | null>(null);
@@ -169,7 +170,7 @@ export default function MasterSchedulePage() {
       supabase.from("classroom_teachers").select("id, name, grade, combo_partner_id").eq("school_id", selectedSchoolId!),
       supabase.from("recess_lunch_config").select("*").eq("school_id", selectedSchoolId!),
       supabase.from("clubs").select("*").eq("school_id", selectedSchoolId!),
-      supabase.from("schools").select("school_year, start_time, end_time").eq("id", selectedSchoolId!).maybeSingle(),
+      supabase.from("schools").select("school_year, start_time, end_time, recess_grade_bands").eq("id", selectedSchoolId!).maybeSingle(),
     ]);
 
     setSchoolStartTime(schoolRes.data?.start_time ?? null);
@@ -178,6 +179,14 @@ export default function MasterSchedulePage() {
     setSpecialists(specRes.data ?? []);
     setTeachers(teachRes.data ?? []);
     setRecessConfig(recessRes.data ?? []);
+    const rawBands = (schoolRes.data as any)?.recess_grade_bands;
+    if (Array.isArray(rawBands)) {
+      const map: Record<string, string> = {};
+      rawBands.forEach((b: any) => { if (b?.key && b?.label) map[b.key] = b.label; });
+      setRecessBandLabels(map);
+    } else {
+      setRecessBandLabels({});
+    }
     setClubs(clubsRes.data ?? []);
     setSchoolYear(schoolRes.data?.school_year ?? undefined);
     setGenerations(genRes.data ?? []);
@@ -275,7 +284,7 @@ export default function MasterSchedulePage() {
     return { added: added.length, removed: removed.length, total: blocks.length };
   }, [showDiff, blocks, diffBlocks]);
 
-  const recessBands = useMemo(() => buildRecessBands(recessConfig), [recessConfig]);
+  const recessBands = useMemo(() => buildRecessBands(recessConfig, recessBandLabels), [recessConfig, recessBandLabels]);
 
   const timeSlots = useMemo(
     () => density === "compact"

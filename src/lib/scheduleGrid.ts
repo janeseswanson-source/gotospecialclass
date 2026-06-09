@@ -67,19 +67,27 @@ export function buildCompactTimeSlots(
 
 
 
-/** Convert recess_lunch_config rows into RecessBand objects for the grid. */
-export function buildRecessBands(rows: any[]): RecessBand[] {
+/** Convert recess_lunch_config rows into RecessBand objects for the grid.
+ * Optional `bandLabels` maps `grade_band` keys to a human-readable label
+ * (e.g. "Primary 1-3") that the user customized in the wizard.
+ */
+export function buildRecessBands(rows: any[], bandLabels?: Record<string, string>): RecessBand[] {
   const bands: RecessBand[] = [];
+  const labelFor = (key: string) => {
+    if (!key || key === "all") return "";
+    const custom = bandLabels?.[key];
+    return custom ? ` · ${custom}` : ` (${key})`;
+  };
   rows.forEach((r, i) => {
-    const band = r.grade_band && r.grade_band !== "all" ? ` (${r.grade_band})` : "";
+    const suffix = labelFor(r.grade_band);
     if (r.am_recess_start && r.am_recess_end) {
-      bands.push({ id: `am-${r.id ?? i}`, label: `AM Recess${band}`, start_time: r.am_recess_start, end_time: r.am_recess_end });
+      bands.push({ id: `am-${r.id ?? i}`, label: `AM Recess${suffix}`, start_time: r.am_recess_start, end_time: r.am_recess_end });
     }
     if (r.lunch_start && r.lunch_end) {
-      bands.push({ id: `lunch-${r.id ?? i}`, label: `Lunch${band}`, start_time: r.lunch_start, end_time: r.lunch_end });
+      bands.push({ id: `lunch-${r.id ?? i}`, label: `Lunch${suffix}`, start_time: r.lunch_start, end_time: r.lunch_end });
     }
     if (r.pm_recess_start && r.pm_recess_end) {
-      bands.push({ id: `pm-${r.id ?? i}`, label: `PM Recess${band}`, start_time: r.pm_recess_start, end_time: r.pm_recess_end });
+      bands.push({ id: `pm-${r.id ?? i}`, label: `PM Recess${suffix}`, start_time: r.pm_recess_start, end_time: r.pm_recess_end });
     }
   });
   return bands;
