@@ -79,6 +79,21 @@ const StepSchoolInfo = () => {
             defaultAmPmPreference: (existingSchool as any).default_am_pm_preference || '',
             defaultDayPreference: (existingSchool as any).default_day_preference || '',
           });
+          setKeepGradesTogether((existingSchool as any).keep_grades_together ?? true);
+          setSuggestExtraPlt((existingSchool as any).suggest_extra_plt ?? false);
+          setExtraPltTargetMinutes((existingSchool as any).extra_plt_target_minutes ?? '');
+        }
+      } else {
+        // Already have a school id — load just the new params
+        const { data: extras } = await supabase
+          .from('schools')
+          .select('keep_grades_together, suggest_extra_plt, extra_plt_target_minutes')
+          .eq('id', schoolId)
+          .maybeSingle();
+        if (extras) {
+          setKeepGradesTogether((extras as any).keep_grades_together ?? true);
+          setSuggestExtraPlt((extras as any).suggest_extra_plt ?? false);
+          setExtraPltTargetMinutes((extras as any).extra_plt_target_minutes ?? '');
         }
       }
       isLoaded.current = true;
