@@ -20,7 +20,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import SpecialistExportModal from "./exports/SpecialistExportModal";
 import AdminExportModal from "./exports/AdminExportModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { buildTimeSlots, buildRecessBands, computeConflictIds, computeAutoFit } from "@/lib/scheduleGrid";
+import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds, computeAutoFit } from "@/lib/scheduleGrid";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -81,6 +81,8 @@ export default function MasterSchedulePage() {
   const [adminExportOpen, setAdminExportOpen] = useState(false);
   const [replanSuggestion, setReplanSuggestion] = useState<{ specialistId: string; specialistName: string } | null>(null);
   const [replanLoading, setReplanLoading] = useState(false);
+  const [density, setDensity] = useState<"compact" | "fine">("compact");
+
 
   // Locked blocks
   const [lockedIds, setLockedIds] = useState<Set<string>>(new Set());
@@ -255,9 +257,12 @@ export default function MasterSchedulePage() {
   const recessBands = useMemo(() => buildRecessBands(recessConfig), [recessConfig]);
 
   const timeSlots = useMemo(
-    () => buildTimeSlots(schoolStartTime, schoolEndTime, blocks),
-    [schoolStartTime, schoolEndTime, blocks],
+    () => density === "compact"
+      ? buildCompactTimeSlots(schoolStartTime, schoolEndTime, blocks, recessBands)
+      : buildTimeSlots(schoolStartTime, schoolEndTime, blocks),
+    [density, schoolStartTime, schoolEndTime, blocks, recessBands],
   );
+
 
   const conflictIds = useMemo(() => computeConflictIds(blocks), [blocks]);
 
@@ -590,6 +595,20 @@ export default function MasterSchedulePage() {
             </Select>
           )}
 
+          {/* Density toggle */}
+          <div className="flex items-center rounded-lg border border-border bg-background p-0.5 gap-0.5" title="Row density">
+            <button
+              type="button"
+              onClick={() => setDensity("compact")}
+              className={cn("px-2 py-1 text-[11px] font-medium rounded-md transition-colors", density === "compact" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
+            >Compact</button>
+            <button
+              type="button"
+              onClick={() => setDensity("fine")}
+              className={cn("px-2 py-1 text-[11px] font-medium rounded-md transition-colors", density === "fine" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
+            >Fine</button>
+          </div>
+
           {/* Explain toggle */}
           <Button
             variant={showExplain ? "secondary" : "ghost"}
@@ -601,6 +620,7 @@ export default function MasterSchedulePage() {
             <BrainCircuit className="h-3.5 w-3.5" />
             Explain
           </Button>
+
 
           {/* Export dropdown */}
           <DropdownMenu>
@@ -679,9 +699,7 @@ export default function MasterSchedulePage() {
 
       {quote && <QuoteBanner text={quote.text} author={quote.author} />}
 
-      <p className="text-xs text-muted-foreground no-print">
-        Master Grid is the admin overview. Use the other tabs for at-a-glance views per specialist, teacher, week, or day. Use Export in the toolbar to download PDFs.
-      </p>
+
 
       {/* ─── Replan banner (4C) ─── */}
       {replanSuggestion && (
@@ -804,21 +822,19 @@ export default function MasterSchedulePage() {
           )}
 
           <Tabs defaultValue="master">
-            <TabsList className="no-print">
+            <TabsList className="no-print sticky top-0 z-20 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70">
               <TabsTrigger value="master">Master Grid</TabsTrigger>
               <TabsTrigger value="specialist">By Specialist</TabsTrigger>
               <TabsTrigger value="teacher">By Teacher</TabsTrigger>
             </TabsList>
 
             <TabsContent value="master">
-              <div className="flex justify-end mb-2 no-print">
-                <PrintViewButton label="Print Master Grid" />
-              </div>
               {trayBlocks.length > 0 && (
                 <div className="mb-3">
                   <ScrabbleTray blocks={trayBlocks} onDragStart={handleTrayDragStart} />
                 </div>
               )}
+
               <ScheduleGrid
                 blocks={blocks}
                 timeSlots={timeSlots}
@@ -893,11 +909,8 @@ export default function MasterSchedulePage() {
               </div>
             </TabsContent>
           </Tabs>
-
-          <div className="flex justify-end no-print">
-            <PrintViewButton label="Print this view" />
-          </div>
         </div>
+
 
         {/* ─── XAI Explain sidebar ─── */}
         {showExplain && (

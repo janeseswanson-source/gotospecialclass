@@ -80,14 +80,15 @@ export default function ScheduleGrid({
   const cellKey = (day: string, time: string) => `${day}-${time}`;
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-border bg-card print-full-width">
-      <table className="w-full text-sm">
-        <thead>
+    <div className="rounded-xl border border-border bg-card print-full-width">
+      <table className="w-full text-sm table-fixed">
+        <thead className="sticky top-0 z-10 bg-card">
           <tr className="border-b border-border bg-muted/50">
-            <th className="px-3 py-2 text-left font-medium text-muted-foreground w-20">Time</th>
+            <th className="px-2 py-2 text-left font-medium text-muted-foreground w-16">Time</th>
             {DAYS.map((d) => (
               <th key={d} className="px-2 py-2 text-center font-medium text-muted-foreground">{d}</th>
             ))}
+
           </tr>
         </thead>
         <tbody>
@@ -141,9 +142,13 @@ export default function ScheduleGrid({
                         onDrop={(e) => handleDrop(e, day, time)}
                       >
                         {slotBlocks.length > 0 ? (
-                          <div className={cn("flex gap-1", slotBlocks.length > 1 && "items-stretch")}>
+                          <div className={cn(
+                            "flex gap-1",
+                            slotBlocks.length <= 2 ? "items-stretch" : "flex-col",
+                          )}>
                             {slotBlocks.map((block) => (
-                              <div key={block.id} className={slotBlocks.length > 1 ? "flex-1 min-w-0" : "w-full"}>
+                              <div key={block.id} className={slotBlocks.length <= 2 && slotBlocks.length > 1 ? "flex-1 min-w-0" : "w-full min-w-0"}>
+
                                 <ScheduleBlockCell
                                   blockId={block.id}
                                   subject={block.subject}
