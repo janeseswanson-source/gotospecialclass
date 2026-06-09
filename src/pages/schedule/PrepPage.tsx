@@ -467,6 +467,43 @@ export default function PrepPage() {
         </CardContent>
       </Card>
 
+      {/* Contract & scheduler-data feasibility (pre-flight) */}
+      {!loading && !loadError && contractNotes.length > 0 && (
+        <Card>
+          <CardContent className="p-6 space-y-3">
+            <div className="flex items-center gap-2">
+              <Info className="h-4 w-4 text-primary" />
+              <h2 className="text-lg font-semibold text-foreground">Contract & Scheduling Preflight</h2>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Heads-up before you generate. These won't block scheduling but may show up as warnings after.
+            </p>
+            <div className="space-y-2">
+              {contractNotes.map((n, i) => (
+                <div
+                  key={i}
+                  className={cn(
+                    "flex items-start gap-3 rounded-lg border px-3 py-2 text-sm",
+                    n.level === "warning"
+                      ? "border-amber-500/30 bg-amber-50/40 dark:bg-amber-950/15"
+                      : "border-sky-500/30 bg-sky-50/40 dark:bg-sky-950/15"
+                  )}
+                >
+                  {n.level === "warning"
+                    ? <AlertCircle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+                    : <Info className="h-4 w-4 text-primary mt-0.5 shrink-0" />}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-foreground">{n.message}</p>
+                    {n.suggestion && <p className="text-xs text-muted-foreground mt-0.5">{n.suggestion}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+
       {/* Conflict Strategy Picker */}
       {!loading && !loadError && (
         <Card>
