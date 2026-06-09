@@ -256,9 +256,14 @@ const StepClubs = () => {
         })}
       </div>
 
-      <Button size="sm" variant="outline" onClick={() => openAdd()}>
-        <Plus className="h-3 w-3 mr-1" /> Add Lunch Club
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" onClick={() => openAdd()}>
+          <Plus className="h-3 w-3 mr-1" /> Add Lunch Club
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => setNlOpen(true)}>
+          <Sparkles className="h-3 w-3 mr-1" /> Describe in plain English
+        </Button>
+      </div>
 
       <div className="flex justify-between pt-2">
         <Button variant="outline" onClick={() => setStep(SETUP_STEPS.ADMIN_ROTATION)}>Back</Button>
