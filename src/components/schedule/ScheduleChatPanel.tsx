@@ -185,7 +185,7 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
       )}
 
       <form onSubmit={handleSubmit} className="border-t border-border p-3">
-        <PromptInput onSubmit={handleSubmit}>
+        <PromptInput onSubmit={() => handleSubmit()}>
           <PromptInputTextarea
             ref={textareaRef as any}
             value={input}
