@@ -233,7 +233,14 @@ const SetupWizardContent = () => {
               <p className="text-sm text-muted-foreground">{current.blurb}</p>
             </div>
             <div className="animate-slide-up" key={step}>
-              <StepComponent />
+              <WizardStepShell
+                title={current.label}
+                blurb={current.blurb}
+                why={current.why}
+                bullets={current.bullets}
+              >
+                <StepComponent />
+              </WizardStepShell>
             </div>
           </div>
         </div>
