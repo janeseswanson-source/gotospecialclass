@@ -364,6 +364,46 @@ const StepSchoolInfo = () => {
         </Collapsible>
       )}
 
+      <div className="mt-6 rounded-lg border border-border bg-muted/20 p-4 space-y-4">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-primary" />
+          <h3 className="text-sm font-semibold text-foreground">Scheduling preferences</h3>
+        </div>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Users2 className="h-4 w-4 text-muted-foreground" />
+              <FieldLabel className="text-sm font-medium" tooltip="The scheduler will try to keep all sections of the same grade in adjacent or overlapping blocks. Disable for more flexibility.">
+                Keep grade levels together
+              </FieldLabel>
+            </div>
+            <p className="text-xs text-muted-foreground">All sections of a grade get specials at the same or adjacent times.</p>
+          </div>
+          <Switch checked={keepGradesTogether} onCheckedChange={setKeepGradesTogether} />
+        </div>
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <FieldLabel className="text-sm font-medium" tooltip="When feasible, the AI will suggest an additional Planning/Learning Time block so teachers get more prep.">
+              Suggest extra PLT when feasible
+            </FieldLabel>
+            <p className="text-xs text-muted-foreground">AI looks for a common free slot and proposes one extra prep block per week.</p>
+          </div>
+          <Switch checked={suggestExtraPlt} onCheckedChange={setSuggestExtraPlt} />
+        </div>
+        {suggestExtraPlt && (
+          <div className="space-y-2">
+            <FieldLabel className="text-xs" tooltip="Target additional planning minutes per week to aim for">Target extra minutes / week</FieldLabel>
+            <Input
+              type="number"
+              className="h-9 max-w-[160px]"
+              placeholder="e.g. 30"
+              value={extraPltTargetMinutes}
+              onChange={(e) => setExtraPltTargetMinutes(e.target.value === '' ? '' : Number(e.target.value))}
+            />
+          </div>
+        )}
+      </div>
+
       <div className="mt-4 space-y-2">
         <FieldLabel tooltip="Any special scheduling constraints or notes for the algorithm">Notes (optional)</FieldLabel>
         <Textarea value={data.notes} onChange={(e) => updateData({ notes: e.target.value })} placeholder="Any special scheduling notes..." rows={3} />
