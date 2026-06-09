@@ -242,6 +242,20 @@ export default function MasterSchedulePage() {
       setScheduleWarnings(warnings);
       setWarningsDismissed(false);
     }
+
+    // Fire-and-forget AI explanations for blocks that lack them.
+    const missingExplanations = mappedBlocks.some((b: any) => !b.ai_explanation);
+    if (missingExplanations) {
+      supabase.functions.invoke("explain-schedule", { body: { generation_id: genId } })
+        .then(async () => {
+          // Re-fetch only the explanation column and merge.
+          const { data: refreshed } = await supabase.from("schedule_blocks").select("id, ai_explanation").eq("generation_id", genId);
+          if (!refreshed) return;
+          const explMap = new Map(refreshed.map((r: any) => [r.id, r.ai_explanation]));
+          setBlocks((prev) => prev.map((b) => ({ ...b, ai_explanation: explMap.get(b.id) ?? b.ai_explanation })));
+        })
+        .catch((err) => console.warn("[explain-schedule] failed", err));
+    }
   }
 
   async function loadDiffBlocks(genId: string) {
