@@ -30,6 +30,11 @@ const StepSchoolInfo = () => {
   const isLoaded = useRef(false);
   const workspaceIdRef = useRef<string | null>(null);
 
+  // New params persisted directly (not yet in SetupContext to avoid a wide types churn).
+  const [keepGradesTogether, setKeepGradesTogether] = useState<boolean>(true);
+  const [suggestExtraPlt, setSuggestExtraPlt] = useState<boolean>(false);
+  const [extraPltTargetMinutes, setExtraPltTargetMinutes] = useState<number | ''>('');
+
   // Load existing school data from DB on mount
   useEffect(() => {
     if (!user) return;
