@@ -1119,6 +1119,14 @@ export default function MasterSchedulePage() {
         clubs={clubs}
         recessConfig={recessConfig}
       />
+
+      {chatOpen && selectedGen && (
+        <ScheduleChatPanel
+          generationId={selectedGen}
+          onClose={() => setChatOpen(false)}
+          onScheduleChanged={() => loadBlocks(selectedGen)}
+        />
+      )}
     </div>
   );
 }
