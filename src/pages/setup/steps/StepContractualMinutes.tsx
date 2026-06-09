@@ -49,23 +49,23 @@ const StepContractualMinutes = () => {
         .eq('id', schoolId)
         .maybeSingle();
       if (!row) return;
-      setUrl((row as any).contractual_minutes_url ?? '');
-      setFilePath((row as any).contractual_minutes_file_path ?? null);
-      if ((row as any).contractual_minutes_file_path) {
-        const name = String((row as any).contractual_minutes_file_path).split('/').pop() ?? null;
+      setUrl(row.contractual_minutes_url ?? '');
+      setFilePath(row.contractual_minutes_file_path ?? null);
+      if (row.contractual_minutes_file_path) {
+        const name = String(row.contractual_minutes_file_path).split('/').pop() ?? null;
         setFileName(name);
       }
-      setStatus((row as any).contractual_minutes_status ?? null);
-      setExtracted((row as any).contractual_minutes_extracted ?? null);
-      if ((row as any).contractual_minutes_url) setTab('url');
-      else if ((row as any).contractual_minutes_file_path) setTab('upload');
+      setStatus(row.contractual_minutes_status ?? null);
+      setExtracted((row.contractual_minutes_extracted as ExtractedContract | null) ?? null);
+      if (row.contractual_minutes_url) setTab('url');
+      else if (row.contractual_minutes_file_path) setTab('upload');
     })();
   }, [schoolId]);
 
   async function persist(patch: Record<string, unknown>) {
     if (!schoolId) return;
     setSaveStatus('saving');
-    const { error } = await supabase.from('schools').update(patch as any).eq('id', schoolId);
+    const { error } = await supabase.from('schools').update(patch).eq('id', schoolId);
     if (error) {
       setSaveStatus('idle');
       toast.error('Could not save contractual minutes');
