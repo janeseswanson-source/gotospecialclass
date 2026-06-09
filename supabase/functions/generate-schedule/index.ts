@@ -2495,7 +2495,7 @@ const __serveHandler = async (req: Request): Promise<Response> => {
     const cohesionWarnings = validateGradeCohesion(blocks, grades, school);
     const extraPltWarnings = validateExtraPlt(blocks, specialists, school);
     const contractSubjectWarnings = validateContractualSubjects(blocks, school);
-    const contractTeacherWarnings = validateContractualTeachers(blocks, specialists, classroomTeachers, school);
+    const contractTeacherWarnings = validateContractualTeachers(blocks, specialists, teachers, school);
     const warnings = [
       ...filteredBase,
       ...schedulerResult.extraWarnings,
