@@ -1186,13 +1186,15 @@ export default function MasterSchedulePage() {
         recessConfig={recessConfig}
       />
 
-      {chatOpen && selectedGen && (
+      {chatOpen && (
         <ScheduleChatPanel
-          generationId={selectedGen}
+          key={selectedGen || "no-gen"}
+          generationId={selectedGen || null}
           onClose={() => setChatOpen(false)}
-          onScheduleChanged={() => loadBlocks(selectedGen)}
+          onScheduleChanged={() => selectedGen && loadBlocks(selectedGen)}
         />
       )}
+
     </div>
   );
 }
