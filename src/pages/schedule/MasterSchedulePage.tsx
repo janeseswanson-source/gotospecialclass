@@ -225,8 +225,10 @@ export default function MasterSchedulePage() {
     setHistory([mappedBlocks]);
     setHistoryIndex(0);
 
-    const hasWeekLabels = mappedBlocks.some((b: any) => b.week_label);
-    if (!hasWeekLabels) setWeekFilter("all");
+    const labels = new Set(mappedBlocks.map((b: any) => b.week_label).filter(Boolean));
+    if (labels.has("AA") || labels.has("BB")) setWeekFilter("AA");
+    else if (labels.has("A") || labels.has("B")) setWeekFilter("A");
+    else setWeekFilter("all");
 
     // Fetch school grades for analysis
     if (selectedSchoolId) {
