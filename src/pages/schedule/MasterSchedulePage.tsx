@@ -455,6 +455,30 @@ export default function MasterSchedulePage() {
     }
   }
 
+  async function setReviewState(next: "accepted" | "rejected") {
+    if (!selectedGen) return;
+    setUpdatingReview(true);
+    try {
+      const { error } = await supabase
+        .from("schedule_generations")
+        .update({ review_state: next })
+        .eq("id", selectedGen);
+      if (error) throw error;
+      setGenerations((prev) => prev.map((g) => g.id === selectedGen ? { ...g, review_state: next } : g));
+      toast({
+        title: next === "accepted" ? "Schedule accepted" : "Schedule marked for changes",
+        description: next === "accepted"
+          ? "Exports and manual edits are unlocked."
+          : "Opening the AI editor — describe what to change.",
+      });
+      if (next === "rejected") setChatOpen(true);
+    } catch (e: any) {
+      toast({ title: "Update failed", description: e?.message ?? "Unknown error", variant: "destructive" });
+    } finally {
+      setUpdatingReview(false);
+    }
+  }
+
   const hasWeekLabels = blocks.some((b: any) => b.week_label);
   const isAbStrategy = activeGen?.chosen_strategy === "ab_week";
   const isAaBbStrategy = activeGen?.chosen_strategy === "aa_bb_week";
