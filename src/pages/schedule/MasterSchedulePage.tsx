@@ -62,6 +62,7 @@ export default function MasterSchedulePage() {
   const [specialists, setSpecialists] = useState<{ id: string; name: string; subject: string }[]>([]);
   const [teachers, setTeachers] = useState<{ id: string; name: string; grade: string; combo_partner_id?: string | null }[]>([]);
   const [recessConfig, setRecessConfig] = useState<any[]>([]);
+  const [recessBandLabels, setRecessBandLabels] = useState<Record<string, string>>({});
   const [clubs, setClubs] = useState<any[]>([]);
   const [schoolYear, setSchoolYear] = useState<string | undefined>(undefined);
   const [schoolStartTime, setSchoolStartTime] = useState<string | null>(null);
