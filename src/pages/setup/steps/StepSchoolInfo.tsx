@@ -126,6 +126,9 @@ const StepSchoolInfo = () => {
         early_release_end_time: data.earlyReleaseEndTime || null,
         default_am_pm_preference: null,
         default_day_preference: null,
+        keep_grades_together: keepGradesTogether,
+        suggest_extra_plt: suggestExtraPlt,
+        extra_plt_target_minutes: extraPltTargetMinutes === '' ? null : Number(extraPltTargetMinutes),
         workspace_id: workspaceIdRef.current,
       };
 
