@@ -451,6 +451,12 @@ export default function MasterSchedulePage() {
   }
 
   const hasWeekLabels = blocks.some((b: any) => b.week_label);
+  const isAbStrategy = activeGen?.chosen_strategy === "ab_week";
+  const isAaBbStrategy = activeGen?.chosen_strategy === "aa_bb_week";
+  const showWeekSelector = hasWeekLabels || isAbStrategy || isAaBbStrategy;
+  const weekOptions: { value: string; label: string }[] = isAaBbStrategy
+    ? [{ value: "all", label: "All" }, { value: "AA", label: "Weeks 1–2 (AA)" }, { value: "BB", label: "Weeks 3–4 (BB)" }]
+    : [{ value: "all", label: "All" }, { value: "A", label: "Week A" }, { value: "B", label: "Week B" }];
   const weekFiltered = weekFilter === "all"
     ? blocks
     : blocks.filter((b: any) => !b.week_label || b.week_label === weekFilter);
