@@ -1026,6 +1026,10 @@ export type Database = {
             | Database["public"]["Enums"]["conflict_strategy"]
             | null
           conflict_timing: string | null
+          contractual_minutes_extracted: Json | null
+          contractual_minutes_file_path: string | null
+          contractual_minutes_status: string | null
+          contractual_minutes_url: string | null
           created_at: string
           default_am_pm_preference: string | null
           default_day_preference: string | null
@@ -1034,10 +1038,12 @@ export type Database = {
           early_release_day: string | null
           early_release_end_time: string | null
           end_time: string | null
+          extra_plt_target_minutes: number | null
           grade_time_config: Json | null
           grades_served: string[] | null
           id: string
           is_demo: boolean
+          keep_grades_together: boolean
           lunch_first_bell: string | null
           lunch_minutes: number | null
           lunch_minutes_default: number | null
@@ -1058,6 +1064,7 @@ export type Database = {
           setup_step: number | null
           setup_time: number | null
           start_time: string | null
+          suggest_extra_plt: boolean
           updated_at: string
           website: string | null
           workspace_id: string
@@ -1074,6 +1081,10 @@ export type Database = {
             | Database["public"]["Enums"]["conflict_strategy"]
             | null
           conflict_timing?: string | null
+          contractual_minutes_extracted?: Json | null
+          contractual_minutes_file_path?: string | null
+          contractual_minutes_status?: string | null
+          contractual_minutes_url?: string | null
           created_at?: string
           default_am_pm_preference?: string | null
           default_day_preference?: string | null
@@ -1082,10 +1093,12 @@ export type Database = {
           early_release_day?: string | null
           early_release_end_time?: string | null
           end_time?: string | null
+          extra_plt_target_minutes?: number | null
           grade_time_config?: Json | null
           grades_served?: string[] | null
           id?: string
           is_demo?: boolean
+          keep_grades_together?: boolean
           lunch_first_bell?: string | null
           lunch_minutes?: number | null
           lunch_minutes_default?: number | null
@@ -1106,6 +1119,7 @@ export type Database = {
           setup_step?: number | null
           setup_time?: number | null
           start_time?: string | null
+          suggest_extra_plt?: boolean
           updated_at?: string
           website?: string | null
           workspace_id: string
@@ -1122,6 +1136,10 @@ export type Database = {
             | Database["public"]["Enums"]["conflict_strategy"]
             | null
           conflict_timing?: string | null
+          contractual_minutes_extracted?: Json | null
+          contractual_minutes_file_path?: string | null
+          contractual_minutes_status?: string | null
+          contractual_minutes_url?: string | null
           created_at?: string
           default_am_pm_preference?: string | null
           default_day_preference?: string | null
@@ -1130,10 +1148,12 @@ export type Database = {
           early_release_day?: string | null
           early_release_end_time?: string | null
           end_time?: string | null
+          extra_plt_target_minutes?: number | null
           grade_time_config?: Json | null
           grades_served?: string[] | null
           id?: string
           is_demo?: boolean
+          keep_grades_together?: boolean
           lunch_first_bell?: string | null
           lunch_minutes?: number | null
           lunch_minutes_default?: number | null
@@ -1154,6 +1174,7 @@ export type Database = {
           setup_step?: number | null
           setup_time?: number | null
           start_time?: string | null
+          suggest_extra_plt?: boolean
           updated_at?: string
           website?: string | null
           workspace_id?: string
