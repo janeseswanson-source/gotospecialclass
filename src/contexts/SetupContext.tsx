@@ -193,7 +193,7 @@ export const SetupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       try {
         const { data: school } = await supabase
           .from('schools')
-          .select('name, website, start_time, end_time, grades_served, schedule_type, school_year, class_duration, planning_minutes, lunch_minutes, passing_time, setup_time, notes, early_release_day, early_release_end_time, default_am_pm_preference, default_day_preference')
+          .select('name, website, start_time, end_time, grades_served, schedule_type, school_year, class_duration, planning_minutes, lunch_minutes, passing_time, setup_time, notes, early_release_day, early_release_end_time, default_am_pm_preference, default_day_preference, conflict_strategies, conflict_strategy, conflict_grades, conflict_timing, big_group_config')
           .eq('id', schoolId)
           .maybeSingle();
         if (!school) return;
