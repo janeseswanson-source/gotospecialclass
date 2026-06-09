@@ -264,6 +264,7 @@ const StepConflict = () => {
   // Load conflict data
   useEffect(() => {
     if (!schoolId) { isLoaded.current = true; return; }
+    isLoaded.current = false;
     const load = async () => {
       const { data: school } = await supabase
         .from('schools')
@@ -273,7 +274,13 @@ const StepConflict = () => {
       if (school) {
         const strats = (school as any).conflict_strategies as string[] | null;
         const bgConfig = (school as any).big_group_config as Array<{ grade: string; teacherIds: string[] }> | null;
-        const initialStrategies = strats && strats.length > 0 ? strats : [];
+        // If the array column is empty but the legacy single-strategy column is set
+        // (e.g. AB Week was chosen before this UI shipped), seed the list from it
+        // so the user does not see an empty selection after refresh.
+        let initialStrategies: string[] = strats && strats.length > 0 ? strats : [];
+        if (initialStrategies.length === 0 && school.conflict_strategy && school.conflict_strategy !== 'standard') {
+          initialStrategies = [school.conflict_strategy];
+        }
         lastSavedStrategies.current = initialStrategies;
         updateData({
           conflictStrategies: initialStrategies,
@@ -285,7 +292,10 @@ const StepConflict = () => {
       } else {
         lastSavedStrategies.current = [];
       }
-      isLoaded.current = true;
+      // Mark loaded on the next tick so the auto-save effect doesn't fire on the
+      // same render that hydrated state — which previously overwrote the array
+      // back to empty and reset conflict_strategy to 'standard'.
+      setTimeout(() => { isLoaded.current = true; }, 0);
     };
     load();
   }, [schoolId]);
