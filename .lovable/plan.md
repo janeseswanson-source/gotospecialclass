@@ -1,45 +1,41 @@
-## Problem
+## Goal
+Make the Master Schedule easier to read and faster to reach by reducing top-page clutter, removing unnecessary horizontal scrolling, compressing empty minute rows, and toning down the heavy color coding.
 
-The preview is blank white. Vite is throwing:
+## Proposed changes
 
-```
-Failed to resolve import "@/components/ui/toaster" from "src/App.tsx"
-```
+1. **Compress the page header and controls**
+   - Combine the title, school name, version selector, compare, explain, export, and print actions into one compact toolbar.
+   - Move secondary context like strategy/quote into a slim status strip instead of large vertical blocks.
+   - Remove duplicate print controls so the schedule starts higher on the page.
 
-Every `@/...` import is broken — not just the toaster. That's why the whole app renders nothing.
+2. **Add a cleaner schedule density model**
+   - Default the Master Grid to a compact time scale instead of every 5-minute row.
+   - Use larger visual intervals by default, while still preserving actual block start times so real scheduled items don’t disappear.
+   - Keep a precise/expanded option available for drag-and-drop fine tuning when needed.
 
-## Root cause
+3. **Fix horizontal overflow from crowded time cells**
+   - Stop rendering many same-time blocks side-by-side inside one day cell.
+   - For the Master Grid, group crowded cells into compact neutral summaries like “7 classes” with a popover/list for the individual blocks.
+   - Keep drag/drop target behavior on the cell itself.
 
-After your recent GitHub push, four critical config files are missing from the repo root:
+4. **Tone down color coding**
+   - Replace large pastel-filled blocks with a calmer card style: neutral background, subtle subject accent stripe or small badge.
+   - Reserve strong color only for conflicts, warnings, locked blocks, and A/B week labels.
+   - Keep subject identity visible without making the grid feel like a rainbow.
 
-- `vite.config.ts` — defines the `@` → `./src` alias and the `lovable-tagger` / React SWC plugins
-- `tsconfig.json`
-- `tsconfig.app.json`
-- `tsconfig.node.json`
+5. **Improve sticky navigation while scrolling**
+   - Make the view tabs and compact controls stick near the top of the content area.
+   - Keep the schedule header/time rail easier to orient against while scrolling.
 
-Without `vite.config.ts`, Vite has no idea what `@/` means, so every `@/components/...`, `@/hooks/...`, `@/lib/...` import fails. The error happens to point at `toaster` because it's the first import in `App.tsx`, but it would fail on any of them.
+## Files likely touched
+- `src/pages/schedule/MasterSchedulePage.tsx`
+- `src/components/schedule/ScheduleGrid.tsx`
+- `src/components/schedule/ScheduleBlockCell.tsx`
+- Possibly `src/lib/scheduleGrid.ts` for compact time-slot generation
+- Possibly `src/lib/subjectColors.ts` for toned-down subject styling
 
-The files were almost certainly in your local `.gitignore` (or never staged), so they didn't get pushed to GitHub, and the GitHub→Lovable sync then deleted them from the sandbox to match the repo.
-
-## Fix
-
-Recreate the four standard Lovable Vite config files at the project root:
-
-1. **`vite.config.ts`** — React SWC plugin, `lovable-tagger` in dev, port 8080, `@` alias to `./src`.
-2. **`tsconfig.json`** — references app + node tsconfigs, declares `@/*` path mapping.
-3. **`tsconfig.app.json`** — standard Vite React app TS config with `@/*` paths and `include: ["src"]`.
-4. **`tsconfig.node.json`** — TS config for `vite.config.ts` itself.
-
-After write, restart the dev server so Vite picks up the new alias.
-
-## Also recommended (to prevent recurrence)
-
-On your local clone, check `.gitignore` — make sure these are NOT listed:
-- `vite.config.ts`
-- `tsconfig*.json`
-
-Only `node_modules`, `dist`, and `.env*` (except the managed `.env`) should typically be ignored. Re-commit the configs from your local machine so they stay in GitHub.
-
-## Out of scope
-
-No source code changes — `App.tsx`, the toaster files, etc. are all fine. This is purely a missing-config problem.
+## Validation
+- Check the Master Grid at the current desktop size to confirm the schedule appears higher on the page.
+- Confirm horizontal scrolling is no longer required for normal master-grid use.
+- Confirm compact rows reduce vertical empty space while preserving block times.
+- Confirm specialist/teacher views still work and block editing, notes, locking, drag/drop, and conflict indicators remain usable.
