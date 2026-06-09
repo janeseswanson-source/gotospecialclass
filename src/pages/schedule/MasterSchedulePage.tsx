@@ -621,6 +621,18 @@ export default function MasterSchedulePage() {
             >Fine</button>
           </div>
 
+          {/* Edit with AI */}
+          <Button
+            variant={chatOpen ? "secondary" : "default"}
+            size="sm"
+            className="h-8 gap-1.5"
+            onClick={() => setChatOpen((v) => !v)}
+            title="Open AI editor"
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            Edit with AI
+          </Button>
+
           {/* Explain toggle */}
           <Button
             variant={showExplain ? "secondary" : "ghost"}
@@ -632,6 +644,9 @@ export default function MasterSchedulePage() {
             <BrainCircuit className="h-3.5 w-3.5" />
             Explain
           </Button>
+
+
+
 
 
           {/* Export dropdown */}
