@@ -49,6 +49,13 @@ export interface ScoreableResult {
   preferenceViolations: PreferenceViolation[];
 }
 
+export interface ContractSubjectMin { grade?: string | null; subject?: string | null; weekly_minutes?: number | null }
+export interface ContractTeacherMin { role?: string | null; planning_minutes?: number | null; duty_free_minutes?: number | null }
+export interface ContractExtract {
+  subjects?: ContractSubjectMin[] | null;
+  teachers?: ContractTeacherMin[] | null;
+}
+
 export interface ScoreableInput {
   school: {
     start_time?: string;
@@ -56,8 +63,9 @@ export interface ScoreableInput {
     early_release_day?: string;
     early_release_end_time?: string;
     keep_grades_together?: boolean | null;
+    contractual_minutes_extracted?: ContractExtract | null;
   };
-  specialists: Array<{ id: string; working_days?: string[] | null }>;
+  specialists: Array<{ id: string; subject?: string | null; working_days?: string[] | null }>;
   teachers: Array<{ id: string; am_pm_preference?: string | null; day_preference?: string | null }>;
   grades: string[];
 }
@@ -210,19 +218,55 @@ export function scoreSchedule(
     }
   }
 
-  // 10. Contract minimums: sum shortfall minutes pulled from
-  // contractual_*_shortfall warnings emitted post-generation. We parse
-  // "(short by N)" from message tails; if absent we skip silently.
+  // 10. Contract minimums: compute shortfall minutes directly from
+  // school.contractual_minutes_extracted so the optimizer sees them
+  // every iteration (post-gen warnings are emitted only once).
   let contractShortfallMin = 0;
-  for (const w of warnings) {
-    if (
-      w.type === "contractual_subject_shortfall" ||
-      w.type === "contractual_planning_shortfall" ||
-      w.type === "contractual_duty_free_shortfall"
-    ) {
-      const m = w.message.match(/short by (\d+)\)/) ??
-                w.message.match(/contract requires (\d+)/);
-      if (m) contractShortfallMin += Number(m[1] ?? 0);
+  const extracted = input.school?.contractual_minutes_extracted ?? null;
+  if (extracted) {
+    // Per-(grade, subject) scheduled minutes.
+    const norm = (s: unknown) => String(s ?? "").trim().toLowerCase();
+    if (extracted.subjects?.length) {
+      const scheduled = new Map<string, number>();
+      for (const b of blocks) {
+        if (!b.specialist_id) continue;
+        if (b.grade === "Lunch" || b.grade === "Planning") continue;
+        const key = `${norm(b.grade).replace(/^grade\s+/, "").replace(/\s+/g, "")}|${norm(b.subject)}`;
+        scheduled.set(key, (scheduled.get(key) ?? 0) + (timeToMinutes(b.end_time) - timeToMinutes(b.start_time)));
+      }
+      for (const req of extracted.subjects) {
+        const required = Number(req.weekly_minutes ?? 0);
+        if (required <= 0) continue;
+        const key = `${norm(req.grade).replace(/^grade\s+/, "").replace(/\s+/g, "")}|${norm(req.subject)}`;
+        const have = scheduled.get(key) ?? 0;
+        if (have < required) contractShortfallMin += required - have;
+      }
+    }
+    if (extracted.teachers?.length) {
+      for (const req of extracted.teachers) {
+        const role = norm(req.role);
+        if (!role) continue;
+        const matchingSpecs = input.specialists.filter((s) => {
+          const sub = norm(s.subject);
+          return sub && (sub.includes(role) || role.includes(sub));
+        });
+        for (const spec of matchingSpecs) {
+          const reqPlanning = Number(req.planning_minutes ?? 0);
+          const reqDutyFree = Number(req.duty_free_minutes ?? 0);
+          if (reqPlanning > 0) {
+            const have = blocks
+              .filter((b) => b.specialist_id === spec.id && b.grade === "Planning")
+              .reduce((acc, b) => acc + (timeToMinutes(b.end_time) - timeToMinutes(b.start_time)), 0);
+            if (have < reqPlanning) contractShortfallMin += reqPlanning - have;
+          }
+          if (reqDutyFree > 0) {
+            const have = blocks
+              .filter((b) => b.specialist_id === spec.id && b.grade === "Lunch")
+              .reduce((acc, b) => acc + (timeToMinutes(b.end_time) - timeToMinutes(b.start_time)), 0);
+            if (have < reqDutyFree) contractShortfallMin += reqDutyFree - have;
+          }
+        }
+      }
     }
   }
 
