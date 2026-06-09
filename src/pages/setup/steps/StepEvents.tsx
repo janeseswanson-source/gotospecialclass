@@ -6,8 +6,9 @@ import { useSetup } from '@/contexts/SetupContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { FieldLabel } from '@/components/ui/field-label';
-import { Plus, Trash2, Loader2, Check } from 'lucide-react';
+import { Plus, Trash2, Loader2, Check, Sparkles } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import NlImportDialog from '@/components/setup/NlImportDialog';
 
 interface SpecialEvent {
   id: string;
