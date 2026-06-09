@@ -312,6 +312,43 @@ export default function MasterSchedulePage() {
     if (!block) return;
     if (block.day_of_week === newDay && block.start_time === newTime) return;
 
+    // Detect a block already at the target slot (any subject) → attempt swap.
+    const targetBlock = blocks.find(
+      (b) =>
+        b.id !== blockId &&
+        b.day_of_week === newDay &&
+        b.start_time === newTime &&
+        (!b.week_label || !block.week_label || b.week_label === block.week_label),
+    );
+
+    if (targetBlock) {
+      if (lockedIds.has(targetBlock.id)) {
+        toast({ title: "Target block is locked", variant: "destructive" });
+        return;
+      }
+      // Swap day/time of the two blocks (keep durations unchanged).
+      const aSlot = { day: block.day_of_week, start: block.start_time, end: block.end_time };
+      const bSlot = { day: targetBlock.day_of_week, start: targetBlock.start_time, end: targetBlock.end_time };
+      const newBlocks = blocks.map((b) => {
+        if (b.id === block.id) return { ...b, day_of_week: bSlot.day, start_time: bSlot.start, end_time: bSlot.end, is_override: true };
+        if (b.id === targetBlock.id) return { ...b, day_of_week: aSlot.day, start_time: aSlot.start, end_time: aSlot.end, is_override: true };
+        return b;
+      });
+      setBlocks(newBlocks);
+      pushHistory(newBlocks);
+      const [{ error: e1 }, { error: e2 }] = await Promise.all([
+        supabase.from("schedule_blocks").update({ day_of_week: bSlot.day, start_time: bSlot.start, end_time: bSlot.end, is_override: true }).eq("id", block.id),
+        supabase.from("schedule_blocks").update({ day_of_week: aSlot.day, start_time: aSlot.start, end_time: aSlot.end, is_override: true }).eq("id", targetBlock.id),
+      ]);
+      if (e1 || e2) {
+        toast({ title: "Swap failed", variant: "destructive" });
+        loadBlocks(selectedGen);
+      } else {
+        toast({ title: "Blocks swapped", description: `${block.subject ?? "Block"} ⇄ ${targetBlock.subject ?? "block"}` });
+      }
+      return;
+    }
+
     const fit = computeAutoFit({
       movingBlock: block,
       targetDay: newDay,
@@ -353,6 +390,7 @@ export default function MasterSchedulePage() {
       if (spec) setReplanSuggestion({ specialistId: spec.id, specialistName: spec.name });
     }
   }
+
 
   /** Drag handler used by the Scrabble tray. */
   function handleTrayDragStart(e: React.DragEvent, block: BlockData) {
