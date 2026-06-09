@@ -262,7 +262,7 @@ const StepAdminRotation = () => {
         )}
 
         <div className="flex justify-between pt-2">
-          <Button variant="outline" onClick={() => setStep(SETUP_STEPS.TEACHERS)}>Back</Button>
+          <Button variant="outline" onClick={() => setStep(SETUP_STEPS.CONTRACTUAL_MINUTES)}>Back</Button>
           <Button onClick={() => setStep(SETUP_STEPS.CLUBS)}>Continue</Button>
         </div>
       </CardContent>
