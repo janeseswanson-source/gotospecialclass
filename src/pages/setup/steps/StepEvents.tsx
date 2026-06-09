@@ -148,12 +148,35 @@ const StepEvents = () => {
         </div>
       ))}
 
-      <Button size="sm" variant="outline" onClick={() => add('')}><Plus className="h-3 w-3 mr-1" /> Add Event</Button>
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" onClick={() => add('')}><Plus className="h-3 w-3 mr-1" /> Add Event</Button>
+        <Button size="sm" variant="outline" onClick={() => setNlOpen(true)}>
+          <Sparkles className="h-3 w-3 mr-1" /> Describe in plain English
+        </Button>
+      </div>
 
       <div className="flex justify-between pt-2">
         <Button variant="outline" onClick={() => setStep(SETUP_STEPS.CLUBS)}>Back</Button>
         <Button onClick={() => setStep(SETUP_STEPS.CONFLICTS)}>Continue</Button>
       </div>
+
+      <NlImportDialog
+        open={nlOpen}
+        onOpenChange={setNlOpen}
+        kind="events"
+        onImport={async (rows) => {
+          const newEvents: SpecialEvent[] = rows.map((r: any) => ({
+            id: crypto.randomUUID(),
+            name: String(r.name || '').trim(),
+            type: 'event',
+            date: r.date || '',
+            startTime: r.start_time || '',
+            endTime: r.end_time || '',
+          })).filter(e => e.name);
+          setEvents(prev => [...prev, ...newEvents]);
+          return { ok: newEvents.length, skipped: rows.length - newEvents.length };
+        }}
+      />
     </div>
   );
 };
