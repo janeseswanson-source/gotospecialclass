@@ -867,6 +867,7 @@ export type Database = {
           id: string
           is_override: boolean | null
           notes: string | null
+          placement_reason: string | null
           room: string | null
           specialist_id: string | null
           start_time: string
@@ -883,6 +884,7 @@ export type Database = {
           id?: string
           is_override?: boolean | null
           notes?: string | null
+          placement_reason?: string | null
           room?: string | null
           specialist_id?: string | null
           start_time: string
@@ -899,6 +901,7 @@ export type Database = {
           id?: string
           is_override?: boolean | null
           notes?: string | null
+          placement_reason?: string | null
           room?: string | null
           specialist_id?: string | null
           start_time?: string
@@ -936,12 +939,20 @@ export type Database = {
           chosen_strategy: string | null
           created_at: string
           fallback_reason: string | null
+          feedback_signal: string | null
           generated_at: string | null
           id: string
+          manual_edit_count: number | null
           monte_carlo_attempts: number | null
           quote: string | null
+          sa_improvement: number | null
+          sa_iterations: number | null
           school_id: string
+          score_breakdown: Json | null
           status: string | null
+          verify_issues_found: number | null
+          verify_quality_score: number | null
+          verify_summary: string | null
           version: number | null
           warnings: Json | null
           winning_score: number | null
@@ -951,12 +962,20 @@ export type Database = {
           chosen_strategy?: string | null
           created_at?: string
           fallback_reason?: string | null
+          feedback_signal?: string | null
           generated_at?: string | null
           id?: string
+          manual_edit_count?: number | null
           monte_carlo_attempts?: number | null
           quote?: string | null
+          sa_improvement?: number | null
+          sa_iterations?: number | null
           school_id: string
+          score_breakdown?: Json | null
           status?: string | null
+          verify_issues_found?: number | null
+          verify_quality_score?: number | null
+          verify_summary?: string | null
           version?: number | null
           warnings?: Json | null
           winning_score?: number | null
@@ -966,12 +985,20 @@ export type Database = {
           chosen_strategy?: string | null
           created_at?: string
           fallback_reason?: string | null
+          feedback_signal?: string | null
           generated_at?: string | null
           id?: string
+          manual_edit_count?: number | null
           monte_carlo_attempts?: number | null
           quote?: string | null
+          sa_improvement?: number | null
+          sa_iterations?: number | null
           school_id?: string
+          score_breakdown?: Json | null
           status?: string | null
+          verify_issues_found?: number | null
+          verify_quality_score?: number | null
+          verify_summary?: string | null
           version?: number | null
           warnings?: Json | null
           winning_score?: number | null
@@ -1137,6 +1164,41 @@ export type Database = {
             columns: ["workspace_id"]
             isOneToOne: false
             referencedRelation: "workspaces"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      scoring_weight_profiles: {
+        Row: {
+          created_at: string
+          id: string
+          last_updated: string | null
+          sample_count: number
+          school_id: string
+          weights: Json
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          last_updated?: string | null
+          sample_count?: number
+          school_id: string
+          weights?: Json
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_updated?: string | null
+          sample_count?: number
+          school_id?: string
+          weights?: Json
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scoring_weight_profiles_school_id_fkey"
+            columns: ["school_id"]
+            isOneToOne: false
+            referencedRelation: "schools"
             referencedColumns: ["id"]
           },
         ]
