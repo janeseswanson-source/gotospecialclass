@@ -25,6 +25,7 @@ const StepEvents = () => {
   const { setStep, schoolId } = useSetup();
   const [events, setEvents] = useState<SpecialEvent[]>([]);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const [nlOpen, setNlOpen] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const isLoaded = useRef(false);
 
