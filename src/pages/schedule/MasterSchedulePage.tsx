@@ -170,7 +170,7 @@ export default function MasterSchedulePage() {
       supabase.from("classroom_teachers").select("id, name, grade, combo_partner_id").eq("school_id", selectedSchoolId!),
       supabase.from("recess_lunch_config").select("*").eq("school_id", selectedSchoolId!),
       supabase.from("clubs").select("*").eq("school_id", selectedSchoolId!),
-      supabase.from("schools").select("school_year, start_time, end_time").eq("id", selectedSchoolId!).maybeSingle(),
+      supabase.from("schools").select("school_year, start_time, end_time, recess_grade_bands").eq("id", selectedSchoolId!).maybeSingle(),
     ]);
 
     setSchoolStartTime(schoolRes.data?.start_time ?? null);
