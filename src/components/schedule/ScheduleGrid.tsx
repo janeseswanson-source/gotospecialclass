@@ -142,9 +142,13 @@ export default function ScheduleGrid({
                         onDrop={(e) => handleDrop(e, day, time)}
                       >
                         {slotBlocks.length > 0 ? (
-                          <div className={cn("flex gap-1", slotBlocks.length > 1 && "items-stretch")}>
+                          <div className={cn(
+                            "flex gap-1",
+                            slotBlocks.length <= 2 ? "items-stretch" : "flex-col",
+                          )}>
                             {slotBlocks.map((block) => (
-                              <div key={block.id} className={slotBlocks.length > 1 ? "flex-1 min-w-0" : "w-full"}>
+                              <div key={block.id} className={slotBlocks.length <= 2 && slotBlocks.length > 1 ? "flex-1 min-w-0" : "w-full min-w-0"}>
+
                                 <ScheduleBlockCell
                                   blockId={block.id}
                                   subject={block.subject}
