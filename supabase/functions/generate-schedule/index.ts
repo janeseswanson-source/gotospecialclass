@@ -1092,17 +1092,24 @@ function generateABWeek(
     }
   }
 
-  const groupA = conflictGT.filter((_, i) => i % 2 === 0);
-  const groupB = conflictGT.filter((_, i) => i % 2 !== 0);
+  // If no grades were explicitly flagged as conflict, split the full grade
+  // list in half so Week A and Week B are actually distinct. Otherwise both
+  // weeks would receive the identical non-conflict assignments and the
+  // strategy would be invisible in the output.
+  const splitSource = conflictGT.length > 0 ? conflictGT : nonConflictGT;
+  const groupA = splitSource.filter((_, i) => i % 2 === 0);
+  const groupB = splitSource.filter((_, i) => i % 2 !== 0);
+  const sharedNC = conflictGT.length > 0 ? nonConflictGT : [];
 
   // Phase 3C: optional permutation + rotation offset.
-  const orderedNC = rng ? shuffle(nonConflictGT, rng) : nonConflictGT;
+  const orderedNC = rng ? shuffle(sharedNC, rng) : sharedNC;
   const orderedA = rng ? shuffle(groupA, rng) : groupA;
   const orderedB = rng ? shuffle(groupB, rng) : groupB;
 
   const blocks: Block[] = [];
   const preferenceViolations: PreferenceViolation[] = [];
   let rotation = rng ? Math.floor(rng() * Math.max(1, specialists.length)) : 0;
+
 
   for (const day of DAYS) {
     const endMin = getEndMinForDay(day, school);
@@ -1185,17 +1192,22 @@ function generateAABBWeek(
     }
   }
 
-  const groupA = conflictGT.filter((_, i) => i % 2 === 0);
-  const groupB = conflictGT.filter((_, i) => i % 2 !== 0);
+  // Same split-fallback as ab_week: if no conflict grades, halve the
+  // full grade list so the AA and BB weeks aren't carbon copies.
+  const splitSourceAB = conflictGT.length > 0 ? conflictGT : nonConflictGT;
+  const groupA = splitSourceAB.filter((_, i) => i % 2 === 0);
+  const groupB = splitSourceAB.filter((_, i) => i % 2 !== 0);
+  const sharedNCAB = conflictGT.length > 0 ? nonConflictGT : [];
 
   // Phase 3C: optional MC permutation.
-  const orderedNC = rng ? shuffle(nonConflictGT, rng) : nonConflictGT;
+  const orderedNC = rng ? shuffle(sharedNCAB, rng) : sharedNCAB;
   const orderedA = rng ? shuffle(groupA, rng) : groupA;
   const orderedB = rng ? shuffle(groupB, rng) : groupB;
 
   const blocks: Block[] = [];
   const preferenceViolations: PreferenceViolation[] = [];
   let rotation = rng ? Math.floor(rng() * Math.max(1, specialists.length)) : 0;
+
 
   // AA/BB = Group A gets weeks 1&2 ("AA"), Group B gets weeks 3&4 ("BB")
   for (const day of DAYS) {
@@ -1272,10 +1284,15 @@ function generateQuick30(
 
     const r = assignDay(
       day, orderedGT, specialists, occupancy, generationId,
-      (grade) => conflictSet.has(grade) ? 30 : classDuration,
+      // Quick 30: shorten EVERY grade to 30 minutes (not just conflict grades).
+      // If a coordinator picks this strategy with no conflict grades flagged,
+      // the previous behaviour silently fell back to the default duration,
+      // which made the chosen strategy invisible in the output.
+      () => 30,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), null, rotation, [...existingBlocks, ...blocks],
     );
+
     blocks.push(...r.blocks);
     preferenceViolations.push(...r.preferenceViolations);
     const daySpecCount = specialists.filter((s) => (s.working_days ?? DAYS).includes(day)).length;
