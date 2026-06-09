@@ -31,6 +31,8 @@ export interface ScoreBreakdown {
   k_grade_after_780: number;
   spec_dayload_stdev: number;
   class_repeats: number;
+  grade_cohesion: number;
+  contract_min: number;
 }
 
 export interface ScoreResult {
@@ -48,7 +50,13 @@ export interface ScoreableResult {
 }
 
 export interface ScoreableInput {
-  school: { start_time?: string; end_time?: string; early_release_day?: string; early_release_end_time?: string };
+  school: {
+    start_time?: string;
+    end_time?: string;
+    early_release_day?: string;
+    early_release_end_time?: string;
+    keep_grades_together?: boolean | null;
+  };
   specialists: Array<{ id: string; working_days?: string[] | null }>;
   teachers: Array<{ id: string; am_pm_preference?: string | null; day_preference?: string | null }>;
   grades: string[];
@@ -79,6 +87,9 @@ export const DEFAULT_WEIGHTS: Record<keyof ScoreBreakdown, number> = {
   k_grade_after_780: -3,
   spec_dayload_stdev: -1,
   class_repeats: -8,
+  // Soft nudges: keep < cart penalty so they never dominate hard constraints.
+  grade_cohesion: -4,    // per extra day a grade spans beyond its cohesion target
+  contract_min: -0.05,   // per minute short on contractual subject/teacher minimums
 };
 
 export function scoreSchedule(
@@ -185,6 +196,36 @@ export function scoreSchedule(
     for (const n of Object.values(specCounts)) if (n > 1) classRepeats += n - 1;
   }
 
+  // 9. Grade cohesion: penalize each extra day a grade's sessions span
+  // beyond ceil(sessions / 2) (matches the validateGradeCohesion check
+  // in index.ts). Only active when keep_grades_together is not false.
+  let cohesionExtraDays = 0;
+  if (input.school?.keep_grades_together !== false) {
+    for (const grade of input.grades) {
+      const gradeBlocks = blocks.filter((b) => b.grade === grade && b.specialist_id);
+      if (gradeBlocks.length === 0) continue;
+      const daysUsed = new Set(gradeBlocks.map((b) => b.day_of_week)).size;
+      const idealDays = Math.max(1, Math.ceil(gradeBlocks.length / 2));
+      if (daysUsed > idealDays) cohesionExtraDays += daysUsed - idealDays;
+    }
+  }
+
+  // 10. Contract minimums: sum shortfall minutes pulled from
+  // contractual_*_shortfall warnings emitted post-generation. We parse
+  // "(short by N)" from message tails; if absent we skip silently.
+  let contractShortfallMin = 0;
+  for (const w of warnings) {
+    if (
+      w.type === "contractual_subject_shortfall" ||
+      w.type === "contractual_planning_shortfall" ||
+      w.type === "contractual_duty_free_shortfall"
+    ) {
+      const m = w.message.match(/short by (\d+)\)/) ??
+                w.message.match(/contract requires (\d+)/);
+      if (m) contractShortfallMin += Number(m[1] ?? 0);
+    }
+  }
+
   const breakdown: ScoreBreakdown = {
     errors: errorCount * w.errors,
     warnings: warningCount * w.warnings,
@@ -196,6 +237,8 @@ export function scoreSchedule(
     k_grade_after_780: kAfter780 * w.k_grade_after_780,
     spec_dayload_stdev: avgStdev * w.spec_dayload_stdev,
     class_repeats: classRepeats * w.class_repeats,
+    grade_cohesion: cohesionExtraDays * w.grade_cohesion,
+    contract_min: contractShortfallMin * w.contract_min,
   };
 
   const total = Object.values(breakdown).reduce((a, b) => a + b, 0);
