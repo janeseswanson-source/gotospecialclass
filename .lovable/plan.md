@@ -1,65 +1,78 @@
-# Finish the wizard rework (3 remaining items)
+# Period-card rewrite of StepRecessLunch
 
-## 1. Recess & Lunch card rework + matching grid labels
+Flip the step's mental model: instead of "pick a band, then fill in AM/Lunch/PM times for it", users see **period cards** (AM Recess, Lunch, PM Recess). Each card lists one row per grade group with start/end times. Staggered lunch becomes "add a second Lunch row". Storage stays on the existing `recess_lunch_config` + `schools.recess_grade_bands` columns — no schema/migration changes.
 
-Rework `StepRecessLunch.tsx` from per-grade time tables into **period-grouped cards**, and surface the same labels on the master grid.
+## New UI shape
 
-**Period cards (instead of per-band time rows)**
-- One card per *period*: `AM Recess`, `Lunch` (early), `Lunch` (late), `PM Recess`. Cards are added/removed, not fixed.
-- Each card has: editable label, single start/end time pair, grade-chip multi-select, optional Early-Release override times, delete.
-- "Whole School" mode = exactly one card per period covering all grades; switching to "Staggered" splits Lunch into Early/Late presets seeded from current bands.
-- Keep auto-save + validation (overlap, unassigned grades, empty card) but framed per-card.
-- Storage shim: convert period-cards ↔ existing `recess_lunch_config` rows (one row per `grade_band`, where a band is derived from the union of cards covering those grades). No schema change.
+Render three top-level period cards (Lucide icons + amber accents matching the master-grid amber rows):
 
-**Matching grid-cell labels**
-- `MasterSchedulePage` already feeds `recessBands` into `ScheduleGrid`. Update the band label builder to use each card's editable label verbatim (e.g. "Early Lunch · K–2") instead of the raw band key, and render multiple amber rows when staggered groups overlap a slot.
-- `ScheduleGrid.tsx` band row stays the same visually; just receives richer labels.
+```
+┌─ AM Recess ─────────────────────────────────┐
+│  Whole school        09:45 → 10:00   [✕]    │
+│  + Add staggered row                         │
+└──────────────────────────────────────────────┘
 
-## 2. Persistent wizard shell across all 11 steps
+┌─ Lunch ─────────────────────────────────────┐
+│  Early lunch  K, 1, 2     11:30 → 12:00 [✕] │
+│  Late lunch   3, 4, 5, 6  12:00 → 12:30 [✕] │
+│  + Add staggered row                         │
+└──────────────────────────────────────────────┘
 
-Create `src/components/setup/WizardStepShell.tsx`:
-- Two-column inner layout (left rationale rail + right form column) that every step renders inside.
-- Props: `title`, `rationale` (short why-this-matters paragraph + bullets), `aiActions?` (slot for "AI fill", "Recommend", "Parse from text" buttons surfaced per step), `footer` (Back / Continue / Save status).
-- Sticky save-status indicator and step-level error summary moved out of each step.
+┌─ PM Recess ─────────────────────────────────┐
+│  (empty — + Add row)                         │
+└──────────────────────────────────────────────┘
+```
 
-Refactor each step to return `<WizardStepShell …>{form}</WizardStepShell>`:
-`StepWelcome`, `StepSchoolInfo`, `StepCalendarUpload`, `StepRecessLunch`, `StepSpecialists`, `StepTeachers`, `StepContractualMinutes`, `StepAdminRotation`, `StepClubs`, `StepEvents`, `StepConflict`, `StepReview`.
+Each row inside a card has: editable label, grade-chip multi-select, start time, end time, delete. The label is what the master grid will display in the amber bar (e.g. "Late lunch · 3-6").
 
-The outer `SetupWizardContent.tsx` left rail (numbered stepper) stays; the shell sits inside the right column so the rail is always visible and the new per-step rationale rail nests cleanly. Mobile keeps the existing `<Select>` switcher — shell collapses to single column under `sm`.
+Mode toggle (Whole School / Staggered) stays at the top:
+- **Whole School** → each card collapsed to a single row whose grade chips are read-only and equal "All grades served". Adding a second row auto-flips the mode to Staggered.
+- **Staggered** → multiple rows allowed; chip selectors are editable.
 
-Per-step AI hooks surfaced in `aiActions` (all already-built functions, just wiring):
-- Specialists/Teachers → existing `process-onboarding-template` upload button.
-- Contractual Minutes → existing PDF upload flow.
-- Conflict → "Recommend strategy" calling existing `analyzeFeasibility`.
-- Clubs/Events → the new NL importer (item 3).
-- Review → "Schedule readiness" score using existing feasibility helpers.
+Early-Release section becomes one collapsible block below the three cards, mirroring the same three periods but with per-row override times. Auto-shown only when an early-release day exists.
 
-## 3. Wire `parse-clubs-nl` into Clubs & Events
+Validation banner (existing) stays — recomputed against the row shape: unassigned grades for any period, overlapping rows that cover the same grade twice in the same period, empty rows.
 
-Add a "Describe in plain English" entry point to both `StepClubs.tsx` and `StepEvents.tsx`.
+## Data model bridge (no migrations)
 
-Flow:
-1. Button → opens `<NlImportDialog kind="clubs" | "events">` (new, `src/components/setup/NlImportDialog.tsx`).
-2. Textarea (max 5000 chars) + Parse button → `supabase.functions.invoke('parse-clubs-nl', { body: { description, kind } })`.
-3. Show returned `rows` in an editable confirm table:
-   - Clubs columns: Name, Day, Start, End, Grades (chips), Leader (specialist dropdown), Location.
-   - Events columns: Name, Date, Start, End, Grades, Notes.
-   - Each row has Include/Exclude toggle; bulk Include-all.
-4. **Import selected** → reuses each step's existing `persistClub` / event upsert paths (one call per row) so validation + auto-save behaviour stays identical. Leader strings are matched to existing specialists by case-insensitive name; unmatched → `null` with a small warning chip.
-5. Toast with count imported + skipped.
+The component owns one in-memory structure derived from the existing tables:
 
-Edge function already deployed; no backend changes. Add a small `parseGrades` helper to normalize `"3-5"` / `"K,1,2"` strings to the grade chip array used by the steps.
+```ts
+type PeriodKey = 'amRecess' | 'lunch' | 'pmRecess';
+type PeriodRow = {
+  rowId: string;          // ui-stable
+  bandKey: string;        // existing recess_lunch_config.grade_band
+  label: string;          // mirrors schools.recess_grade_bands[i].label
+  grades: string[];       // mirrors schools.recess_grade_bands[i].grades
+  start: string;
+  end: string;
+  erStart?: string;       // early-release override
+  erEnd?: string;
+};
+type CardsState = Record<PeriodKey, PeriodRow[]>;
+```
 
-## Technical notes
+**Hydration** (replaces the current `useEffect` loader): for every existing `recess_lunch_config` row, emit up to three `PeriodRow`s (one per period) reusing the same `bandKey`. Pull `label`/`grades` from `schools.recess_grade_bands` by key; fall back to `DEFAULT_BAND_TEMPLATE` if missing.
 
-- No DB migrations.
-- No new packages.
-- Files created: `src/components/setup/WizardStepShell.tsx`, `src/components/setup/NlImportDialog.tsx`, possibly `src/components/setup/recessLunchCards.tsx` to keep `StepRecessLunch` readable.
-- Files edited: all 12 step files, `SetupWizardContent.tsx` (minor — shell hosts the right column header), `MasterSchedulePage.tsx` (band label builder), `StepRecessLunch.tsx` (full rewrite of the band/time UI; persistence shim).
-- Preserve every existing autosave hook, `useFlushOnUnmount` usage, and step-index navigation.
+**Persistence** (replaces current `autoSave`): on debounce, collect every unique `bandKey` across cards. For each one, build a single `recess_lunch_config` row by reading that bandKey's row out of each period card (its start/end → `am_recess_start/end`, `lunch_start/end`, `pm_recess_start/end`, plus the matching `early_release_*` columns). Then upsert/selective-delete that table (keeps stable UUIDs per the project's existing pattern). Update `schools.recess_grade_bands` from the union of distinct `{ key, label, grades }` triples. Reuses the existing `autoSave` debounce timer + `useFlushOnUnmount`.
+
+Because the row's `bandKey` survives edits, the master-grid label map (`recess_grade_bands` → custom labels, already wired last turn) automatically shows the new period labels in the amber bands.
+
+## Files
+
+- **Rewrite** `src/pages/setup/steps/StepRecessLunch.tsx` — full UI swap, new state shape, hydration + autosave bridge as above. Keep all imports (`SaveStatusIndicator`, `useFlushOnUnmount`, `SETUP_STEPS`, `useSetup`, `FieldLabel`, `Collapsible`).
+- **Extract** `src/pages/setup/steps/recessLunch/PeriodCard.tsx` — presentational card that renders one period's rows with chip multi-select + time inputs. Keeps the main file under ~350 lines.
+- **No changes** to `scheduleGrid.ts`, `MasterSchedulePage.tsx`, the migration, or any other step. The amber label plumbing built last turn keeps working because we're still writing the same `recess_grade_bands` shape.
+
+## Edge cases handled
+
+- Switching Whole School → Staggered keeps existing times; reverse collapses to the first row and warns if data would be lost.
+- Deleting the last row of a period clears the corresponding columns in that bandKey's `recess_lunch_config` row but leaves the row intact for other periods.
+- New bandKey generated with `band_<rand>` to stay compatible with the existing format used elsewhere.
+- A band that ends up with zero rows across all three periods is removed from `recess_grade_bands` on save.
 
 ## Out of scope
 
-- Generator/scheduling engine changes.
-- Any new edge functions.
-- Billing, exports, lesson planner.
+- Schema changes.
+- Engine/generator behavior.
+- Any other wizard step.
