@@ -1140,12 +1140,16 @@ function generateABWeek(
     blocks.push(...wa.blocks);
     preferenceViolations.push(...wa.preferenceViolations);
 
+    // Use a different rotation offset for Week B so the two weeks land on
+    // distinct slots even when group splits happen to be balanced.
+    const rotationB = specialists.length > 0 ? (rotation + Math.max(1, Math.floor(specialists.length / 2))) % specialists.length : rotation;
     const wb = assignDay(
       day, orderedB, specialists, occupancyB, generationId,
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
-      new Set(), "B", rotation, [...existingBlocks, ...blocks],
+      new Set(), "B", rotationB, [...existingBlocks, ...blocks],
     );
+
     blocks.push(...wb.blocks);
     preferenceViolations.push(...wb.preferenceViolations);
 
