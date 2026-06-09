@@ -859,6 +859,7 @@ export type Database = {
       }
       schedule_blocks: {
         Row: {
+          ai_explanation: string | null
           created_at: string
           day_of_week: string
           end_time: string
@@ -876,6 +877,7 @@ export type Database = {
           week_label: string | null
         }
         Insert: {
+          ai_explanation?: string | null
           created_at?: string
           day_of_week: string
           end_time: string
@@ -893,6 +895,7 @@ export type Database = {
           week_label?: string | null
         }
         Update: {
+          ai_explanation?: string | null
           created_at?: string
           day_of_week?: string
           end_time?: string
@@ -936,6 +939,7 @@ export type Database = {
       schedule_generations: {
         Row: {
           attempted_strategies: Json
+          chat_history: Json
           chosen_strategy: string | null
           created_at: string
           fallback_reason: string | null
@@ -945,6 +949,7 @@ export type Database = {
           manual_edit_count: number | null
           monte_carlo_attempts: number | null
           quote: string | null
+          review_state: string
           sa_improvement: number | null
           sa_iterations: number | null
           school_id: string
@@ -959,6 +964,7 @@ export type Database = {
         }
         Insert: {
           attempted_strategies?: Json
+          chat_history?: Json
           chosen_strategy?: string | null
           created_at?: string
           fallback_reason?: string | null
@@ -968,6 +974,7 @@ export type Database = {
           manual_edit_count?: number | null
           monte_carlo_attempts?: number | null
           quote?: string | null
+          review_state?: string
           sa_improvement?: number | null
           sa_iterations?: number | null
           school_id: string
@@ -982,6 +989,7 @@ export type Database = {
         }
         Update: {
           attempted_strategies?: Json
+          chat_history?: Json
           chosen_strategy?: string | null
           created_at?: string
           fallback_reason?: string | null
@@ -991,6 +999,7 @@ export type Database = {
           manual_edit_count?: number | null
           monte_carlo_attempts?: number | null
           quote?: string | null
+          review_state?: string
           sa_improvement?: number | null
           sa_iterations?: number | null
           school_id?: string
@@ -1016,6 +1025,7 @@ export type Database = {
       schools: {
         Row: {
           admin_rotation: Json | null
+          ai_explanations_enabled: boolean
           am_recess_first_bell: string | null
           am_recess_minutes: number | null
           big_group_config: Json | null
@@ -1071,6 +1081,7 @@ export type Database = {
         }
         Insert: {
           admin_rotation?: Json | null
+          ai_explanations_enabled?: boolean
           am_recess_first_bell?: string | null
           am_recess_minutes?: number | null
           big_group_config?: Json | null
@@ -1126,6 +1137,7 @@ export type Database = {
         }
         Update: {
           admin_rotation?: Json | null
+          ai_explanations_enabled?: boolean
           am_recess_first_bell?: string | null
           am_recess_minutes?: number | null
           big_group_config?: Json | null
