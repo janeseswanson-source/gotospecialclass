@@ -595,6 +595,20 @@ export default function MasterSchedulePage() {
             </Select>
           )}
 
+          {/* Density toggle */}
+          <div className="flex items-center rounded-lg border border-border bg-background p-0.5 gap-0.5" title="Row density">
+            <button
+              type="button"
+              onClick={() => setDensity("compact")}
+              className={cn("px-2 py-1 text-[11px] font-medium rounded-md transition-colors", density === "compact" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
+            >Compact</button>
+            <button
+              type="button"
+              onClick={() => setDensity("fine")}
+              className={cn("px-2 py-1 text-[11px] font-medium rounded-md transition-colors", density === "fine" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
+            >Fine</button>
+          </div>
+
           {/* Explain toggle */}
           <Button
             variant={showExplain ? "secondary" : "ghost"}
@@ -606,6 +620,7 @@ export default function MasterSchedulePage() {
             <BrainCircuit className="h-3.5 w-3.5" />
             Explain
           </Button>
+
 
           {/* Export dropdown */}
           <DropdownMenu>
