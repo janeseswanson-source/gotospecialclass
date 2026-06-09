@@ -482,6 +482,172 @@ export function validateExtraRotation(blocks: Block[], conflictGrades: string[])
   return warnings;
 }
 
+// ─── New: grade-cohesion warning (keep_grades_together) ─────────────
+// Soft warning when a grade's specialist sessions are spread across
+// more days than necessary given its weekly session count. We define
+// "necessary" as ceil(sessions / maxPerDay) where maxPerDay = 2.
+export function validateGradeCohesion(blocks: Block[], grades: string[], school: any): Warning[] {
+  if (school?.keep_grades_together === false) return [];
+  const warnings: Warning[] = [];
+  for (const grade of grades) {
+    const gradeBlocks = blocks.filter((b) => b.grade === grade && b.specialist_id);
+    if (gradeBlocks.length === 0) continue;
+    const daysUsed = new Set(gradeBlocks.map((b) => b.day_of_week));
+    const sessions = gradeBlocks.length;
+    const idealDays = Math.max(1, Math.ceil(sessions / 2));
+    if (daysUsed.size > idealDays + 1) {
+      warnings.push({
+        type: "grade_cohesion",
+        severity: "warning",
+        message: `Grade ${grade} sessions are spread across ${daysUsed.size} days (${sessions} sessions). Cohesion target: ${idealDays} day(s).`,
+        suggestion: "Cluster grade sessions on fewer days, or disable 'Keep grades together' in School Info.",
+      });
+    }
+  }
+  return warnings;
+}
+
+// ─── New: extra PLT target check (suggest_extra_plt) ────────────────
+export function validateExtraPlt(blocks: Block[], specialists: Specialist[], school: any): Warning[] {
+  if (!school?.suggest_extra_plt) return [];
+  const target = Number(school?.extra_plt_target_minutes ?? 0);
+  if (!Number.isFinite(target) || target <= 0) return [];
+  const warnings: Warning[] = [];
+  for (const spec of specialists) {
+    const plt = blocks
+      .filter((b) => b.specialist_id === spec.id && b.grade === "Planning")
+      .reduce((acc, b) => acc + (timeToMinutes(b.end_time) - timeToMinutes(b.start_time)), 0);
+    if (plt < target) {
+      warnings.push({
+        type: "extra_plt_below_target",
+        severity: "info",
+        message: `${spec.name} has ${plt} planning min/wk — below extra-PLT target of ${target}.`,
+        suggestion: `Add ~${target - plt} more planning minutes for ${spec.name}, or lower the extra-PLT target.`,
+      });
+    }
+  }
+  return warnings;
+}
+
+// ─── New: contractual subject minutes (per-grade weekly minimums) ──
+interface ContractSubjectMinutes { grade: string; subject: string; weekly_minutes: number }
+interface ContractTeacherMinutes { role: string; planning_minutes: number; duty_free_minutes?: number; notes?: string }
+interface ContractExtract {
+  subjects?: ContractSubjectMinutes[];
+  teachers?: ContractTeacherMinutes[];
+}
+
+function normalizeGrade(g: string): string {
+  return String(g ?? "").trim().toUpperCase().replace(/^GRADE\s+/i, "").replace(/\s+/g, "");
+}
+function normalizeSubject(s: string): string {
+  return String(s ?? "").trim().toLowerCase();
+}
+
+export function validateContractualSubjects(blocks: Block[], school: any): Warning[] {
+  const extracted = (school?.contractual_minutes_extracted ?? null) as ContractExtract | null;
+  if (!extracted?.subjects?.length) return [];
+  const warnings: Warning[] = [];
+  // Aggregate scheduled minutes by (grade, subject)
+  const scheduled = new Map<string, number>();
+  for (const b of blocks) {
+    if (!b.specialist_id) continue;
+    if (b.grade === "Lunch" || b.grade === "Planning") continue;
+    const key = `${normalizeGrade(b.grade)}|${normalizeSubject(b.subject)}`;
+    const mins = timeToMinutes(b.end_time) - timeToMinutes(b.start_time);
+    scheduled.set(key, (scheduled.get(key) ?? 0) + mins);
+  }
+  for (const req of extracted.subjects) {
+    const required = Number(req.weekly_minutes ?? 0);
+    if (!Number.isFinite(required) || required <= 0) continue;
+    const key = `${normalizeGrade(req.grade)}|${normalizeSubject(req.subject)}`;
+    const have = scheduled.get(key) ?? 0;
+    if (have < required) {
+      warnings.push({
+        type: "contractual_subject_shortfall",
+        severity: "warning",
+        message: `Grade ${req.grade} ${req.subject}: ${have} min/wk scheduled, contract requires ${required} (short by ${required - have}).`,
+        suggestion: "Add more sessions for this subject/grade, or update the contractual minutes.",
+      });
+    }
+  }
+  return warnings;
+}
+
+// ─── New: contractual teacher minutes (per-role planning/duty-free) ─
+export function validateContractualTeachers(
+  blocks: Block[],
+  specialists: Specialist[],
+  teachers: Teacher[],
+  school: any,
+): Warning[] {
+  const extracted = (school?.contractual_minutes_extracted ?? null) as ContractExtract | null;
+  if (!extracted?.teachers?.length) return [];
+  const warnings: Warning[] = [];
+
+  function plannerMinutes(id: string): number {
+    return blocks
+      .filter((b) => b.specialist_id === id && b.grade === "Planning")
+      .reduce((acc, b) => acc + (timeToMinutes(b.end_time) - timeToMinutes(b.start_time)), 0);
+  }
+  function lunchMinutesFor(id: string): number {
+    return blocks
+      .filter((b) => b.specialist_id === id && b.grade === "Lunch")
+      .reduce((acc, b) => acc + (timeToMinutes(b.end_time) - timeToMinutes(b.start_time)), 0);
+  }
+
+  for (const req of extracted.teachers) {
+    const role = String(req.role ?? "").trim().toLowerCase();
+    if (!role) continue;
+    const reqPlanning = Number(req.planning_minutes ?? 0);
+    const reqDutyFree = Number(req.duty_free_minutes ?? 0);
+
+    // Try to match role against specialist subject OR teacher grade label.
+    const matchingSpecs = specialists.filter(
+      (s) => s.subject?.toLowerCase().includes(role) || role.includes(s.subject?.toLowerCase() ?? ""),
+    );
+    const matchingTeachers = teachers.filter(
+      (t) => (t.grade ?? "").toLowerCase().includes(role) || role.includes("classroom") || role.includes("teacher"),
+    );
+
+    if (matchingSpecs.length === 0 && matchingTeachers.length === 0) {
+      warnings.push({
+        type: "contractual_role_unmatched",
+        severity: "info",
+        message: `Contract role "${req.role}" did not match any specialist or teacher.`,
+        suggestion: "Rename the role to match a specialist subject (e.g. PE, Music) or 'Classroom Teacher'.",
+      });
+      continue;
+    }
+
+    for (const spec of matchingSpecs) {
+      if (reqPlanning > 0) {
+        const have = plannerMinutes(spec.id);
+        if (have < reqPlanning) {
+          warnings.push({
+            type: "contractual_planning_shortfall",
+            severity: "warning",
+            message: `${spec.name} (${req.role}): ${have} planning min/wk, contract requires ${reqPlanning}.`,
+            suggestion: "Add a planning block for this specialist or update contract data.",
+          });
+        }
+      }
+      if (reqDutyFree > 0) {
+        const have = lunchMinutesFor(spec.id);
+        if (have < reqDutyFree) {
+          warnings.push({
+            type: "contractual_duty_free_shortfall",
+            severity: "warning",
+            message: `${spec.name} (${req.role}): ${have} duty-free min/wk, contract requires ${reqDutyFree}.`,
+            suggestion: "Extend or add a lunch block for this specialist.",
+          });
+        }
+      }
+    }
+  }
+  return warnings;
+}
+
 // ─── Time slot builder ───────────────────────────────────────────────
 function buildTimeSlotsForGrade(
   grade: string,
@@ -2323,14 +2489,22 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       const m = w.message.match(/on (\w+) at (\d{2}:\d{2})/);
       return !m || !extraKeys.has(`${m[1]}:${m[2]}`);
     });
-    // FIX-P1-1 calendar info + FIX-P1-5 planning warnings:
+    // FIX-P1-1 calendar info + FIX-P1-5 planning warnings + new contract/cohesion checks:
     const calendarWarnings = validateCalendar(calendarEvents);
     const planningWarnings = validatePlanningTime(blocks, specialists, school);
+    const cohesionWarnings = validateGradeCohesion(blocks, grades, school);
+    const extraPltWarnings = validateExtraPlt(blocks, specialists, school);
+    const contractSubjectWarnings = validateContractualSubjects(blocks, school);
+    const contractTeacherWarnings = validateContractualTeachers(blocks, specialists, teachers, school);
     const warnings = [
       ...filteredBase,
       ...schedulerResult.extraWarnings,
       ...calendarWarnings,
       ...planningWarnings,
+      ...cohesionWarnings,
+      ...extraPltWarnings,
+      ...contractSubjectWarnings,
+      ...contractTeacherWarnings,
     ];
 
     // Persist strategy metadata, SA stats, and score breakdown
