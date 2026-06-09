@@ -698,6 +698,48 @@ export default function MasterSchedulePage() {
         </div>
       </div>
 
+      {/* ─── Review bar (visible until the user accepts) ─── */}
+      {activeGen && activeGen.review_state === "pending" && (
+        <div className="no-print sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 backdrop-blur">
+          <div className="flex items-center gap-2 text-sm">
+            <Sparkles className="h-4 w-4 text-primary" />
+            <span className="font-medium text-foreground">Review this schedule</span>
+            <span className="text-muted-foreground">— accept it as-is, edit with AI, or regenerate from scratch.</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="default"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={() => setReviewState("accepted")}
+              disabled={updatingReview}
+            >
+              <Check className="h-3.5 w-3.5" /> Accept
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={() => setReviewState("rejected")}
+              disabled={updatingReview}
+            >
+              <MessageSquare className="h-3.5 w-3.5" /> Edit with AI
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={() => navigate("/app/prep")}
+              disabled={updatingReview}
+            >
+              <RotateCcw className="h-3.5 w-3.5" /> Regenerate
+            </Button>
+          </div>
+        </div>
+      )}
+
+
+
       {(() => {
         if (!activeGen?.chosen_strategy) return null;
         const attempted: Array<{ strategy: string; error_count: number; warning_count: number }> =
