@@ -49,6 +49,7 @@ const StepClubs = () => {
   const [specialists, setSpecialists] = useState<SpecialistOpt[]>([]);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [modalOpen, setModalOpen] = useState(false);
+  const [nlOpen, setNlOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [initialDraft, setInitialDraft] = useState<ClubDraft | null>(null);
   const isLoaded = useRef(false);
