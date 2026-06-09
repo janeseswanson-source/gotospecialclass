@@ -284,7 +284,7 @@ export default function MasterSchedulePage() {
     return { added: added.length, removed: removed.length, total: blocks.length };
   }, [showDiff, blocks, diffBlocks]);
 
-  const recessBands = useMemo(() => buildRecessBands(recessConfig), [recessConfig]);
+  const recessBands = useMemo(() => buildRecessBands(recessConfig, recessBandLabels), [recessConfig, recessBandLabels]);
 
   const timeSlots = useMemo(
     () => density === "compact"
