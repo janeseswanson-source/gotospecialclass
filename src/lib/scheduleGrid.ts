@@ -42,6 +42,31 @@ export function buildTimeSlots(
   return slots;
 }
 
+/**
+ * Compact time slots: only times where something actually happens
+ * (block starts + school start/end + recess bounds). Eliminates rows of
+ * empty 5-minute filler.
+ */
+export function buildCompactTimeSlots(
+  schoolStart: string | null | undefined,
+  schoolEnd: string | null | undefined,
+  blocks: BlockData[] = [],
+  recessBands: RecessBand[] = [],
+): string[] {
+  const set = new Set<number>();
+  if (schoolStart) set.add(parseTime(schoolStart));
+  if (schoolEnd) set.add(parseTime(schoolEnd));
+  blocks.forEach((b) => set.add(parseTime(b.start_time)));
+  recessBands.forEach((r) => {
+    set.add(parseTime(r.start_time));
+    set.add(parseTime(r.end_time));
+  });
+  if (set.size === 0) return [];
+  return Array.from(set).sort((a, b) => a - b).map(formatTimeHM);
+}
+
+
+
 /** Convert recess_lunch_config rows into RecessBand objects for the grid. */
 export function buildRecessBands(rows: any[]): RecessBand[] {
   const bands: RecessBand[] = [];
