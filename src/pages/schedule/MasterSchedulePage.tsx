@@ -6,7 +6,8 @@ import { useSchool } from "@/contexts/SchoolContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Undo2, Redo2, Lock, GitCompare, AlertTriangle, X as XIcon, Printer, Sparkles, Loader2, BrainCircuit, Lightbulb, Download, FileText, ChevronDown, LayoutGrid } from "lucide-react";
+import { Undo2, Redo2, Lock, GitCompare, AlertTriangle, X as XIcon, Printer, Sparkles, Loader2, BrainCircuit, Lightbulb, Download, FileText, ChevronDown, LayoutGrid, MessageSquare, Check, RotateCcw } from "lucide-react";
+import ScheduleChatPanel from "@/components/schedule/ScheduleChatPanel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatTime as formatTimeDisplay, cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -78,6 +79,8 @@ export default function MasterSchedulePage() {
   const [warningsDismissed, setWarningsDismissed] = useState(false);
   const [resolvingAI, setResolvingAI] = useState(false);
   const [showExplain, setShowExplain] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [updatingReview, setUpdatingReview] = useState(false);
   const [specExportOpen, setSpecExportOpen] = useState(false);
   const [adminExportOpen, setAdminExportOpen] = useState(false);
   const [replanSuggestion, setReplanSuggestion] = useState<{ specialistId: string; specialistName: string } | null>(null);
