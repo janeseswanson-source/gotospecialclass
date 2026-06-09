@@ -95,9 +95,9 @@ const StepReview = () => {
       await supabase.from('schools').update({
         grades_served: data.gradesServed,
         schedule_type: data.scheduleType as any,
-        conflict_strategy: data.conflictStrategy as any,
-        conflict_grades: data.conflictGrades,
-        conflict_timing: data.conflictTiming,
+        // Conflict strategy fields are owned by StepConflict's auto-save (writes the
+        // full ordered conflict_strategies array). Don't overwrite here with the stale
+        // scalar — that was collapsing multi-strategy choices back to 'standard'.
         setup_complete: true,
         setup_step: 10,
       }).eq('id', schoolId);
