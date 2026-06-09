@@ -341,8 +341,8 @@ const StepRecessLunch = () => {
         </div>
       ) : (
         <>
-          {/* Three period cards */}
-          <div className="grid gap-3 md:grid-cols-3">
+          {/* Three period cards — stack on small/medium, side-by-side at xl+ */}
+          <div className="grid gap-3 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 min-w-0">
             {PERIOD_ORDER.map(p => (
               <PeriodCard
                 key={p}
@@ -358,11 +358,11 @@ const StepRecessLunch = () => {
             ))}
           </div>
 
-          {/* Early release block */}
+          {/* Early release block — collapsed by default */}
           {hasEarlyRelease ? (
             <Collapsible open={erOpen} onOpenChange={setErOpen}>
               <div className="rounded-xl border border-border bg-muted/20">
-                <CollapsibleTrigger className="flex w-full items-center justify-between p-4 text-left">
+                <CollapsibleTrigger className="flex w-full items-center justify-between p-3 text-left">
                   <div>
                     <h3 className="text-sm font-semibold text-foreground">Early Release Day overrides</h3>
                     <p className="text-xs text-muted-foreground mt-0.5">
@@ -373,8 +373,8 @@ const StepRecessLunch = () => {
                   </div>
                   <ChevronDown className={cn('h-4 w-4 transition-transform', erOpen && 'rotate-180')} />
                 </CollapsibleTrigger>
-                <CollapsibleContent className="px-4 pb-4">
-                  <div className="grid gap-3 md:grid-cols-3">
+                <CollapsibleContent className="px-3 pb-3">
+                  <div className="grid gap-3 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 min-w-0">
                     {PERIOD_ORDER.map(p => (
                       <PeriodCard
                         key={`er-${p}`}
@@ -400,6 +400,7 @@ const StepRecessLunch = () => {
               </p>
             </div>
           )}
+
 
           {validation.hasError && (
             <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs space-y-1">

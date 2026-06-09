@@ -4,13 +4,12 @@ import { DefaultChatTransport, type UIMessage } from "ai";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { BrainCircuit, X as XIcon } from "lucide-react";
+import { BrainCircuit, X as XIcon, AlertCircle } from "lucide-react";
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { Tool, ToolHeader, ToolContent, ToolInput, ToolOutput } from "@/components/ai-elements/tool";
 import { PromptInput, PromptInputTextarea, PromptInputSubmit, PromptInputFooter } from "@/components/ai-elements/prompt-input";
 import { Shimmer } from "@/components/ai-elements/shimmer";
-import { toast } from "@/hooks/use-toast";
 
 const QUICK_PROMPTS = [
   "Move 3rd grade music to Tuesday morning",
@@ -20,7 +19,7 @@ const QUICK_PROMPTS = [
 ];
 
 interface ScheduleChatPanelProps {
-  generationId: string;
+  generationId: string | null;
   onClose: () => void;
   onScheduleChanged: () => void;
 }
@@ -35,12 +34,13 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
     const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/schedule-chat`;
     return new DefaultChatTransport({
       api: url,
-      // body merged into every request
       body: { generation_id: generationId },
-      // refresh token each call so long-lived sessions don't 401
       headers: async () => {
         const { data } = await supabase.auth.getSession();
-        const token = data.session?.access_token ?? tokenRef.current ?? "";
+        const token = data.session?.access_token ?? tokenRef.current;
+        if (!token) {
+          throw new Error("You're signed out. Please sign in again to use the AI editor.");
+        }
         tokenRef.current = token;
         return {
           Authorization: `Bearer ${token}`,
@@ -50,9 +50,15 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
     });
   }, [generationId]);
 
-  // Hydrate persisted chat_history once.
+  // Hydrate persisted chat_history once per generation.
   useEffect(() => {
+    if (!generationId) {
+      setHydratedMessages([]);
+      setHydrated(true);
+      return;
+    }
     let alive = true;
+    setHydrated(false);
     (async () => {
       const { data } = await supabase
         .from("schedule_generations")
@@ -68,36 +74,31 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
   }, [generationId]);
 
   const { messages, sendMessage, status, error, stop } = useChat({
-    id: generationId,
+    id: generationId ?? "no-gen",
     messages: hydratedMessages,
     transport,
-    onError: (err) => {
-      console.error("[chat] error", err);
-      toast({ title: "Chat error", description: err.message, variant: "destructive" });
-    },
     onFinish: () => {
-      // After every assistant turn re-pull blocks (tools may have mutated them).
       onScheduleChanged();
     },
   });
 
-  // Focus textarea on mount and after sends.
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => {
     if (hydrated) textareaRef.current?.focus();
   }, [hydrated, status]);
 
   const isLoading = status === "submitted" || status === "streaming";
+  const canSend = !!generationId && hydrated && !!input.trim() && !isLoading;
 
-  async function handleSubmit(e?: React.FormEvent) {
-    e?.preventDefault();
+  async function submit() {
     const text = input.trim();
-    if (!text || isLoading) return;
+    if (!text || isLoading || !generationId) return;
     setInput("");
     try {
       await sendMessage({ text });
     } catch (err: any) {
-      toast({ title: "Send failed", description: err?.message ?? "Unknown error", variant: "destructive" });
+      // Surface as inline error; useChat's error state also catches transport errors.
+      console.error("[chat] send failed", err);
     }
   }
 
@@ -110,10 +111,14 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
           </span>
           <div>
             <p className="text-sm font-semibold">Edit with AI</p>
-            <p className="text-xs text-muted-foreground">Describe changes — I'll move, swap, or add blocks.</p>
+            <p className="text-xs text-muted-foreground">
+              {generationId
+                ? "Describe changes — I'll move, swap, or add blocks."
+                : "Generate a schedule first to start chatting."}
+            </p>
           </div>
         </div>
-        <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close AI editor">
+        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={onClose} aria-label="Close AI editor">
           <XIcon className="h-4 w-4" />
         </Button>
       </header>
@@ -163,13 +168,19 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
             </div>
           )}
           {error && (
-            <Badge variant="destructive" className="mx-2">{error.message}</Badge>
+            <div className="mx-2 my-2 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <div className="font-medium">Chat error</div>
+                <div className="opacity-90">{error.message}</div>
+              </div>
+            </div>
           )}
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
 
-      {messages.length === 0 && (
+      {messages.length === 0 && generationId && (
         <div className="flex flex-wrap gap-1.5 border-t border-border px-3 py-2">
           {QUICK_PROMPTS.map((q) => (
             <button
@@ -184,24 +195,24 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="border-t border-border p-3">
-        <PromptInput onSubmit={() => handleSubmit()}>
+      <div className="border-t border-border p-3">
+        <PromptInput onSubmit={() => submit()}>
           <PromptInputTextarea
             ref={textareaRef as any}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Tell me what to change…"
-            disabled={!hydrated}
+            placeholder={generationId ? "Tell me what to change…" : "Generate a schedule first"}
+            disabled={!generationId || !hydrated}
           />
           <PromptInputFooter className="justify-end">
             <PromptInputSubmit
               status={isLoading ? "streaming" : "ready"}
-              disabled={!hydrated || (!isLoading && !input.trim())}
+              disabled={isLoading ? false : !canSend}
               onClick={isLoading ? () => stop() : undefined}
             />
           </PromptInputFooter>
         </PromptInput>
-      </form>
+      </div>
     </aside>
   );
 }
