@@ -56,12 +56,12 @@ export default function EditBlockDialog({ block, specialists, open, onOpenChange
             <Label>Room</Label>
             <Input value={room} onChange={(e) => setRoom(e.target.value)} />
           </div>
-          {block.placement_reason && (
+          {(block.ai_explanation || block.placement_reason) && (
             <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2">
               <Lightbulb className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-500" />
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-0.5">Why here</p>
-                <p className="text-xs text-foreground">{block.placement_reason}</p>
+                <p className="text-xs text-foreground">{block.ai_explanation ?? block.placement_reason}</p>
               </div>
             </div>
           )}

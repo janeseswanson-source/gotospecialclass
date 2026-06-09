@@ -6,7 +6,8 @@ import { useSchool } from "@/contexts/SchoolContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Undo2, Redo2, Lock, GitCompare, AlertTriangle, X as XIcon, Printer, Sparkles, Loader2, BrainCircuit, Lightbulb, Download, FileText, ChevronDown, LayoutGrid } from "lucide-react";
+import { Undo2, Redo2, Lock, GitCompare, AlertTriangle, X as XIcon, Printer, Sparkles, Loader2, BrainCircuit, Lightbulb, Download, FileText, ChevronDown, LayoutGrid, MessageSquare, Check, RotateCcw } from "lucide-react";
+import ScheduleChatPanel from "@/components/schedule/ScheduleChatPanel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatTime as formatTimeDisplay, cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -78,6 +79,8 @@ export default function MasterSchedulePage() {
   const [warningsDismissed, setWarningsDismissed] = useState(false);
   const [resolvingAI, setResolvingAI] = useState(false);
   const [showExplain, setShowExplain] = useState(false);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [updatingReview, setUpdatingReview] = useState(false);
   const [specExportOpen, setSpecExportOpen] = useState(false);
   const [adminExportOpen, setAdminExportOpen] = useState(false);
   const [replanSuggestion, setReplanSuggestion] = useState<{ specialistId: string; specialistName: string } | null>(null);
@@ -211,6 +214,7 @@ export default function MasterSchedulePage() {
       teacher_id: b.teacher_id ?? null,
       notes: b.notes ?? null,
       placement_reason: b.placement_reason ?? null,
+      ai_explanation: b.ai_explanation ?? null,
     }));
   }
 
@@ -237,6 +241,20 @@ export default function MasterSchedulePage() {
       const warnings = analyzeScheduleBlocks(mappedBlocks, specialists, grades);
       setScheduleWarnings(warnings);
       setWarningsDismissed(false);
+    }
+
+    // Fire-and-forget AI explanations for blocks that lack them.
+    const missingExplanations = mappedBlocks.some((b: any) => !b.ai_explanation);
+    if (missingExplanations) {
+      supabase.functions.invoke("explain-schedule", { body: { generation_id: genId } })
+        .then(async () => {
+          // Re-fetch only the explanation column and merge.
+          const { data: refreshed } = await supabase.from("schedule_blocks").select("id, ai_explanation").eq("generation_id", genId);
+          if (!refreshed) return;
+          const explMap = new Map(refreshed.map((r: any) => [r.id, r.ai_explanation]));
+          setBlocks((prev) => prev.map((b) => ({ ...b, ai_explanation: explMap.get(b.id) ?? b.ai_explanation })));
+        })
+        .catch((err) => console.warn("[explain-schedule] failed", err));
     }
   }
 
@@ -452,6 +470,30 @@ export default function MasterSchedulePage() {
     }
   }
 
+  async function setReviewState(next: "accepted" | "rejected") {
+    if (!selectedGen) return;
+    setUpdatingReview(true);
+    try {
+      const { error } = await supabase
+        .from("schedule_generations")
+        .update({ review_state: next })
+        .eq("id", selectedGen);
+      if (error) throw error;
+      setGenerations((prev) => prev.map((g) => g.id === selectedGen ? { ...g, review_state: next } : g));
+      toast({
+        title: next === "accepted" ? "Schedule accepted" : "Schedule marked for changes",
+        description: next === "accepted"
+          ? "Exports and manual edits are unlocked."
+          : "Opening the AI editor — describe what to change.",
+      });
+      if (next === "rejected") setChatOpen(true);
+    } catch (e: any) {
+      toast({ title: "Update failed", description: e?.message ?? "Unknown error", variant: "destructive" });
+    } finally {
+      setUpdatingReview(false);
+    }
+  }
+
   const hasWeekLabels = blocks.some((b: any) => b.week_label);
   const isAbStrategy = activeGen?.chosen_strategy === "ab_week";
   const isAaBbStrategy = activeGen?.chosen_strategy === "aa_bb_week";
@@ -618,6 +660,18 @@ export default function MasterSchedulePage() {
             >Fine</button>
           </div>
 
+          {/* Edit with AI */}
+          <Button
+            variant={chatOpen ? "secondary" : "default"}
+            size="sm"
+            className="h-8 gap-1.5"
+            onClick={() => setChatOpen((v) => !v)}
+            title="Open AI editor"
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            Edit with AI
+          </Button>
+
           {/* Explain toggle */}
           <Button
             variant={showExplain ? "secondary" : "ghost"}
@@ -629,6 +683,9 @@ export default function MasterSchedulePage() {
             <BrainCircuit className="h-3.5 w-3.5" />
             Explain
           </Button>
+
+
+
 
 
           {/* Export dropdown */}
@@ -655,6 +712,48 @@ export default function MasterSchedulePage() {
           </DropdownMenu>
         </div>
       </div>
+
+      {/* ─── Review bar (visible until the user accepts) ─── */}
+      {activeGen && activeGen.review_state === "pending" && (
+        <div className="no-print sticky top-0 z-30 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 backdrop-blur">
+          <div className="flex items-center gap-2 text-sm">
+            <Sparkles className="h-4 w-4 text-primary" />
+            <span className="font-medium text-foreground">Review this schedule</span>
+            <span className="text-muted-foreground">— accept it as-is, edit with AI, or regenerate from scratch.</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="default"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={() => setReviewState("accepted")}
+              disabled={updatingReview}
+            >
+              <Check className="h-3.5 w-3.5" /> Accept
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={() => setReviewState("rejected")}
+              disabled={updatingReview}
+            >
+              <MessageSquare className="h-3.5 w-3.5" /> Edit with AI
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1.5"
+              onClick={() => navigate("/app/prep")}
+              disabled={updatingReview}
+            >
+              <RotateCcw className="h-3.5 w-3.5" /> Regenerate
+            </Button>
+          </div>
+        </div>
+      )}
+
+
 
       {(() => {
         if (!activeGen?.chosen_strategy) return null;
@@ -1077,6 +1176,14 @@ export default function MasterSchedulePage() {
         clubs={clubs}
         recessConfig={recessConfig}
       />
+
+      {chatOpen && selectedGen && (
+        <ScheduleChatPanel
+          generationId={selectedGen}
+          onClose={() => setChatOpen(false)}
+          onScheduleChanged={() => loadBlocks(selectedGen)}
+        />
+      )}
     </div>
   );
 }
