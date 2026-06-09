@@ -16,6 +16,7 @@ import EditBlockDialog from "@/components/schedule/EditBlockDialog";
 import QuoteBanner from "@/components/schedule/QuoteBanner";
 import { toast } from "@/hooks/use-toast";
 import { analyzeScheduleBlocks, type ScheduleWarning } from "@/lib/strategyFeasibility";
+import { warningMeta } from "@/lib/warningMeta";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import SpecialistExportModal from "./exports/SpecialistExportModal";
 import AdminExportModal from "./exports/AdminExportModal";
@@ -723,29 +724,39 @@ export default function MasterSchedulePage() {
       {scheduleWarnings.length > 0 && !warningsDismissed && (() => {
         const errors = scheduleWarnings.filter(w => w.severity === 'error');
         const warnings = scheduleWarnings.filter(w => w.severity === 'warning');
-        const renderRow = (w: ScheduleWarning, i: number, isError: boolean) => (
-          <div key={i} className="flex items-start gap-2 text-xs py-0.5">
-            <span className={cn('shrink-0 mt-1.5 h-1.5 w-1.5 rounded-full', isError ? 'bg-destructive' : 'bg-amber-500')} />
-            <div className="flex-1 min-w-0">
-              <span className="text-foreground">{w.message}</span>
-              {w.suggestion && <span className="text-muted-foreground ml-1">— {w.suggestion}</span>}
-              {w.fixAction && (
-                <button
-                  type="button"
-                  className="ml-2 text-[11px] font-semibold text-primary hover:underline"
-                  onClick={() => {
-                    const step = FIX_STEP_MAP[w.fixAction!.target] ?? 0;
-                    const qs = new URLSearchParams({ step: String(step) });
-                    if (w.fixAction!.anchor) qs.set('anchor', w.fixAction!.anchor);
-                    navigate(`/app/setup?${qs.toString()}`);
-                  }}
-                >
-                  {w.fixAction.label} →
-                </button>
-              )}
+        const infos = scheduleWarnings.filter(w => w.severity === 'info');
+        const sevDot = (sev: string) =>
+          sev === 'error' ? 'bg-destructive'
+          : sev === 'info' ? 'bg-sky-500'
+          : 'bg-amber-500';
+        const renderRow = (w: ScheduleWarning, i: number) => {
+          const meta = warningMeta((w as any).type);
+          return (
+            <div key={i} className="flex items-start gap-2 text-xs py-0.5">
+              <span className={cn('shrink-0 mt-1.5 h-1.5 w-1.5 rounded-full', sevDot(w.severity))} />
+              <meta.Icon className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />
+              <div className="flex-1 min-w-0">
+                <span className="font-semibold text-foreground mr-1.5">{meta.label}:</span>
+                <span className="text-foreground">{w.message}</span>
+                {w.suggestion && <span className="text-muted-foreground ml-1">— {w.suggestion}</span>}
+                {w.fixAction && (
+                  <button
+                    type="button"
+                    className="ml-2 text-[11px] font-semibold text-primary hover:underline"
+                    onClick={() => {
+                      const step = FIX_STEP_MAP[w.fixAction!.target] ?? 0;
+                      const qs = new URLSearchParams({ step: String(step) });
+                      if (w.fixAction!.anchor) qs.set('anchor', w.fixAction!.anchor);
+                      navigate(`/app/setup?${qs.toString()}`);
+                    }}
+                  >
+                    {w.fixAction.label} →
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        );
+          );
+        };
         return (
           <div className="rounded-xl border border-border bg-card overflow-hidden no-print">
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-border">
@@ -760,6 +771,11 @@ export default function MasterSchedulePage() {
                 {warnings.length > 0 && (
                   <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-400">
                     {warnings.length} warning{warnings.length !== 1 ? 's' : ''}
+                  </span>
+                )}
+                {infos.length > 0 && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-sky-500/15 text-sky-700 dark:text-sky-400">
+                    {infos.length} info
                   </span>
                 )}
               </div>
@@ -787,15 +803,24 @@ export default function MasterSchedulePage() {
               {errors.length > 0 && (
                 <div className="px-4 py-2.5 space-y-0.5">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-destructive mb-1.5">Errors</p>
-                  {errors.map((w, i) => renderRow(w, i, true))}
+                  {errors.map((w, i) => renderRow(w, i))}
                 </div>
               )}
               {warnings.length > 0 && (
                 <div className="px-4 py-2.5 space-y-0.5">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-1.5">Warnings</p>
-                  {warnings.slice(0, 10).map((w, i) => renderRow(w, i, false))}
+                  {warnings.slice(0, 10).map((w, i) => renderRow(w, i))}
                   {warnings.length > 10 && (
                     <p className="text-xs text-muted-foreground italic mt-1">+ {warnings.length - 10} more</p>
+                  )}
+                </div>
+              )}
+              {infos.length > 0 && (
+                <div className="px-4 py-2.5 space-y-0.5">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-600 dark:text-sky-400 mb-1.5">Info</p>
+                  {infos.slice(0, 6).map((w, i) => renderRow(w, i))}
+                  {infos.length > 6 && (
+                    <p className="text-xs text-muted-foreground italic mt-1">+ {infos.length - 6} more</p>
                   )}
                 </div>
               )}

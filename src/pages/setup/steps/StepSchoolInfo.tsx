@@ -79,13 +79,13 @@ const StepSchoolInfo = () => {
             defaultAmPmPreference: (existingSchool as any).default_am_pm_preference || '',
             defaultDayPreference: (existingSchool as any).default_day_preference || '',
           });
-          setKeepGradesTogether((existingSchool as any).keep_grades_together ?? true);
-          setSuggestExtraPlt((existingSchool as any).suggest_extra_plt ?? false);
-          setExtraPltTargetMinutes((existingSchool as any).extra_plt_target_minutes ?? '');
+          setKeepGradesTogether(existingSchool.keep_grades_together ?? true);
+          setSuggestExtraPlt(existingSchool.suggest_extra_plt ?? false);
+          setExtraPltTargetMinutes(existingSchool.extra_plt_target_minutes ?? '');
         }
       } else {
-        // Already have a school id — load just the new params (cast: columns added in a pending migration)
-        const { data: extras } = await (supabase as any)
+        // Already have a school id — load just the new params
+        const { data: extras } = await supabase
           .from('schools')
           .select('keep_grades_together, suggest_extra_plt, extra_plt_target_minutes')
           .eq('id', schoolId)

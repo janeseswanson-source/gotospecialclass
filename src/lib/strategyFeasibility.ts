@@ -126,12 +126,13 @@ export function getStrategyNote(strategyKey: string, ctx: StrategyContext): Stra
 export type WarningFixTarget = 'specialists' | 'teachers' | 'clubs' | 'conflicts' | 'rotation' | 'events' | 'recess';
 
 export interface ScheduleWarning {
-  type: "gap" | "no_coverage" | "double_booked" | "uneven_weeks";
+  type: string;
   message: string;
-  severity: "warning" | "error";
+  severity: "info" | "warning" | "error";
   suggestion?: string;
   fixAction?: { label: string; target: WarningFixTarget; anchor?: string };
 }
+
 
 export function analyzeScheduleBlocks(
   blocks: Array<{

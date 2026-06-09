@@ -12,6 +12,7 @@ import { toast } from "@/hooks/use-toast";
 import { formatTime } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { getStrategyNote, getRecommendedStrategies, type StrategyContext } from "@/lib/strategyFeasibility";
+import { analyzeContractFeasibility, type FeasibilityNote } from "@/lib/contractFeasibility";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -93,6 +94,8 @@ export default function PrepPage() {
   const [hasClubs, setHasClubs] = useState(false);
   const [classDuration, setClassDuration] = useState(45);
   const [bigGroupConfig, setBigGroupConfig] = useState<Array<{ grade: string; teacherIds: string[] }>>([]);
+  const [contractNotes, setContractNotes] = useState<FeasibilityNote[]>([]);
+
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -126,12 +129,13 @@ export default function PrepPage() {
       setConflictGrades((school.conflict_grades as string[]) ?? []);
 
       const [specialistsRes, teachersRes, recessRes, eventsRes, clubsRes] = await Promise.all([
-        supabase.from("specialists").select("id, working_days, class_duration, lunch_minutes, weekly_planning_minutes, is_part_time").eq("school_id", school.id),
-        supabase.from("classroom_teachers").select("id, grade").eq("school_id", school.id),
+        supabase.from("specialists").select("id, name, subject, working_days, class_duration, lunch_minutes, weekly_planning_minutes, is_part_time").eq("school_id", school.id),
+        supabase.from("classroom_teachers").select("id, name, grade").eq("school_id", school.id),
         supabase.from("recess_lunch_config").select("id").eq("school_id", school.id),
         supabase.from("parsed_calendar_events").select("id").eq("school_id", school.id),
         supabase.from("clubs").select("id").eq("school_id", school.id),
       ]);
+
 
       const specialists = specialistsRes.data ?? [];
       setSpecialistCount(specialists.length);
@@ -144,6 +148,10 @@ export default function PrepPage() {
         tByG[t.grade] = (tByG[t.grade] ?? 0) + 1;
       }
       setTeachersByGrade(tByG);
+
+      // ── Contract / scheduler-data feasibility (pre-flight) ──
+      setContractNotes(analyzeContractFeasibility(school, specialistsRes.data ?? [], teachersRes.data ?? []));
+
 
       // ── Coverage forecast: demand vs supply per grade ──
       const PRIORITY = ["6","5","4","3","2","1","K","TK","PreK","Pre-K"];
@@ -458,6 +466,43 @@ export default function PrepPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Contract & scheduler-data feasibility (pre-flight) */}
+      {!loading && !loadError && contractNotes.length > 0 && (
+        <Card>
+          <CardContent className="p-6 space-y-3">
+            <div className="flex items-center gap-2">
+              <Info className="h-4 w-4 text-primary" />
+              <h2 className="text-lg font-semibold text-foreground">Contract & Scheduling Preflight</h2>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Heads-up before you generate. These won't block scheduling but may show up as warnings after.
+            </p>
+            <div className="space-y-2">
+              {contractNotes.map((n, i) => (
+                <div
+                  key={i}
+                  className={cn(
+                    "flex items-start gap-3 rounded-lg border px-3 py-2 text-sm",
+                    n.level === "warning"
+                      ? "border-amber-500/30 bg-amber-50/40 dark:bg-amber-950/15"
+                      : "border-sky-500/30 bg-sky-50/40 dark:bg-sky-950/15"
+                  )}
+                >
+                  {n.level === "warning"
+                    ? <AlertCircle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+                    : <Info className="h-4 w-4 text-primary mt-0.5 shrink-0" />}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-foreground">{n.message}</p>
+                    {n.suggestion && <p className="text-xs text-muted-foreground mt-0.5">{n.suggestion}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
 
       {/* Conflict Strategy Picker */}
       {!loading && !loadError && (

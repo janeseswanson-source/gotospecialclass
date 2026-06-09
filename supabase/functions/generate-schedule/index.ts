@@ -2033,8 +2033,10 @@ export function generateScheduleBlocks(
       end_time: school.end_time,
       early_release_day: school.early_release_day,
       early_release_end_time: school.early_release_end_time,
+      keep_grades_together: (school as any).keep_grades_together ?? true,
+      contractual_minutes_extracted: (school as any).contractual_minutes_extracted ?? null,
     },
-    specialists: specialists.map((s) => ({ id: s.id, working_days: s.working_days })),
+    specialists: specialists.map((s) => ({ id: s.id, subject: s.subject, working_days: s.working_days })),
     teachers: teachers.map((t) => ({
       id: t.id,
       am_pm_preference: t.am_pm_preference,
