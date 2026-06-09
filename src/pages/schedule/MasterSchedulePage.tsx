@@ -829,15 +829,12 @@ export default function MasterSchedulePage() {
             </TabsList>
 
             <TabsContent value="master">
-
-              <div className="flex justify-end mb-2 no-print">
-                <PrintViewButton label="Print Master Grid" />
-              </div>
               {trayBlocks.length > 0 && (
                 <div className="mb-3">
                   <ScrabbleTray blocks={trayBlocks} onDragStart={handleTrayDragStart} />
                 </div>
               )}
+
               <ScheduleGrid
                 blocks={blocks}
                 timeSlots={timeSlots}
