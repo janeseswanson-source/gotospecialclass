@@ -699,9 +699,7 @@ export default function MasterSchedulePage() {
 
       {quote && <QuoteBanner text={quote.text} author={quote.author} />}
 
-      <p className="text-xs text-muted-foreground no-print">
-        Master Grid is the admin overview. Use the other tabs for at-a-glance views per specialist, teacher, week, or day. Use Export in the toolbar to download PDFs.
-      </p>
+
 
       {/* ─── Replan banner (4C) ─── */}
       {replanSuggestion && (
@@ -824,13 +822,14 @@ export default function MasterSchedulePage() {
           )}
 
           <Tabs defaultValue="master">
-            <TabsList className="no-print">
+            <TabsList className="no-print sticky top-0 z-20 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70">
               <TabsTrigger value="master">Master Grid</TabsTrigger>
               <TabsTrigger value="specialist">By Specialist</TabsTrigger>
               <TabsTrigger value="teacher">By Teacher</TabsTrigger>
             </TabsList>
 
             <TabsContent value="master">
+
               <div className="flex justify-end mb-2 no-print">
                 <PrintViewButton label="Print Master Grid" />
               </div>
