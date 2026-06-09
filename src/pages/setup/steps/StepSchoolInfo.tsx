@@ -147,7 +147,7 @@ const StepSchoolInfo = () => {
     } catch {
       setSaveStatus('idle');
     }
-  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, schoolId]);
+  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, schoolId]);
 
   useFlushOnUnmount(saveTimer, () => { if (isLoaded.current) autoSave(); });
 
