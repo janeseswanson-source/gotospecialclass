@@ -84,16 +84,16 @@ const StepSchoolInfo = () => {
           setExtraPltTargetMinutes((existingSchool as any).extra_plt_target_minutes ?? '');
         }
       } else {
-        // Already have a school id — load just the new params
-        const { data: extras } = await supabase
+        // Already have a school id — load just the new params (cast: columns added in a pending migration)
+        const { data: extras } = await (supabase as any)
           .from('schools')
           .select('keep_grades_together, suggest_extra_plt, extra_plt_target_minutes')
           .eq('id', schoolId)
           .maybeSingle();
         if (extras) {
-          setKeepGradesTogether((extras as any).keep_grades_together ?? true);
-          setSuggestExtraPlt((extras as any).suggest_extra_plt ?? false);
-          setExtraPltTargetMinutes((extras as any).extra_plt_target_minutes ?? '');
+          setKeepGradesTogether(extras.keep_grades_together ?? true);
+          setSuggestExtraPlt(extras.suggest_extra_plt ?? false);
+          setExtraPltTargetMinutes(extras.extra_plt_target_minutes ?? '');
         }
       }
       isLoaded.current = true;
