@@ -17,26 +17,83 @@ import StepClubs from './steps/StepClubs';
 import StepEvents from './steps/StepEvents';
 import StepConflict from './steps/StepConflict';
 import StepReview from './steps/StepReview';
+import WizardStepShell from '@/components/setup/WizardStepShell';
 
 interface StepDef {
   label: string;
   blurb: string;
   Component: React.ComponentType;
+  why?: string;
+  bullets?: { label: string; detail?: string }[];
 }
 
 const STEPS: StepDef[] = [
-  { label: 'Welcome', blurb: 'Quick intro and what you’ll set up.', Component: StepWelcome },
-  { label: 'School Info', blurb: 'Bell times, grades, planning minutes.', Component: StepSchoolInfo },
-  { label: 'Calendar', blurb: 'Upload or paste your school calendar.', Component: StepCalendarUpload },
-  { label: 'Recess & Lunch', blurb: 'Protected windows for meals and recess.', Component: StepRecessLunch },
-  { label: 'Specialists', blurb: 'Music, Art, PE, etc.', Component: StepSpecialists },
-  { label: 'Teachers', blurb: 'Classroom rosters and combo pairs.', Component: StepTeachers },
-  { label: 'Contractual Minutes', blurb: 'Upload contract — AI extracts required minutes.', Component: StepContractualMinutes },
-  { label: 'Admin Rotation', blurb: 'PLC, admin duties, and other rotations.', Component: StepAdminRotation },
-  { label: 'Clubs', blurb: 'Lunch clubs and recurring activities.', Component: StepClubs },
-  { label: 'Events', blurb: 'One-off events and assemblies.', Component: StepEvents },
-  { label: 'Conflicts', blurb: 'How to handle scheduling conflicts.', Component: StepConflict },
-  { label: 'Review', blurb: 'Final check before generating.', Component: StepReview },
+  {
+    label: 'Welcome', blurb: 'Quick intro and what you’ll set up.', Component: StepWelcome,
+    why: 'A 5-minute tour of the 11 steps so you know what’s ahead.',
+  },
+  {
+    label: 'School Info', blurb: 'Bell times, grades, planning minutes.', Component: StepSchoolInfo,
+    why: 'Everything downstream — bell schedule, recess, conflicts — pivots off these numbers.',
+    bullets: [
+      { label: 'Bell times', detail: 'Bound the daily scheduling window' },
+      { label: 'Grades served', detail: 'Drive teacher & recess groupings' },
+      { label: 'Planning minutes', detail: 'Used for teacher prep guarantees' },
+    ],
+  },
+  {
+    label: 'Calendar', blurb: 'Upload or paste your school calendar.', Component: StepCalendarUpload,
+    why: 'Holidays and early-release days are pulled out automatically so the engine can skip them.',
+    bullets: [{ label: 'AI parsing', detail: 'Upload PDF/image — events extracted for you' }],
+  },
+  {
+    label: 'Recess & Lunch', blurb: 'Protected windows for meals and recess.', Component: StepRecessLunch,
+    why: 'The scheduler treats these windows as off-limits for specialist classes.',
+    bullets: [
+      { label: 'Whole school vs staggered', detail: 'Pick one model — switch any time' },
+      { label: 'Grade bands', detail: 'Group grades that lunch together' },
+    ],
+  },
+  {
+    label: 'Specialists', blurb: 'Music, Art, PE, etc.', Component: StepSpecialists,
+    why: 'Each specialist is a constraint: their availability, subject, and travel time all shape the plan.',
+    bullets: [{ label: 'AI upload', detail: 'Drop a roster spreadsheet — AI fills the table' }],
+  },
+  {
+    label: 'Teachers', blurb: 'Classroom rosters and combo pairs.', Component: StepTeachers,
+    why: 'Defines the class roster the scheduler is assigning blocks to.',
+    bullets: [
+      { label: 'Combo classes', detail: 'Pair classrooms that meet together' },
+      { label: 'AI upload', detail: 'Spreadsheet → rows in one click' },
+    ],
+  },
+  {
+    label: 'Contractual Minutes', blurb: 'Upload contract — AI extracts required minutes.', Component: StepContractualMinutes,
+    why: 'Union/district contracts dictate weekly minutes per subject. AI reads the PDF so you don’t have to.',
+  },
+  {
+    label: 'Admin Rotation', blurb: 'PLC, admin duties, and other rotations.', Component: StepAdminRotation,
+    why: 'Seeds the scheduler with non-teaching blocks (PLC, meetings) so they aren’t double-booked.',
+  },
+  {
+    label: 'Clubs', blurb: 'Lunch clubs and recurring activities.', Component: StepClubs,
+    why: 'Recurring lunch/enrichment blocks. Can double as a relief valve for tough conflicts.',
+    bullets: [{ label: 'AI import', detail: 'Describe clubs in plain English' }],
+  },
+  {
+    label: 'Events', blurb: 'One-off events and assemblies.', Component: StepEvents,
+    why: 'One-off blocks (assemblies, picture day) that override the normal schedule on a date.',
+    bullets: [{ label: 'AI import', detail: 'Describe events in plain English' }],
+  },
+  {
+    label: 'Conflicts', blurb: 'How to handle scheduling conflicts.', Component: StepConflict,
+    why: 'Tell the engine what to try first when two classes both need the same slot.',
+    bullets: [{ label: 'AI recommend', detail: 'Get a strategy ranked by feasibility' }],
+  },
+  {
+    label: 'Review', blurb: 'Final check before generating.', Component: StepReview,
+    why: 'Final readiness check — missing data is flagged before you generate.',
+  },
 ];
 
 const SetupWizardContent = () => {
