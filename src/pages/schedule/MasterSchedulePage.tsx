@@ -839,16 +839,25 @@ export default function MasterSchedulePage() {
       <div className={showExplain ? "flex gap-4 items-start" : undefined}>
         {/* Main content column */}
         <div className="flex-1 min-w-0 space-y-4">
-          {hasWeekLabels && (
+          {showWeekSelector && (
             <div className="flex items-center gap-2 no-print">
-              <span className="text-sm font-medium text-muted-foreground">Week:</span>
+              <span className="text-sm font-medium text-muted-foreground">
+                {isAbStrategy ? "A/B Week rotation:" : isAaBbStrategy ? "AA/BB rotation:" : "Week:"}
+              </span>
               <Tabs value={weekFilter} onValueChange={setWeekFilter} className="w-auto">
                 <TabsList className="h-8">
-                  <TabsTrigger value="all" className="text-xs px-3 h-7">All</TabsTrigger>
-                  <TabsTrigger value="A" className="text-xs px-3 h-7">Week A</TabsTrigger>
-                  <TabsTrigger value="B" className="text-xs px-3 h-7">Week B</TabsTrigger>
+                  {weekOptions.map((opt) => (
+                    <TabsTrigger key={opt.value} value={opt.value} className="text-xs px-3 h-7">
+                      {opt.label}
+                    </TabsTrigger>
+                  ))}
                 </TabsList>
               </Tabs>
+              {!hasWeekLabels && (isAbStrategy || isAaBbStrategy) && (
+                <span className="text-xs text-muted-foreground italic">
+                  (no per-week labels on these blocks — generator may have fallen back to a single-week layout)
+                </span>
+              )}
             </div>
           )}
 
