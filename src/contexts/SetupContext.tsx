@@ -193,7 +193,7 @@ export const SetupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       try {
         const { data: school } = await supabase
           .from('schools')
-          .select('name, website, start_time, end_time, grades_served, schedule_type, school_year, class_duration, planning_minutes, lunch_minutes, passing_time, setup_time, notes, early_release_day, early_release_end_time, default_am_pm_preference, default_day_preference')
+          .select('name, website, start_time, end_time, grades_served, schedule_type, school_year, class_duration, planning_minutes, lunch_minutes, passing_time, setup_time, notes, early_release_day, early_release_end_time, default_am_pm_preference, default_day_preference, conflict_strategies, conflict_strategy, conflict_grades, conflict_timing, big_group_config')
           .eq('id', schoolId)
           .maybeSingle();
         if (!school) return;
@@ -223,6 +223,28 @@ export const SetupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
           if (!prev.defaultDayPreference && school.default_day_preference) {
             seed.defaultDayPreference = school.default_day_preference;
+          }
+          // Conflict strategy hydration — fixes checklist asking to reselect after reload
+          const persistedStrats = (school as any).conflict_strategies as string[] | null;
+          if (prev.conflictStrategies.length === 0) {
+            if (Array.isArray(persistedStrats) && persistedStrats.length > 0) {
+              seed.conflictStrategies = persistedStrats;
+            } else if (school.conflict_strategy && school.conflict_strategy !== 'standard') {
+              seed.conflictStrategies = [school.conflict_strategy];
+            }
+          }
+          if (school.conflict_strategy && prev.conflictStrategy === 'standard') {
+            seed.conflictStrategy = school.conflict_strategy;
+          }
+          if (Array.isArray(school.conflict_grades) && prev.conflictGrades.length === 0) {
+            seed.conflictGrades = school.conflict_grades as string[];
+          }
+          if (school.conflict_timing && (school.conflict_timing === 'before' || school.conflict_timing === 'after')) {
+            seed.conflictTiming = school.conflict_timing;
+          }
+          const bg = (school as any).big_group_config as Array<{ grade: string; teacherIds: string[] }> | null;
+          if (Array.isArray(bg) && prev.bigGroupConfig.length === 0) {
+            seed.bigGroupConfig = bg;
           }
           return Object.keys(seed).length ? { ...prev, ...seed } : prev;
         });

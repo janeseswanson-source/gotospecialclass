@@ -225,8 +225,10 @@ export default function MasterSchedulePage() {
     setHistory([mappedBlocks]);
     setHistoryIndex(0);
 
-    const hasWeekLabels = mappedBlocks.some((b: any) => b.week_label);
-    if (!hasWeekLabels) setWeekFilter("all");
+    const labels = new Set(mappedBlocks.map((b: any) => b.week_label).filter(Boolean));
+    if (labels.has("AA") || labels.has("BB")) setWeekFilter("AA");
+    else if (labels.has("A") || labels.has("B")) setWeekFilter("A");
+    else setWeekFilter("all");
 
     // Fetch school grades for analysis
     if (selectedSchoolId) {
@@ -451,6 +453,12 @@ export default function MasterSchedulePage() {
   }
 
   const hasWeekLabels = blocks.some((b: any) => b.week_label);
+  const isAbStrategy = activeGen?.chosen_strategy === "ab_week";
+  const isAaBbStrategy = activeGen?.chosen_strategy === "aa_bb_week";
+  const showWeekSelector = hasWeekLabels || isAbStrategy || isAaBbStrategy;
+  const weekOptions: { value: string; label: string }[] = isAaBbStrategy
+    ? [{ value: "all", label: "All" }, { value: "AA", label: "Weeks 1–2 (AA)" }, { value: "BB", label: "Weeks 3–4 (BB)" }]
+    : [{ value: "all", label: "All" }, { value: "A", label: "Week A" }, { value: "B", label: "Week B" }];
   const weekFiltered = weekFilter === "all"
     ? blocks
     : blocks.filter((b: any) => !b.week_label || b.week_label === weekFilter);
@@ -833,16 +841,25 @@ export default function MasterSchedulePage() {
       <div className={showExplain ? "flex gap-4 items-start" : undefined}>
         {/* Main content column */}
         <div className="flex-1 min-w-0 space-y-4">
-          {hasWeekLabels && (
+          {showWeekSelector && (
             <div className="flex items-center gap-2 no-print">
-              <span className="text-sm font-medium text-muted-foreground">Week:</span>
+              <span className="text-sm font-medium text-muted-foreground">
+                {isAbStrategy ? "A/B Week rotation:" : isAaBbStrategy ? "AA/BB rotation:" : "Week:"}
+              </span>
               <Tabs value={weekFilter} onValueChange={setWeekFilter} className="w-auto">
                 <TabsList className="h-8">
-                  <TabsTrigger value="all" className="text-xs px-3 h-7">All</TabsTrigger>
-                  <TabsTrigger value="A" className="text-xs px-3 h-7">Week A</TabsTrigger>
-                  <TabsTrigger value="B" className="text-xs px-3 h-7">Week B</TabsTrigger>
+                  {weekOptions.map((opt) => (
+                    <TabsTrigger key={opt.value} value={opt.value} className="text-xs px-3 h-7">
+                      {opt.label}
+                    </TabsTrigger>
+                  ))}
                 </TabsList>
               </Tabs>
+              {!hasWeekLabels && (isAbStrategy || isAaBbStrategy) && (
+                <span className="text-xs text-muted-foreground italic">
+                  (no per-week labels on these blocks — generator may have fallen back to a single-week layout)
+                </span>
+              )}
             </div>
           )}
 
