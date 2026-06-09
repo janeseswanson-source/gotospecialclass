@@ -21,6 +21,7 @@ export interface BlockData {
   teacher_id?: string | null;
   notes?: string | null;
   placement_reason?: string | null;
+  ai_explanation?: string | null;
 }
 
 export interface RecessBand {

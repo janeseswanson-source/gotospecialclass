@@ -214,6 +214,7 @@ export default function MasterSchedulePage() {
       teacher_id: b.teacher_id ?? null,
       notes: b.notes ?? null,
       placement_reason: b.placement_reason ?? null,
+      ai_explanation: b.ai_explanation ?? null,
     }));
   }
 
