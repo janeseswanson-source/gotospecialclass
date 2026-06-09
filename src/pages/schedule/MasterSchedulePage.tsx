@@ -16,6 +16,7 @@ import EditBlockDialog from "@/components/schedule/EditBlockDialog";
 import QuoteBanner from "@/components/schedule/QuoteBanner";
 import { toast } from "@/hooks/use-toast";
 import { analyzeScheduleBlocks, type ScheduleWarning } from "@/lib/strategyFeasibility";
+import { warningMeta } from "@/lib/warningMeta";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import SpecialistExportModal from "./exports/SpecialistExportModal";
 import AdminExportModal from "./exports/AdminExportModal";
