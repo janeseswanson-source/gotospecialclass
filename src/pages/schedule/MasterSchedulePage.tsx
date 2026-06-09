@@ -909,11 +909,8 @@ export default function MasterSchedulePage() {
               </div>
             </TabsContent>
           </Tabs>
-
-          <div className="flex justify-end no-print">
-            <PrintViewButton label="Print this view" />
-          </div>
         </div>
+
 
         {/* ─── XAI Explain sidebar ─── */}
         {showExplain && (
