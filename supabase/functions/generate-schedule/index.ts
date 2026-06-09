@@ -1241,12 +1241,14 @@ function generateAABBWeek(
     blocks.push(...waa.blocks);
     preferenceViolations.push(...waa.preferenceViolations);
 
+    const rotationBB = specialists.length > 0 ? (rotation + Math.max(1, Math.floor(specialists.length / 2))) % specialists.length : rotation;
     const wbb = assignDay(
       day, orderedB, specialists, occupancyBB, generationId,
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
-      new Set(), "BB", rotation, [...existingBlocks, ...blocks],
+      new Set(), "BB", rotationBB, [...existingBlocks, ...blocks],
     );
+
     blocks.push(...wbb.blocks);
     preferenceViolations.push(...wbb.preferenceViolations);
 
