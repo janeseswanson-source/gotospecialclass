@@ -2489,14 +2489,22 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       const m = w.message.match(/on (\w+) at (\d{2}:\d{2})/);
       return !m || !extraKeys.has(`${m[1]}:${m[2]}`);
     });
-    // FIX-P1-1 calendar info + FIX-P1-5 planning warnings:
+    // FIX-P1-1 calendar info + FIX-P1-5 planning warnings + new contract/cohesion checks:
     const calendarWarnings = validateCalendar(calendarEvents);
     const planningWarnings = validatePlanningTime(blocks, specialists, school);
+    const cohesionWarnings = validateGradeCohesion(blocks, grades, school);
+    const extraPltWarnings = validateExtraPlt(blocks, specialists, school);
+    const contractSubjectWarnings = validateContractualSubjects(blocks, school);
+    const contractTeacherWarnings = validateContractualTeachers(blocks, specialists, classroomTeachers, school);
     const warnings = [
       ...filteredBase,
       ...schedulerResult.extraWarnings,
       ...calendarWarnings,
       ...planningWarnings,
+      ...cohesionWarnings,
+      ...extraPltWarnings,
+      ...contractSubjectWarnings,
+      ...contractTeacherWarnings,
     ];
 
     // Persist strategy metadata, SA stats, and score breakdown
