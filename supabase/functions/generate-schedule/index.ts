@@ -917,6 +917,7 @@ function assignDay(
   weekLabel: string | null,
   specRotationOffset: number,
   allBlocks: Block[],
+  canonicalStep: number,
 ): AssignResult {
   const daySpecs = specialists.filter((s) => (s.working_days ?? DAYS).includes(day));
   if (daySpecs.length === 0) return { blocks: [], preferenceViolations: [] };
