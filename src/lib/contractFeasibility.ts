@@ -7,7 +7,7 @@
  */
 
 export interface FeasibilityNote {
-  severity: "info" | "warning" | "error";
+  level: "info" | "warning" | "error";
   message: string;
   suggestion?: string;
 }
