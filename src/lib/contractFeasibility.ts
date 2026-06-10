@@ -58,7 +58,7 @@ export function analyzeContractFeasibility(
 
   if (dayMinutes == null) {
     notes.push({
-      severity: "warning",
+      level: "warning",
       message: "School start/end times are not fully configured.",
       suggestion: "Set start and end times in School Info.",
     });
@@ -78,7 +78,7 @@ export function analyzeContractFeasibility(
       const usable = dayMinutes - lunch - 30; // 30min admin/transitions buffer
       if (usable < dur + passing) {
         notes.push({
-          severity: "error",
+          level: "error",
           message: `${s.name} has no usable teaching time in a day.`,
           suggestion: `Reduce lunch (${lunch}m) or class duration (${dur}m), or extend the school day.`,
         });
@@ -89,7 +89,7 @@ export function analyzeContractFeasibility(
       const planningSlots = Math.ceil(planning / (dur + passing));
       if (planningSlots >= slotsPerWeek) {
         notes.push({
-          severity: "warning",
+          level: "warning",
           message: `${s.name}'s planning time (${planning} min/wk) consumes most teaching slots.`,
           suggestion: "Lower weekly planning minutes or add a working day.",
         });
@@ -98,7 +98,7 @@ export function analyzeContractFeasibility(
 
     if (workingDays === 0) {
       notes.push({
-        severity: "error",
+        level: "error",
         message: `${s.name} has no working days selected.`,
         suggestion: "Add at least one working day in the Specialists step.",
       });
@@ -112,7 +112,7 @@ export function analyzeContractFeasibility(
   );
   if (gradesWithoutTeachers.length > 0 && teachers.length > 0) {
     notes.push({
-      severity: "info",
+      level: "info",
       message: `Grades without teachers: ${gradesWithoutTeachers.join(", ")}.`,
       suggestion:
         "The schedule will use grade-level blocks instead of per-teacher blocks for these.",
@@ -121,7 +121,7 @@ export function analyzeContractFeasibility(
 
   if (specialists.length === 0) {
     notes.push({
-      severity: "error",
+      level: "error",
       message: "No specialists configured — nothing to schedule.",
       suggestion: "Add at least one specialist in the Setup Wizard.",
     });
