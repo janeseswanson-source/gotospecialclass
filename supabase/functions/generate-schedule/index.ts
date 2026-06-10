@@ -55,6 +55,17 @@ function minutesToTime(mins: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+// School-wide canonical slot step. Every generated block snaps its
+// START to multiples of this from the school start time, so the Master
+// Schedule renders one tidy row per period across all grades and
+// specialists instead of dozens of 5-minute-offset rows.
+export function schoolCanonicalStep(school: { class_duration?: number | null; passing_time?: number | null }): number {
+  const dur = (school?.class_duration && school.class_duration > 0) ? school.class_duration : 45;
+  const pass = (school?.passing_time && school.passing_time > 0) ? school.passing_time : 5;
+  return dur + pass;
+}
+
+
 // ─── Interfaces ──────────────────────────────────────────────────────
 
 interface Specialist {
@@ -677,19 +688,36 @@ export function validateContractualTeachers(
 }
 
 // ─── Time slot builder ───────────────────────────────────────────────
+// Slot starts are SNAPPED to a school-wide canonical grid so the Master
+// Schedule shows one tidy row per period across every grade and
+// specialist. The cursor always advances by `canonicalStep` (school
+// default class duration + school passing time), regardless of this
+// specific subject's `classDuration` or grade-level passing/setup
+// overrides. Subjects with shorter durations (e.g. 30 min) still occupy
+// only their own length, but the NEXT slot starts on the canonical
+// boundary — preventing the 5/10-minute drift that produced rows like
+// 7:50, 8:05, 8:10, 8:15 instead of clean 7:45 → 8:30 → 9:15 …
+// `canonicalStep` is required; callers compute it once from school
+// settings. `defaultSetupTime`/`gradeTimeConfig` are kept on the
+// signature for back-compat with other callers that still pass them.
 function buildTimeSlotsForGrade(
-  grade: string,
+  _grade: string,
   classDuration: number,
   startMin: number,
   endMin: number,
-  defaultPassingTime: number,
-  defaultSetupTime: number,
-  gradeTimeConfig: Record<string, { passingTime?: number; resetTime?: number }>,
+  _defaultPassingTime: number,
+  _defaultSetupTime: number,
+  _gradeTimeConfig: Record<string, { passingTime?: number; resetTime?: number }>,
   recessWindows: RecessWindow[],
+  canonicalStep?: number,
 ): TimeSlot[] {
-  const config = gradeTimeConfig[grade];
-  const passing = config?.passingTime ?? defaultPassingTime;
-  const setup = config?.resetTime ?? defaultSetupTime;
+  // Fall back to the legacy per-subject step ONLY if a canonical step
+  // wasn't supplied (defensive — every production caller passes one).
+  const step =
+    canonicalStep && canonicalStep > 0
+      ? canonicalStep
+      : classDuration + (_defaultPassingTime ?? 0);
+
   const slots: TimeSlot[] = [];
   let cursor = startMin;
 
@@ -699,14 +727,9 @@ function buildTimeSlotsForGrade(
     if (!overlaps) {
       slots.push({ start: cursor, end: slotEnd });
     }
-    if (overlaps) {
-      const overlappingWindow = recessWindows.find((w) => cursor < w.end && slotEnd > w.start);
-      if (overlappingWindow) {
-        cursor = overlappingWindow.end + passing;
-        continue;
-      }
-    }
-    cursor = slotEnd + passing + setup;
+    // Always advance by the canonical step so the grid stays aligned —
+    // recess just leaves a gap row instead of resetting the grid.
+    cursor += step;
   }
   return slots;
 }
@@ -905,6 +928,7 @@ function assignDay(
   weekLabel: string | null,
   specRotationOffset: number,
   allBlocks: Block[],
+  canonicalStep: number,
 ): AssignResult {
   const daySpecs = specialists.filter((s) => (s.working_days ?? DAYS).includes(day));
   if (daySpecs.length === 0) return { blocks: [], preferenceViolations: [] };
@@ -992,7 +1016,7 @@ function assignDay(
       // custom duration — identical to the previous per-grade behavior.)
       const duration = specClassDuration(spec, gradeDefaultDuration);
       const specSlots = buildTimeSlotsForGrade(
-        gt.grade, duration, startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindows,
+        gt.grade, duration, startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindows, canonicalStep,
       );
       if (specSlots.length === 0) continue;
       const rankedSlots = [...specSlots].sort((a, b) => {
@@ -1109,6 +1133,7 @@ function generateStandard(
 ): StrategyResult {
   const startMin = timeToMinutes(school.start_time ?? "08:00");
   const defaultPassingTime = school.passing_time ?? 5;
+  const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
   const gradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
 
@@ -1149,6 +1174,7 @@ function generateStandard(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), null, rotation, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
     blocks.push(...r.blocks);
     preferenceViolations.push(...r.preferenceViolations);
@@ -1174,6 +1200,7 @@ function generateABWeek(
 ): StrategyResult {
   const startMin = timeToMinutes(school.start_time ?? "08:00");
   const defaultPassingTime = school.passing_time ?? 5;
+  const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
   const gradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
   const conflictSet = new Set(conflictGrades);
@@ -1223,6 +1250,7 @@ function generateABWeek(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), null, rotation, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
     blocks.push(...nc.blocks);
     preferenceViolations.push(...nc.preferenceViolations);
@@ -1238,6 +1266,7 @@ function generateABWeek(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), "A", rotation, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
     blocks.push(...wa.blocks);
     preferenceViolations.push(...wa.preferenceViolations);
@@ -1250,6 +1279,7 @@ function generateABWeek(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), "B", rotationB, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
 
     blocks.push(...wb.blocks);
@@ -1278,6 +1308,7 @@ function generateAABBWeek(
 ): StrategyResult {
   const startMin = timeToMinutes(school.start_time ?? "08:00");
   const defaultPassingTime = school.passing_time ?? 5;
+  const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
   const gradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
   const conflictSet = new Set(conflictGrades);
@@ -1326,6 +1357,7 @@ function generateAABBWeek(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), null, rotation, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
     blocks.push(...nc.blocks);
     preferenceViolations.push(...nc.preferenceViolations);
@@ -1339,6 +1371,7 @@ function generateAABBWeek(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), "AA", rotation, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
     blocks.push(...waa.blocks);
     preferenceViolations.push(...waa.preferenceViolations);
@@ -1349,6 +1382,7 @@ function generateAABBWeek(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), "BB", rotationBB, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
 
     blocks.push(...wbb.blocks);
@@ -1375,6 +1409,7 @@ function generateQuick30(
 ): StrategyResult {
   const startMin = timeToMinutes(school.start_time ?? "08:00");
   const defaultPassingTime = school.passing_time ?? 5;
+  const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
   const gradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
   const conflictSet = new Set(conflictGrades);
@@ -1399,6 +1434,7 @@ function generateQuick30(
       () => 30,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), null, rotation, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
 
     blocks.push(...r.blocks);
@@ -1482,6 +1518,7 @@ function generateExtraRotation(
 ): StrategyResult {
   const startMin = timeToMinutes(school.start_time ?? "08:00");
   const defaultPassingTime = school.passing_time ?? 5;
+  const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
   const gradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
   const skipOccupancyGrades = new Set(conflictGrades);
@@ -1502,6 +1539,7 @@ function generateExtraRotation(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       skipOccupancyGrades, null, rotation, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
     blocks.push(...r.blocks);
     preferenceViolations.push(...r.preferenceViolations);
@@ -1523,6 +1561,7 @@ function addMakeupBlocks(
 ): Block[] {
   const startMin = timeToMinutes(school.start_time ?? "08:00");
   const defaultPassingTime = school.passing_time ?? 5;
+  const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
   const gradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
 
@@ -1544,7 +1583,7 @@ function addMakeupBlocks(
       const recessWindows = getRecessWindowsForDay(day, school, recessConfigs);
     const recessWindowsForGrade = (grade: string) => getRecessWindowsForDay(day, school, recessConfigs, grade);
       const generalSlots = buildTimeSlotsForGrade(
-        grades[0] ?? "K", classDuration, startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindows,
+        grades[0] ?? "K", classDuration, startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindows, canonicalStep,
       );
 
       for (const slot of generalSlots) {
@@ -1952,6 +1991,7 @@ function runSimulatedAnnealing(
       // start time — this keeps the printed grid to a handful of clean rows
       // instead of dozens of 5-minute-offset ones.
       const saPassing = school.passing_time ?? 5;
+      const saCanonicalStep = schoolCanonicalStep(school);
       const saSetup = school.setup_time ?? 15;
       const saGradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
       const freeSlots: Array<{ day: string; start: number; end: number }> = [];
@@ -1961,7 +2001,7 @@ function runSimulatedAnnealing(
         const candidateStarts = new Set<number>(
           buildTimeSlotsForGrade(
             blockToMove.grade, duration, classStartMin, endMin,
-            saPassing, saSetup, saGradeTimeConfig, recessWindows,
+            saPassing, saSetup, saGradeTimeConfig, recessWindows, saCanonicalStep,
           ).map((sl) => sl.start),
         );
         for (const b of currentBlocks) {
