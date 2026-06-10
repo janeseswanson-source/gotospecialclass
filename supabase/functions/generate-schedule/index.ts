@@ -1005,7 +1005,7 @@ function assignDay(
       // custom duration — identical to the previous per-grade behavior.)
       const duration = specClassDuration(spec, gradeDefaultDuration);
       const specSlots = buildTimeSlotsForGrade(
-        gt.grade, duration, startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindows,
+        gt.grade, duration, startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindows, canonicalStep,
       );
       if (specSlots.length === 0) continue;
       const rankedSlots = [...specSlots].sort((a, b) => {
