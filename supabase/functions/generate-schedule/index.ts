@@ -55,6 +55,17 @@ function minutesToTime(mins: number): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+// School-wide canonical slot step. Every generated block snaps its
+// START to multiples of this from the school start time, so the Master
+// Schedule renders one tidy row per period across all grades and
+// specialists instead of dozens of 5-minute-offset rows.
+export function schoolCanonicalStep(school: { class_duration?: number | null; passing_time?: number | null }): number {
+  const dur = (school?.class_duration && school.class_duration > 0) ? school.class_duration : 45;
+  const pass = (school?.passing_time && school.passing_time > 0) ? school.passing_time : 5;
+  return dur + pass;
+}
+
+
 // ─── Interfaces ──────────────────────────────────────────────────────
 
 interface Specialist {
