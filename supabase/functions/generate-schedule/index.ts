@@ -1133,6 +1133,7 @@ function generateStandard(
 ): StrategyResult {
   const startMin = timeToMinutes(school.start_time ?? "08:00");
   const defaultPassingTime = school.passing_time ?? 5;
+  const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
   const gradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
 
@@ -1173,6 +1174,7 @@ function generateStandard(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), null, rotation, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
     blocks.push(...r.blocks);
     preferenceViolations.push(...r.preferenceViolations);
@@ -1198,6 +1200,7 @@ function generateABWeek(
 ): StrategyResult {
   const startMin = timeToMinutes(school.start_time ?? "08:00");
   const defaultPassingTime = school.passing_time ?? 5;
+  const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
   const gradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
   const conflictSet = new Set(conflictGrades);
@@ -1247,6 +1250,7 @@ function generateABWeek(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), null, rotation, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
     blocks.push(...nc.blocks);
     preferenceViolations.push(...nc.preferenceViolations);
@@ -1262,6 +1266,7 @@ function generateABWeek(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), "A", rotation, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
     blocks.push(...wa.blocks);
     preferenceViolations.push(...wa.preferenceViolations);
@@ -1274,6 +1279,7 @@ function generateABWeek(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), "B", rotationB, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
 
     blocks.push(...wb.blocks);
@@ -1302,6 +1308,7 @@ function generateAABBWeek(
 ): StrategyResult {
   const startMin = timeToMinutes(school.start_time ?? "08:00");
   const defaultPassingTime = school.passing_time ?? 5;
+  const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
   const gradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
   const conflictSet = new Set(conflictGrades);
@@ -1350,6 +1357,7 @@ function generateAABBWeek(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), null, rotation, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
     blocks.push(...nc.blocks);
     preferenceViolations.push(...nc.preferenceViolations);
@@ -1363,6 +1371,7 @@ function generateAABBWeek(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), "AA", rotation, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
     blocks.push(...waa.blocks);
     preferenceViolations.push(...waa.preferenceViolations);
@@ -1373,6 +1382,7 @@ function generateAABBWeek(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), "BB", rotationBB, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
 
     blocks.push(...wbb.blocks);
@@ -1399,6 +1409,7 @@ function generateQuick30(
 ): StrategyResult {
   const startMin = timeToMinutes(school.start_time ?? "08:00");
   const defaultPassingTime = school.passing_time ?? 5;
+  const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
   const gradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
   const conflictSet = new Set(conflictGrades);
@@ -1423,6 +1434,7 @@ function generateQuick30(
       () => 30,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), null, rotation, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
 
     blocks.push(...r.blocks);
@@ -1506,6 +1518,7 @@ function generateExtraRotation(
 ): StrategyResult {
   const startMin = timeToMinutes(school.start_time ?? "08:00");
   const defaultPassingTime = school.passing_time ?? 5;
+  const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
   const gradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
   const skipOccupancyGrades = new Set(conflictGrades);
@@ -1526,6 +1539,7 @@ function generateExtraRotation(
       () => classDuration,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       skipOccupancyGrades, null, rotation, [...existingBlocks, ...blocks],
+      canonicalStep,
     );
     blocks.push(...r.blocks);
     preferenceViolations.push(...r.preferenceViolations);
@@ -1547,6 +1561,7 @@ function addMakeupBlocks(
 ): Block[] {
   const startMin = timeToMinutes(school.start_time ?? "08:00");
   const defaultPassingTime = school.passing_time ?? 5;
+  const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
   const gradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
 
@@ -1568,7 +1583,7 @@ function addMakeupBlocks(
       const recessWindows = getRecessWindowsForDay(day, school, recessConfigs);
     const recessWindowsForGrade = (grade: string) => getRecessWindowsForDay(day, school, recessConfigs, grade);
       const generalSlots = buildTimeSlotsForGrade(
-        grades[0] ?? "K", classDuration, startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindows,
+        grades[0] ?? "K", classDuration, startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindows, canonicalStep,
       );
 
       for (const slot of generalSlots) {
@@ -1976,6 +1991,7 @@ function runSimulatedAnnealing(
       // start time — this keeps the printed grid to a handful of clean rows
       // instead of dozens of 5-minute-offset ones.
       const saPassing = school.passing_time ?? 5;
+      const saCanonicalStep = schoolCanonicalStep(school);
       const saSetup = school.setup_time ?? 15;
       const saGradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
       const freeSlots: Array<{ day: string; start: number; end: number }> = [];
@@ -1985,7 +2001,7 @@ function runSimulatedAnnealing(
         const candidateStarts = new Set<number>(
           buildTimeSlotsForGrade(
             blockToMove.grade, duration, classStartMin, endMin,
-            saPassing, saSetup, saGradeTimeConfig, recessWindows,
+            saPassing, saSetup, saGradeTimeConfig, recessWindows, saCanonicalStep,
           ).map((sl) => sl.start),
         );
         for (const b of currentBlocks) {
