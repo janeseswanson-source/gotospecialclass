@@ -166,11 +166,19 @@ RULES
   // shows an Apply/Discard bar; on Apply it POSTs them to `apply-schedule-edits`,
   // which re-validates and persists. Nothing the AI does touches the database
   // until the user confirms.
+  // Every op carries a human-readable `label` so the client's Apply bar can
+  // list exactly what will change in plain words.
   type EditOp =
-    | { kind: "move"; block_id: string; day_of_week: string; start_time: string; end_time: string }
-    | { kind: "swap"; a_id: string; a_day: string; a_start: string; a_end: string; b_id: string; b_day: string; b_start: string; b_end: string }
-    | { kind: "delete"; block_id: string }
-    | { kind: "insert"; day_of_week: string; start_time: string; end_time: string; subject: string; specialist_id: string | null; teacher_id: string | null; grade: string | null; room: string | null; week_label: string | null };
+    | { kind: "move"; label: string; block_id: string; day_of_week: string; start_time: string; end_time: string }
+    | { kind: "swap"; label: string; a_id: string; a_day: string; a_start: string; a_end: string; b_id: string; b_day: string; b_start: string; b_end: string }
+    | { kind: "delete"; label: string; block_id: string }
+    | { kind: "insert"; label: string; day_of_week: string; start_time: string; end_time: string; subject: string; specialist_id: string | null; teacher_id: string | null; grade: string | null; room: string | null; week_label: string | null };
+
+  const hm = (t: string) => t.slice(0, 5);
+  const blockShort = (b: BlockRow) => {
+    const teach = b.teacher_id ? teachMap.get(b.teacher_id)?.name : null;
+    return `${b.subject}${b.grade ? ` · Gr ${b.grade}` : ""}${teach ? ` (${teach})` : ""}`;
+  };
 
   // ─── Tools ───
   const listBlocks = tool({
@@ -222,8 +230,9 @@ RULES
       if (vio.length) {
         return { ok: false, error: `Cannot move there — it ${vio.join(" and ")}. Pick a slot inside school hours that avoids this grade's recess/lunch and PLC time.` };
       }
+      const label = `Move ${blockShort(blk)}: ${blk.day_of_week} ${hm(blk.start_time)} → ${day} ${hm(newStartStr)}`;
       blk.day_of_week = day; blk.start_time = newStartStr; blk.end_time = newEndStr;
-      const op: EditOp = { kind: "move", block_id, day_of_week: day, start_time: newStartStr, end_time: newEndStr };
+      const op: EditOp = { kind: "move", label, block_id, day_of_week: day, start_time: newStartStr, end_time: newEndStr };
       return { ok: true, status: "proposed", op, moved: describeBlock(blk) };
     },
   });
@@ -250,10 +259,27 @@ RULES
         if (bVio.length) parts.push(`moving ${describeBlock(b)} ${bVio.join(" and ")}`);
         return { ok: false, error: `Swap rejected: ${parts.join("; ")}.` };
       }
+      // Specialist/teacher double-booking at the destination slots (against
+      // everyone EXCEPT the two blocks being swapped). Without this a swap
+      // could be proposed cleanly and then fail at Apply — confusing.
+      const others = blocks.filter((x) => x.id !== a.id && x.id !== b.id);
+      const swapConflicts = others.filter((o) =>
+        ((o.specialist_id && o.specialist_id === a.specialist_id) || (a.teacher_id && o.teacher_id === a.teacher_id))
+          ? overlaps(o, bSlot.day, timeToMin(bSlot.start), timeToMin(bSlot.end), a.week_label)
+          : false,
+      ).concat(others.filter((o) =>
+        ((o.specialist_id && o.specialist_id === b.specialist_id) || (b.teacher_id && o.teacher_id === b.teacher_id))
+          ? overlaps(o, aSlot.day, timeToMin(aSlot.start), timeToMin(aSlot.end), b.week_label)
+          : false,
+      ));
+      if (swapConflicts.length > 0) {
+        return { ok: false, error: `Swap rejected — it would overlap: ${swapConflicts.slice(0, 3).map(describeBlock).join("; ")}` };
+      }
+      const label = `Swap ${blockShort(a)} (${a.day_of_week} ${hm(a.start_time)}) ↔ ${blockShort(b)} (${b.day_of_week} ${hm(b.start_time)})`;
       a.day_of_week = bSlot.day; a.start_time = bSlot.start; a.end_time = bSlot.end;
       b.day_of_week = aSlot.day; b.start_time = aSlot.start; b.end_time = aSlot.end;
       const op: EditOp = {
-        kind: "swap",
+        kind: "swap", label,
         a_id: a.id, a_day: bSlot.day, a_start: bSlot.start, a_end: bSlot.end,
         b_id: b.id, b_day: aSlot.day, b_start: aSlot.start, b_end: aSlot.end,
       };
@@ -268,8 +294,9 @@ RULES
       const blk = blocks.find((b) => b.id === block_id);
       if (!blk) return { ok: false, error: "Block not found" };
       const summary = describeBlock(blk);
+      const label = `Remove ${blockShort(blk)}: ${blk.day_of_week} ${hm(blk.start_time)}`;
       blocks = blocks.filter((b) => b.id !== block_id);
-      const op: EditOp = { kind: "delete", block_id };
+      const op: EditOp = { kind: "delete", label, block_id };
       return { ok: true, status: "proposed", op, deleted: summary };
     },
   });
@@ -320,6 +347,7 @@ RULES
       blocks.push(proposed);
       const op: EditOp = {
         kind: "insert",
+        label: `Add ${blockShort(proposed)}: ${day} ${hm(proposed.start_time)}–${hm(proposed.end_time)}`,
         day_of_week: day,
         start_time: proposed.start_time,
         end_time: proposed.end_time,

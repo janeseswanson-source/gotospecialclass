@@ -96,6 +96,9 @@ Deno.serve(async (req) => {
 
     let applied = 0;
     const skipped: string[] = [];
+    // Ids of blocks that were moved/swapped/inserted — the client highlights
+    // these in the grid so the user can SEE what the AI changed.
+    const changedBlockIds: string[] = [];
 
     const describe = (codes: ReturnType<typeof constraintViolations>) => codes.map(describeViolation).join(" and ");
 
@@ -124,6 +127,7 @@ Deno.serve(async (req) => {
           }).eq("id", op.block_id);
           if (error) { skipped.push(`move ${op.block_id}: ${error.message}`); continue; }
           cur.day_of_week = op.day_of_week; cur.start_time = op.start_time; cur.end_time = op.end_time;
+          changedBlockIds.push(op.block_id);
           applied++;
           continue;
         }
@@ -159,6 +163,7 @@ Deno.serve(async (req) => {
           }
           a.day_of_week = op.a_day; a.start_time = op.a_start; a.end_time = op.a_end;
           b.day_of_week = op.b_day; b.start_time = op.b_start; b.end_time = op.b_end;
+          changedBlockIds.push(op.a_id, op.b_id);
           applied += 2;
           continue;
         }
@@ -188,6 +193,7 @@ Deno.serve(async (req) => {
           const eff: Eff = { id: inserted.id, ...candidate };
           effective.push(eff);
           effById.set(inserted.id, eff);
+          changedBlockIds.push(inserted.id);
           applied++;
           continue;
         }
@@ -196,7 +202,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    return json(200, { applied, skipped });
+    return json(200, { applied, skipped, changed_block_ids: changedBlockIds });
   } catch (e: any) {
     return json(500, { error: e?.message ?? "Unknown error" });
   }

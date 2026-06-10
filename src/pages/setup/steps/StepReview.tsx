@@ -115,12 +115,17 @@ const StepReview = () => {
         }, { onConflict: 'school_id,grade_band' });
       }
 
-      const { error: genError } = await supabase.functions.invoke('generate-schedule', {
+      const { data: genData, error: genError } = await supabase.functions.invoke('generate-schedule', {
         body: { school_id: schoolId },
       });
       if (genError) {
         console.error('Generate error:', genError);
         toast.error('Schedule generation had an issue, but your data is saved.');
+      } else if ((genData as any)?.generation_id) {
+        // Fire-and-forget AI quality verification for the new schedule.
+        supabase.functions.invoke('verify-schedule', {
+          body: { generation_id: (genData as any).generation_id },
+        }).catch(() => {});
       }
       logActivity('setup_completed', { school_name: data.schoolName });
       navigate('/app/schedule-success');

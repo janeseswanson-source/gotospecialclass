@@ -104,6 +104,11 @@ export interface Block {
   grade: string;
   room: string | null;
   week_label?: string | null;
+  // Carried forward on replans (locked blocks) — not set by strategies.
+  notes?: string | null;
+  is_override?: boolean;
+  placement_reason?: string | null;
+  ai_explanation?: string | null;
 }
 
 interface RecessWindow {
@@ -218,7 +223,7 @@ function findOverlapClusters(blocks: Block[]): Block[][] {
   return clusters;
 }
 
-export function computeWarnings(blocks: Block[], specialists: Specialist[], grades: string[]): Warning[] {
+export function computeWarnings(blocks: Block[], specialists: Specialist[], grades: string[], teachers?: Teacher[]): Warning[] {
   const warnings: Warning[] = [];
   // no_coverage
   for (const grade of grades) {
@@ -230,6 +235,22 @@ export function computeWarnings(blocks: Block[], specialists: Specialist[], grad
         message: `Grade ${grade} has no specialist sessions.`,
         suggestion: "Add more specialists or enable A/B Week.",
       });
+    }
+  }
+
+  // teacher_no_coverage — a grade can look covered while individual classes in
+  // it get nothing all week (the failure mode that previously went unnoticed).
+  if (teachers && specialists.length > 0) {
+    for (const t of teachers) {
+      const n = blocks.filter((b) => b.teacher_id === t.id && b.specialist_id).length;
+      if (n === 0) {
+        warnings.push({
+          type: "teacher_no_coverage",
+          severity: "warning",
+          message: `${t.name} (Grade ${t.grade}) has no specialist sessions this week.`,
+          suggestion: "Check specialist availability or enable a rotation strategy that covers every class.",
+        });
+      }
     }
   }
 
@@ -245,6 +266,12 @@ export function computeWarnings(blocks: Block[], specialists: Specialist[], grad
     const [specId, day] = k.split("|");
     const spec = specialists.find((s) => s.id === specId);
     for (const [a, b] of findOverlapClusters(group)) {
+      // Big Group: two classes deliberately taught together — same specialist,
+      // IDENTICAL interval, same grade, different teachers. Not a conflict.
+      if (
+        a.start_time === b.start_time && a.end_time === b.end_time &&
+        a.grade === b.grade && a.teacher_id !== b.teacher_id
+      ) continue;
       const sig = `${specId}|${day}|${a.start_time}|${b.start_time}`;
       if (seenSpec.has(sig)) continue;
       seenSpec.add(sig);
@@ -851,9 +878,19 @@ function specClassDuration(spec: Specialist, fallback: number): number {
   return (spec.class_duration != null && spec.class_duration > 0) ? spec.class_duration : fallback;
 }
 
+/** One schedulable unit: a single class, a whole-grade placeholder (teacher
+ *  null), or a combined Big Group (`members` = every class taught together —
+ *  one block is emitted PER member so each class keeps attribution and
+ *  teacher-occupancy protection). */
+export interface GradeTeacherEntry {
+  grade: string;
+  teacher: Teacher | null;
+  members?: Teacher[];
+}
+
 function assignDay(
   day: string,
-  gradeTeachers: { grade: string; teacher: Teacher | null }[],
+  gradeTeachers: GradeTeacherEntry[],
   specialists: Specialist[],
   occupancy: OccupancyTracker,
   generationId: string,
@@ -905,9 +942,45 @@ function assignDay(
     // processing order for fairness. The inner `+ i` is the fallback search
     // order when the preferred specialist can't take the class.
     const rotIndex = (gt as any).rotIndex ?? ci;
-    for (let i = 0; i < daySpecs.length && !assigned; i++) {
-      const specIdx = (specRotationOffset + rotIndex + i) % daySpecs.length;
-      const spec = daySpecs[specIdx];
+
+    // Big Group: every member class attends together. One block per member is
+    // emitted (attribution + occupancy for each class); plain entries are the
+    // single-element case.
+    const memberTeachers: (Teacher | null)[] =
+      gt.members && gt.members.length > 0 ? gt.members : [gt.teacher];
+    const leadTeacher = memberTeachers[0] ?? null;
+
+    // Subject variety: prefer specialists this class hasn't seen yet this week
+    // (same week label). The rotation order is preserved within each tier, so
+    // fairness/balance behavior is unchanged — repeats are simply tried last.
+    const rotatedSpecs = Array.from(
+      { length: daySpecs.length },
+      (_, i) => daySpecs[(specRotationOffset + rotIndex + i) % daySpecs.length],
+    );
+    const seenSpecIds = new Set<string>();
+    if (leadTeacher) {
+      for (const b of allBlocks) {
+        if (b.teacher_id === leadTeacher.id && b.specialist_id && (b.week_label ?? null) === weekLabel) seenSpecIds.add(b.specialist_id);
+      }
+      for (const b of blocks) {
+        if (b.teacher_id === leadTeacher.id && b.specialist_id && (b.week_label ?? null) === weekLabel) seenSpecIds.add(b.specialist_id);
+      }
+    }
+    // Within each tier, prefer the specialist with the lightest load TODAY so
+    // no specialist sits idle a full day while others absorb every class.
+    // Rotation order is the stable tiebreaker.
+    const byLoadThenRotation = (list: Specialist[]) =>
+      list
+        .map((s, i) => ({ s, i, load: occupancy.getSpecialistDayCount(day, s.id) }))
+        .sort((a, b) => (a.load - b.load) || (a.i - b.i))
+        .map((x) => x.s);
+    const orderedSpecs = [
+      ...byLoadThenRotation(rotatedSpecs.filter((s) => !seenSpecIds.has(s.id))),
+      ...byLoadThenRotation(rotatedSpecs.filter((s) => seenSpecIds.has(s.id))),
+    ];
+
+    for (const spec of orderedSpecs) {
+      if (assigned) break;
 
       // Grade rotation filter
       if (!canSpecialistTeachGradeOnDay(spec, gt.grade, day)) continue;
@@ -934,42 +1007,57 @@ function assignDay(
 
       for (const slot of rankedSlots) {
         if (!skipSpecOccupancy && !occupancy.isSpecialistFree(day, slot.start, slot.end, spec.id)) continue;
-        if (gt.teacher && !occupancy.isTeacherFree(day, slot.start, slot.end, gt.teacher.id)) continue;
+        // EVERY member class must be free (single-teacher case is the 1-element list).
+        let allMembersFree = true;
+        for (const m of memberTeachers) {
+          if (m && !occupancy.isTeacherFree(day, slot.start, slot.end, m.id)) { allMembersFree = false; break; }
+        }
+        if (!allMembersFree) continue;
         // FIX-P1-6: don't schedule this grade if a PLC/Admin block covers it.
         if (!occupancy.isGradeRangeFree(day, gt.grade, slot.start, slot.end)) continue;
 
         // Cart buffer check
         if (needsCartBuffer(spec, day, slot.start, [...allBlocks, ...blocks], defaultSetupTime)) continue;
 
-        occupancy.book(day, slot.start, slot.end, spec.id, gt.teacher?.id ?? null);
-        const block: Block = {
-          generation_id: generationId,
-          day_of_week: day,
-          start_time: minutesToTime(slot.start),
-          end_time: minutesToTime(slot.end),
-          subject: spec.subject,
-          specialist_id: spec.id,
-          teacher_id: gt.teacher?.id ?? null,
-          grade: gt.grade,
-          room: gt.teacher?.room ?? null,
-          week_label: weekLabel,
-        };
-        blocks.push(block);
+        // Book the specialist once; book every member's class. Extra members
+        // use a synthetic spec key so the group doesn't inflate the
+        // specialist's per-day slot count (two-school caps).
+        const groupRoom = leadTeacher?.room ?? null;
+        let firstBlock: Block | null = null;
+        memberTeachers.forEach((m, mi) => {
+          if (mi === 0) occupancy.book(day, slot.start, slot.end, spec.id, m?.id ?? null);
+          else if (m) occupancy.book(day, slot.start, slot.end, `__group_${spec.id}`, m.id);
+          const block: Block = {
+            generation_id: generationId,
+            day_of_week: day,
+            start_time: minutesToTime(slot.start),
+            end_time: minutesToTime(slot.end),
+            subject: spec.subject,
+            specialist_id: spec.id,
+            teacher_id: m?.id ?? null,
+            grade: gt.grade,
+            room: gt.members && gt.members.length > 0 ? groupRoom : (m?.room ?? null),
+            week_label: weekLabel,
+          };
+          blocks.push(block);
+          if (!firstBlock) firstBlock = block;
+        });
+        const block = firstBlock!;
         assigned = true;
 
         // ── Phase 3A: record preference violations on successful booking ──
-        if (gt.teacher) {
+        if (leadTeacher) {
           const actualSlot: "AM" | "PM" = slot.start < 720 ? "AM" : "PM";
           if (preferAM && actualSlot !== "AM") {
-            preferenceViolations.push({ kind: "am_pm", teacherId: gt.teacher.id, preferred: "AM", actualSlot });
+            preferenceViolations.push({ kind: "am_pm", teacherId: leadTeacher.id, preferred: "AM", actualSlot });
           } else if (preferPM && actualSlot !== "PM") {
-            preferenceViolations.push({ kind: "am_pm", teacherId: gt.teacher.id, preferred: "PM", actualSlot });
+            preferenceViolations.push({ kind: "am_pm", teacherId: leadTeacher.id, preferred: "PM", actualSlot });
           }
-          if (gt.teacher.day_preference && gt.teacher.day_preference !== day) {
+          if (leadTeacher.day_preference && leadTeacher.day_preference !== day) {
             preferenceViolations.push({
               kind: "day_preference",
-              teacherId: gt.teacher.id,
-              preferred: gt.teacher.day_preference,
+              teacherId: leadTeacher.id,
+              preferred: leadTeacher.day_preference,
               actualDay: day,
             });
           }
@@ -1346,25 +1434,26 @@ function generateBigGroup(
     }
   }
 
-  const gradeTeachers: { grade: string; teacher: Teacher | null }[] = [];
+  const gradeTeachers: GradeTeacherEntry[] = [];
   for (const grade of prioritizeGrades(grades)) {
     if (conflictSet.has(grade)) {
-      if (bigGroupConfig.length > 0) {
-        // Use config: only collapse teachers that are in the config
-        const configEntry = bigGroupConfig.find(e => e.grade === grade);
-        if (configEntry && configEntry.teacherIds?.length > 0) {
-          // Collapse selected teachers into one group entry
-          gradeTeachers.push({ grade, teacher: null });
-          // Keep non-selected teachers as individual entries
-          const nonSelected = teachers.filter(t => t.grade === grade && !configEntry.teacherIds.includes(t.id));
-          for (const t of nonSelected) gradeTeachers.push({ grade, teacher: t });
-        } else {
-          // No config for this grade — collapse all
-          gradeTeachers.push({ grade, teacher: null });
-        }
+      // Collapse the selected (or all) teachers into ONE combined group entry
+      // that still carries every member — assignDay emits one block per member
+      // so each class keeps attribution, occupancy protection, and shows up in
+      // per-teacher views/planners. (Previously this was `teacher: null`,
+      // which silently dropped the member classes from the schedule.)
+      const gradeTeacherList = teachers.filter((t) => t.grade === grade);
+      const configEntry = bigGroupConfig.find(e => e.grade === grade);
+      if (bigGroupConfig.length > 0 && configEntry && configEntry.teacherIds?.length > 0) {
+        const selected = gradeTeacherList.filter(t => configEntry.teacherIds.includes(t.id));
+        const members = selected.length > 0 ? selected : gradeTeacherList;
+        gradeTeachers.push({ grade, teacher: members[0] ?? null, members });
+        // Keep non-selected teachers as individual entries
+        const nonSelected = gradeTeacherList.filter(t => !configEntry.teacherIds.includes(t.id));
+        for (const t of nonSelected) gradeTeachers.push({ grade, teacher: t });
       } else {
-        // No config — collapse all teachers in conflict grades
-        gradeTeachers.push({ grade, teacher: null });
+        // No config for this grade — combine the whole grade
+        gradeTeachers.push({ grade, teacher: gradeTeacherList[0] ?? null, members: gradeTeacherList });
       }
     } else {
       const gradeTeacherList = teachers.filter((t) => t.grade === grade);
@@ -1843,19 +1932,44 @@ function runSimulatedAnnealing(
       if (!spec) { T *= SA_COOLING; continue; }
 
       const duration = timeToMinutes(blockToMove.end_time) - timeToMinutes(blockToMove.start_time);
-      const workDays = (spec.working_days ?? DAYS).filter(d => DAYS.includes(d));
+      let workDays = (spec.working_days ?? DAYS).filter(d => DAYS.includes(d));
       if (workDays.length === 0) { T *= SA_COOLING; continue; }
+
+      // Never manufacture an idle day: if this is the specialist's LAST block
+      // on its day, it may only move within that day, not to another one.
+      const isLastOnDay = !teachingBlocks.some(
+        (b) => b !== blockToMove && b.specialist_id === blockToMove.specialist_id && b.day_of_week === blockToMove.day_of_week,
+      );
+      if (isLastOnDay) workDays = [blockToMove.day_of_week];
 
       // Build candidate free slots across all working days
       const testBlocks = currentBlocks.filter(b => b !== blockToMove);
       const occ = buildOccupancyFromBlocks(baseOccupancy, testBlocks);
 
+      // Candidate starts = the grade's period grid ∪ start times already used
+      // on that day. The union keeps SA's balancing freedom (it can slide into
+      // any existing "row" on any day) while never inventing a NEW off-grid
+      // start time — this keeps the printed grid to a handful of clean rows
+      // instead of dozens of 5-minute-offset ones.
+      const saPassing = school.passing_time ?? 5;
+      const saSetup = school.setup_time ?? 15;
+      const saGradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
       const freeSlots: Array<{ day: string; start: number; end: number }> = [];
       for (const day of workDays) {
         const endMin = getEndMinForDay(day, school);
         const recessWindows = getRecessWindowsForDay(day, school, recessConfigs, blockToMove.grade);
-        for (let s = classStartMin; s + duration <= endMin; s += 5) {
+        const candidateStarts = new Set<number>(
+          buildTimeSlotsForGrade(
+            blockToMove.grade, duration, classStartMin, endMin,
+            saPassing, saSetup, saGradeTimeConfig, recessWindows,
+          ).map((sl) => sl.start),
+        );
+        for (const b of currentBlocks) {
+          if (b.day_of_week === day) candidateStarts.add(timeToMinutes(b.start_time));
+        }
+        for (const s of [...candidateStarts].sort((x, y) => x - y)) {
           const e = s + duration;
+          if (s < classStartMin || e > endMin) continue;
           if (recessWindows.some(r => s < r.end && e > r.start)) continue;
           if (!occ.isSpecialistFree(day, s, e, blockToMove.specialist_id!)) continue;
           if (blockToMove.teacher_id && !occ.isTeacherFree(day, s, e, blockToMove.teacher_id)) continue;
@@ -2261,7 +2375,7 @@ export function generateScheduleBlocks(
     extraWarnings.push(...validateExtraRotation(baseBlocks, conflictGrades));
   }
 
-  const finalWarnings = computeWarnings(baseBlocks, specialists, grades);
+  const finalWarnings = computeWarnings(baseBlocks, specialists, grades, teachers);
   const breakdown = scoreSchedule(
     { blocks: baseBlocks, warnings: finalWarnings, preferenceViolations },
     scoringInput,
@@ -2439,6 +2553,12 @@ const __serveHandler = async (req: Request): Promise<Response> => {
         grade: b.grade,
         room: b.room,
         week_label: b.week_label,
+        // Carry user/AI annotations forward — replans must not silently drop
+        // a teacher's notes or the block's explanation.
+        notes: b.notes ?? null,
+        is_override: b.is_override ?? false,
+        placement_reason: b.placement_reason ?? null,
+        ai_explanation: b.ai_explanation ?? null,
       }));
     }
 
@@ -2488,7 +2608,9 @@ const __serveHandler = async (req: Request): Promise<Response> => {
 
     const blocksWithReason = [...lockedBlocks, ...adminBlocks, ...nonConflicting].map(b => ({
       ...b,
-      placement_reason: computePlacementReason(b, {
+      // Keep a carried-forward reason (locked blocks on replan) over a freshly
+      // computed one.
+      placement_reason: b.placement_reason ?? computePlacementReason(b, {
         specialist: b.specialist_id ? specById[b.specialist_id] : null,
         teacher: b.teacher_id ? teacherById[b.teacher_id] : null,
         school,
@@ -2515,7 +2637,7 @@ const __serveHandler = async (req: Request): Promise<Response> => {
     }
 
     // Compute final warnings against the merged block set (includes locked + admin)
-    const baseWarnings = computeWarnings(blocks, specialists, grades);
+    const baseWarnings = computeWarnings(blocks, specialists, grades, teachers);
     // FIX-P1-2: when extra_rotation is the chosen strategy, suppress
     // double_booked errors that are already explained by an
     // extra_rotation_failed warning at the same (spec, day, time).

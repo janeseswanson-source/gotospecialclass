@@ -21,12 +21,13 @@ export async function exportTeacherPlanner(opts: Options): Promise<boolean> {
     let specQuery = supabase.from("specialists").select("id, name, subject").eq("school_id", schoolId);
     if (specialistId !== "all") specQuery = specQuery.eq("id", specialistId);
 
-    const [{ data: rawBlocks }, { data: specs }, { data: teachers }, { data: school }, { data: recess }] = await Promise.all([
+    const [{ data: rawBlocks }, { data: specs }, { data: teachers }, { data: school }, { data: recess }, { data: calEvents }] = await Promise.all([
       supabase.from("schedule_blocks").select("*").eq("generation_id", generationId),
       specQuery,
       supabase.from("classroom_teachers").select("id, name, grade").eq("school_id", schoolId),
       supabase.from("schools").select("name").eq("id", schoolId).maybeSingle(),
       supabase.from("recess_lunch_config").select("*").eq("school_id", schoolId),
+      supabase.from("parsed_calendar_events").select("event_date, end_date, title, event_type").eq("school_id", schoolId).eq("approved", true),
     ]);
 
     if (!rawBlocks?.length || !specs?.length) return false;
@@ -59,6 +60,7 @@ export async function exportTeacherPlanner(opts: Options): Promise<boolean> {
       weekLabels,
       recessConfig: (recess ?? []) as RecessRow[],
       includeNotesBox,
+      calendarEvents: calEvents ?? [],
     });
 
     const blob = await pdf(element as any).toBlob();

@@ -4,7 +4,7 @@ import { DefaultChatTransport, type UIMessage } from "ai";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { BrainCircuit, X as XIcon, AlertCircle, Check, Loader2 } from "lucide-react";
+import { BrainCircuit, X as XIcon, AlertCircle, Check, Loader2, MoveRight, ArrowLeftRight, Trash2, Plus, Wrench } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
@@ -23,9 +23,62 @@ interface ScheduleChatPanelProps {
   generationId: string | null;
   onClose: () => void;
   onScheduleChanged: () => void;
+  /** Called after Apply with the ids of blocks that changed, so the page can
+   *  highlight them in the grid. */
+  onApplied?: (changedBlockIds: string[]) => void;
 }
 
-export default function ScheduleChatPanel({ generationId, onClose, onScheduleChanged }: ScheduleChatPanelProps) {
+/** Human description for a proposed edit op. Falls back for ops proposed by
+ *  an older server build without labels. */
+function opLabel(op: any): string {
+  if (op?.label) return op.label;
+  switch (op?.kind) {
+    case "move": return `Move block → ${op.day_of_week} ${String(op.start_time).slice(0, 5)}`;
+    case "swap": return "Swap two blocks";
+    case "delete": return "Remove a block";
+    case "insert": return `Add ${op.subject ?? "block"} → ${op.day_of_week} ${String(op.start_time).slice(0, 5)}`;
+    default: return "Schedule change";
+  }
+}
+
+function OpIcon({ kind }: { kind?: string }) {
+  const cls = "h-3.5 w-3.5 shrink-0";
+  if (kind === "move") return <MoveRight className={cls} />;
+  if (kind === "swap") return <ArrowLeftRight className={cls} />;
+  if (kind === "delete") return <Trash2 className={cls} />;
+  if (kind === "insert") return <Plus className={cls} />;
+  return <Wrench className={cls} />;
+}
+
+/** Inline card for a proposed (or rejected) tool action — replaces the raw
+ *  JSON tool dump with a plain-language description. */
+function ProposalCard({ output }: { output: any }) {
+  if (output?.status === "proposed" && output.op) {
+    return (
+      <div className="my-1.5 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-xs">
+        <span className="mt-0.5 text-amber-700 dark:text-amber-400"><OpIcon kind={output.op.kind} /></span>
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-foreground">{opLabel(output.op)}</p>
+          <p className="text-[10px] text-muted-foreground">Proposed — review and apply below.</p>
+        </div>
+      </div>
+    );
+  }
+  if (output?.ok === false && output?.error) {
+    return (
+      <div className="my-1.5 flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs">
+        <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5 text-destructive" />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-destructive">Couldn't make that change</p>
+          <p className="text-[11px] text-muted-foreground">{String(output.error)}</p>
+        </div>
+      </div>
+    );
+  }
+  return null;
+}
+
+export default function ScheduleChatPanel({ generationId, onClose, onScheduleChanged, onApplied }: ScheduleChatPanelProps) {
   const [hydratedMessages, setHydratedMessages] = useState<UIMessage[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [input, setInput] = useState("");
@@ -154,6 +207,8 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
       if (!resp.ok) throw new Error(data?.error ?? `HTTP ${resp.status}`);
       markResolved(callIds);
       onScheduleChanged();
+      const changedIds: string[] = Array.isArray(data.changed_block_ids) ? data.changed_block_ids : [];
+      if (changedIds.length) onApplied?.(changedIds);
       const skipped: string[] = Array.isArray(data.skipped) ? data.skipped : [];
       toast({
         title: skipped.length
@@ -230,6 +285,11 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
                     }
                     if (part.type?.startsWith("tool-")) {
                       const tp = part as any;
+                      // Mutating tools get a plain-language card instead of a
+                      // raw JSON dump — the user must be able to read exactly
+                      // what the AI wants to change (or why it couldn't).
+                      const card = tp.output ? <ProposalCard key={i} output={tp.output} /> : null;
+                      if (card && (tp.output?.status === "proposed" || tp.output?.ok === false)) return card;
                       return (
                         <Tool key={i} defaultOpen={false} className="my-2">
                           <ToolHeader type={tp.type} state={tp.state} />
@@ -282,20 +342,29 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
       )}
 
       {pendingProposals.length > 0 && !isLoading && (
-        <div className="flex items-center gap-3 border-t border-amber-500/30 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2.5">
-          <div className="flex-1 text-xs">
-            <p className="font-semibold text-foreground">
-              {pendingProposals.length} proposed change{pendingProposals.length === 1 ? "" : "s"} — not saved yet
-            </p>
-            <p className="text-muted-foreground">Review the steps above, then apply or discard.</p>
+        <div className="border-t border-amber-500/30 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2.5 space-y-2">
+          <div className="flex items-center gap-3">
+            <div className="flex-1 text-xs">
+              <p className="font-semibold text-foreground">
+                {pendingProposals.length} proposed change{pendingProposals.length === 1 ? "" : "s"} — not saved yet
+              </p>
+            </div>
+            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={discardChanges} disabled={applying}>
+              Discard
+            </Button>
+            <Button size="sm" className="h-7 gap-1 text-xs" onClick={applyChanges} disabled={applying}>
+              {applying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+              {applying ? "Applying…" : "Apply"}
+            </Button>
           </div>
-          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={discardChanges} disabled={applying}>
-            Discard
-          </Button>
-          <Button size="sm" className="h-7 gap-1 text-xs" onClick={applyChanges} disabled={applying}>
-            {applying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-            {applying ? "Applying…" : "Apply"}
-          </Button>
+          <ul className="max-h-28 overflow-y-auto space-y-1">
+            {pendingProposals.map((p) => (
+              <li key={p.toolCallId} className="flex items-start gap-1.5 text-[11px] text-foreground">
+                <span className="mt-0.5 text-amber-700 dark:text-amber-400"><OpIcon kind={(p.op as any)?.kind} /></span>
+                <span className="min-w-0 flex-1">{opLabel(p.op)}</span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

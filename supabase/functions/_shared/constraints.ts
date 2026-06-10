@@ -248,7 +248,13 @@ export function violations(
     if (os === null || oe === null) continue;
     if (!(start < oe && os < end)) continue;
     if (candidate.specialist_id && o.specialist_id === candidate.specialist_id) {
-      if (!out.includes("specialist_double_book")) out.push("specialist_double_book");
+      // Big Group exemption: two classes deliberately taught together — same
+      // specialist, IDENTICAL interval, same grade, different teachers.
+      const isCombinedGroup =
+        os === start && oe === end &&
+        (o.grade ?? null) === (candidate.grade ?? null) &&
+        (o.teacher_id ?? null) !== (candidate.teacher_id ?? null);
+      if (!isCombinedGroup && !out.includes("specialist_double_book")) out.push("specialist_double_book");
     }
     if (candidate.teacher_id && o.teacher_id === candidate.teacher_id) {
       if (!out.includes("teacher_double_book")) out.push("teacher_double_book");

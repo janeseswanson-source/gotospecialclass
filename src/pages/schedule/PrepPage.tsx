@@ -370,19 +370,27 @@ export default function PrepPage() {
       setGenProgress('');
       toast({ title: "Schedule generated!", description: `${data.blocks_count} blocks created. View it on the Master Schedule page.` });
 
-      // Schedule 'accepted' signal after 5 minutes of no regeneration
       const newGenId: string | undefined = data.generation_id;
       if (newGenId) {
-        setTimeout(async () => {
-          await supabase.from('schedule_generations')
-            .update({ feedback_signal: 'accepted' })
-            .eq('id', newGenId)
-            .is('feedback_signal', null);
-          supabase.functions.invoke('update-scoring-weights', {
-            body: { school_id: selectedSchoolId, generation_id: newGenId },
-          }).catch(() => {});
-        }, 5 * 60 * 1000);
+        // Fire-and-forget AI quality verification — populates the quality
+        // score / "AI verified" badges on the Master Schedule and Dashboard.
+        supabase.functions.invoke('verify-schedule', {
+          body: { generation_id: newGenId },
+        }).catch(() => {});
+
+        // In-app notification (self) so the bell reflects real events.
+        const { data: { user: me } } = await supabase.auth.getUser();
+        if (me) {
+          supabase.from('notifications').insert({
+            user_id: me.id,
+            type: 'schedule_generated',
+            title: 'Schedule generated',
+            message: `${data.blocks_count} blocks created — open the Master Schedule to review.`,
+          }).then(() => {});
+        }
       }
+      // (The 'accepted' learning signal now fires when the user clicks Accept
+      // on the Master Schedule — not on a fragile browser timer.)
 
       loadHistory();
     } catch (err: any) {

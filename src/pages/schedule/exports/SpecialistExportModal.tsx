@@ -7,7 +7,7 @@ import { Loader2, Download, AlertCircle } from 'lucide-react';
 import { renderPdfBlob, triggerDownload } from './exportShared';
 import { SpecialistPlanner, type RecessRow } from '@/pdf/SpecialistPlanner';
 import { getMondayOf, enumerateWeeks, enumerateWeeksBetween, addDays } from '@/pdf/lib/weekDates';
-import { getDayLabel } from '@/pdf/lib/holidays';
+import { getDayLabelFor, type SchoolCalendarEvent } from '@/pdf/lib/holidays';
 
 interface Props {
   open: boolean;
@@ -17,6 +17,7 @@ interface Props {
   schoolName?: string;
   schoolYear?: string;
   recessConfig?: RecessRow[];
+  calendarEvents?: SchoolCalendarEvent[];
 }
 
 type Phase = 'options' | 'generating' | 'preview' | 'error';
@@ -28,13 +29,13 @@ function todayIso() {
   return d.toISOString().slice(0, 10);
 }
 
-function isHolidayWeek(monday: Date): boolean {
+function isHolidayWeek(monday: Date, events?: SchoolCalendarEvent[]): boolean {
   let labeled = 0;
-  for (let i = 0; i < 5; i++) if (getDayLabel(addDays(monday, i))) labeled++;
+  for (let i = 0; i < 5; i++) if (getDayLabelFor(addDays(monday, i), events)) labeled++;
   return labeled === 5;
 }
 
-export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks, schoolName, schoolYear, recessConfig = [] }: Props) => {
+export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks, schoolName, schoolYear, recessConfig = [], calendarEvents }: Props) => {
   const [selection, setSelection] = useState<string>('all');
   const [weeksMode, setWeeksMode] = useState<WeeksMode>('this');
   const [customStart, setCustomStart] = useState<string>(todayIso());
@@ -72,7 +73,7 @@ export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks,
       if (weeksMode === 'this') weeks = [getMondayOf(new Date())];
       else if (weeksMode === 'next4') weeks = enumerateWeeks(new Date(), 4);
       else weeks = enumerateWeeksBetween(new Date(customStart), new Date(customEnd));
-      const filtered = weeks.filter((w) => !isHolidayWeek(w));
+      const filtered = weeks.filter((w) => !isHolidayWeek(w, calendarEvents));
       return filtered.length ? filtered : weeks;
     } catch (e) {
       console.warn('Week computation failed, defaulting to this week', e);
@@ -100,6 +101,7 @@ export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks,
           weeks={weeks}
           weekLabels={labels}
           recessConfig={recessConfig}
+          calendarEvents={calendarEvents}
         />
       );
 

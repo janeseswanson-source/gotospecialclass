@@ -153,7 +153,13 @@ export function computeConflictPairs(blocks: ConflictBlock[]): ConflictPair[] {
       if (a.id === b.id) continue;
       if (!intervalsOverlap(a, b)) continue;
       const kinds: ConflictKind[] = [];
-      if ((a.specialist_id || a.specialist_name) && entitiesMatch(a.specialist_id, a.specialist_name, b.specialist_id, b.specialist_name)) {
+      // Big Group exemption: identical interval + same grade + different
+      // teachers under one specialist = classes deliberately taught together.
+      const isCombinedGroup =
+        a.start_time === b.start_time && a.end_time === b.end_time &&
+        (a.grade ?? null) === (b.grade ?? null) &&
+        (a.teacher_id ?? a.teacher_name ?? null) !== (b.teacher_id ?? b.teacher_name ?? null);
+      if (!isCombinedGroup && (a.specialist_id || a.specialist_name) && entitiesMatch(a.specialist_id, a.specialist_name, b.specialist_id, b.specialist_name)) {
         kinds.push("specialist");
       }
       if ((a.teacher_id || a.teacher_name) && entitiesMatch(a.teacher_id, a.teacher_name, b.teacher_id, b.teacher_name)) {

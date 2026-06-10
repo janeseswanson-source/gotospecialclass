@@ -21,6 +21,8 @@ interface ScheduleBlockCellProps {
   isOverride?: boolean;
   hasConflict?: boolean;
   isLocked?: boolean;
+  /** Recently changed (e.g. by the AI editor) — rendered with a visible highlight. */
+  isHighlighted?: boolean;
   onToggleLock?: () => void;
   onClick?: () => void;
   draggable?: boolean;
@@ -30,9 +32,15 @@ interface ScheduleBlockCellProps {
   onNotesChange?: (blockId: string, notes: string) => Promise<boolean> | boolean;
 }
 
+function durationMinutes(start: string, end: string): number {
+  const [sh, sm] = start.split(":").map(Number);
+  const [eh, em] = end.split(":").map(Number);
+  return Math.max(0, (eh * 60 + em) - (sh * 60 + sm));
+}
+
 export default function ScheduleBlockCell({
   blockId, subject, specialistName, teacherName, room, grade, startTime, endTime, isOverride, hasConflict,
-  isLocked, onToggleLock, onClick, draggable, onDragStart, weekLabel, notes, onNotesChange,
+  isLocked, isHighlighted, onToggleLock, onClick, draggable, onDragStart, weekLabel, notes, onNotesChange,
 }: ScheduleBlockCellProps) {
   const iconOffset = weekLabel ? "right-7" : "right-1";
   const isA = weekLabel ? /^A/i.test(weekLabel) : false;
@@ -71,11 +79,16 @@ export default function ScheduleBlockCell({
     }
   }
 
+  // Height scales with duration so a 30-min and a 90-min block are visually
+  // distinguishable at a glance (clamped so short blocks stay readable).
+  const minHeightPx = Math.min(150, Math.max(48, durationMinutes(startTime, endTime) * 1.1));
+
   return (
     <button
       onClick={onClick}
       draggable={draggable && !isLocked}
       onDragStart={onDragStart}
+      style={{ minHeight: `${minHeightPx}px` }}
       className={cn(
         "relative w-full rounded-md border px-2 py-1.5 text-left text-xs transition-all hover:shadow-md group",
         draggable && !isLocked && "cursor-grab active:cursor-grabbing",
@@ -83,8 +96,14 @@ export default function ScheduleBlockCell({
         getLeftBorder(subject),
         hasConflict && "ring-2 ring-destructive/60 border-destructive/50",
         isLocked && "ring-2 ring-primary/40 opacity-90",
+        isHighlighted && "ring-2 ring-sky-500/70 shadow-[0_0_0_3px_rgba(14,165,233,0.15)] animate-pulse-once",
       )}
     >
+      {isHighlighted && (
+        <span className="absolute -top-2 left-2 z-10 rounded bg-sky-500 px-1 py-px text-[8px] font-bold uppercase tracking-wide text-white shadow">
+          Changed
+        </span>
+      )}
       {draggable && !isLocked && (
         <GripVertical className="absolute left-0.5 top-1/2 -translate-y-1/2 h-3 w-3 opacity-0 group-hover:opacity-40 transition-opacity" />
       )}
@@ -119,7 +138,7 @@ export default function ScheduleBlockCell({
       {!teacherName && grade && <p className="truncate font-medium text-[10px] print:text-muted-foreground/60">Gr. {grade}</p>}
       {specialistName && <p className="truncate text-[10px] text-muted-foreground">{specialistName}</p>}
       <p
-        className="mt-0.5 text-[10px] opacity-0 group-hover:opacity-60 transition-opacity"
+        className="mt-0.5 text-[10px] opacity-50 group-hover:opacity-90 transition-opacity"
         title={`${formatTime(startTime)}–${formatTime(endTime)}`}
       >
         {formatTime(startTime)}–{formatTime(endTime)} {room && `· ${room}`}

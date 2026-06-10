@@ -263,6 +263,55 @@ Deno.test("standard generation is internally conflict-free", () => {
   assertEquals(conflictCount(teaching, specialists, grades), 0);
 });
 
+Deno.test("big group: every member class keeps attribution and protection", () => {
+  // Two grade-4 classes are combined. Each member must still receive blocks
+  // (teacher_id attribution), the combined sessions must share the exact slot,
+  // and the group must NOT be flagged as a specialist double-book.
+  const specialists = [
+    spec("11111111-1111-4111-a111-111111111111", "Art", "Art"),
+    spec("22222222-2222-4222-a222-222222222222", "Music", "Music"),
+    spec("33333333-3333-4333-a333-333333333333", "PE", "PE"),
+  ];
+  const grades = ["3", "4", "5"];
+  const teachers = grades.flatMap((g, i) => [
+    teacher(`bbbbbbbb-bbbb-4bbb-bbbb-${(i * 2 + 10).toString().padStart(12, "0")}`, `${g}A`, g),
+    teacher(`bbbbbbbb-bbbb-4bbb-bbbb-${(i * 2 + 11).toString().padStart(12, "0")}`, `${g}B`, g),
+  ]);
+  const grade4 = teachers.filter((t) => t.grade === "4");
+  const school = {
+    ...baseSchool,
+    conflict_strategy: "big_group", conflict_strategies: ["big_group"],
+    conflict_grades: ["4"], conflict_timing: "before",
+    big_group_config: [{ grade: "4", teacherIds: grade4.map((t) => t.id) }],
+  };
+
+  const result = generateScheduleBlocks(
+    "00000000-0000-4000-a000-0000000big00",
+    specialists, teachers, grades, school, [], [], [], [], [],
+  );
+  const teaching = result.blocks.filter((b) => b.specialist_id && b.grade !== "Lunch");
+
+  // Every member of the combined group has attributed sessions.
+  for (const t of grade4) {
+    const n = teaching.filter((b) => b.teacher_id === t.id).length;
+    assert(n > 0, `${t.name} (big-group member) has no attributed sessions`);
+  }
+
+  // Combined sessions exist: same spec, same exact slot, different teachers.
+  const combined = teaching.filter((a) =>
+    a.grade === "4" &&
+    teaching.some((b) =>
+      b !== a && b.grade === "4" && b.specialist_id === a.specialist_id &&
+      b.day_of_week === a.day_of_week && b.start_time === a.start_time &&
+      b.end_time === a.end_time && b.teacher_id !== a.teacher_id,
+    ),
+  );
+  assert(combined.length > 0, "no combined (shared-slot) sessions found");
+
+  // The combined group is NOT a conflict.
+  assertEquals(conflictCount(teaching, specialists, grades), 0);
+});
+
 Deno.test("per-specialist class_duration: a 30-min specialist gets 30-min blocks", () => {
   // School default is 45 (baseSchool). Music has its own 30-min class length;
   // Art uses the default. Each specialist's blocks must match THEIR duration.

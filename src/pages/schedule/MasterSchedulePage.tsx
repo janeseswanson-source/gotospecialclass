@@ -71,6 +71,7 @@ export default function MasterSchedulePage() {
   const [recessConfig, setRecessConfig] = useState<any[]>([]);
   const [recessBandLabels, setRecessBandLabels] = useState<Record<string, string>>({});
   const [clubs, setClubs] = useState<any[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<any[]>([]);
   const [schoolYear, setSchoolYear] = useState<string | undefined>(undefined);
   const [schoolStartTime, setSchoolStartTime] = useState<string | null>(null);
   const [schoolEndTime, setSchoolEndTime] = useState<string | null>(null);
@@ -93,6 +94,16 @@ export default function MasterSchedulePage() {
   const [adminExportOpen, setAdminExportOpen] = useState(false);
   const [replanSuggestion, setReplanSuggestion] = useState<{ specialistId: string; specialistName: string } | null>(null);
   const [replanLoading, setReplanLoading] = useState(false);
+  // Blocks recently changed by the AI editor — highlighted in the grid so the
+  // user can SEE what changed. Cleared automatically.
+  const [recentChangedIds, setRecentChangedIds] = useState<Set<string>>(new Set());
+  const changedClearTimer = useRef<number | null>(null);
+  const flagChangedBlocks = useCallback((ids: string[]) => {
+    if (!ids.length) return;
+    setRecentChangedIds(new Set(ids));
+    if (changedClearTimer.current) window.clearTimeout(changedClearTimer.current);
+    changedClearTimer.current = window.setTimeout(() => setRecentChangedIds(new Set()), 12_000);
+  }, []);
   const [density, setDensity] = useState<"compact" | "fine">("compact");
 
 
@@ -171,13 +182,14 @@ export default function MasterSchedulePage() {
     setLoading(true);
     setLoadError(false);
 
-    const [genRes, specRes, teachRes, recessRes, clubsRes, schoolRes] = await Promise.all([
+    const [genRes, specRes, teachRes, recessRes, clubsRes, schoolRes, calRes] = await Promise.all([
       supabase.from("schedule_generations").select("*").eq("school_id", selectedSchoolId!).order("version", { ascending: false }),
       supabase.from("specialists").select("id, name, subject").eq("school_id", selectedSchoolId!),
       supabase.from("classroom_teachers").select("id, name, grade, combo_partner_id").eq("school_id", selectedSchoolId!),
       supabase.from("recess_lunch_config").select("*").eq("school_id", selectedSchoolId!),
       supabase.from("clubs").select("*").eq("school_id", selectedSchoolId!),
       supabase.from("schools").select("school_year, start_time, end_time, recess_grade_bands").eq("id", selectedSchoolId!).maybeSingle(),
+      supabase.from("parsed_calendar_events").select("event_date, end_date, title, event_type").eq("school_id", selectedSchoolId!).eq("approved", true),
     ]);
 
     setSchoolStartTime(schoolRes.data?.start_time ?? null);
@@ -195,6 +207,7 @@ export default function MasterSchedulePage() {
       setRecessBandLabels({});
     }
     setClubs(clubsRes.data ?? []);
+    setCalendarEvents(calRes.data ?? []);
     setSchoolYear(schoolRes.data?.school_year ?? undefined);
     setGenerations(genRes.data ?? []);
     if (genRes.data?.[0]) {
@@ -568,6 +581,18 @@ export default function MasterSchedulePage() {
         .update({ review_state: next })
         .eq("id", selectedGen);
       if (error) throw error;
+      // Accept = the positive learning signal for the scorer's weights (only
+      // if no stronger signal like 'regenerated' was already recorded).
+      if (next === "accepted" && selectedSchoolId) {
+        await supabase
+          .from("schedule_generations")
+          .update({ feedback_signal: "accepted" })
+          .eq("id", selectedGen)
+          .is("feedback_signal", null);
+        supabase.functions.invoke("update-scoring-weights", {
+          body: { school_id: selectedSchoolId, generation_id: selectedGen },
+        }).catch(() => {});
+      }
       setGenerations((prev) => prev.map((g) => g.id === selectedGen ? { ...g, review_state: next } : g));
       toast({
         title: next === "accepted" ? "Schedule accepted" : "Schedule marked for changes",
@@ -1074,11 +1099,12 @@ export default function MasterSchedulePage() {
               )}
 
               <ScheduleGrid
-                blocks={blocks}
+                blocks={weekFiltered}
                 timeSlots={timeSlots}
                 recessBands={recessBands}
                 conflictIds={conflictIds}
                 liftedIds={trayIds}
+                highlightIds={recentChangedIds}
                 onBlockClick={(b) => { setEditBlock(b); setEditOpen(true); }}
                 onBlockDrop={handleBlockDrop}
                 lockedIds={lockedIds}
@@ -1107,6 +1133,7 @@ export default function MasterSchedulePage() {
                   <ScheduleGrid
                     blocks={filteredBySpecialist}
                     timeSlots={timeSlots}
+                    highlightIds={recentChangedIds}
                     recessBands={recessBands}
                     conflictIds={conflictIds}
                     onBlockClick={(b) => { setEditBlock(b); setEditOpen(true); }}
@@ -1135,6 +1162,7 @@ export default function MasterSchedulePage() {
                 <ScheduleGrid
                   blocks={filteredByTeacher}
                   timeSlots={timeSlots}
+                  highlightIds={recentChangedIds}
                   recessBands={recessBands}
                   conflictIds={conflictIds}
                   onBlockClick={(b) => { setEditBlock(b); setEditOpen(true); }}
@@ -1201,7 +1229,7 @@ export default function MasterSchedulePage() {
                     {[editBlock.subject, editBlock.grade && `Gr. ${editBlock.grade}`, editBlock.day_of_week].filter(Boolean).join(' · ')}
                   </p>
                   <p className="text-xs text-foreground leading-relaxed">
-                    {editBlock.placement_reason ?? "No explanation recorded for this block."}
+                    {editBlock.ai_explanation ?? editBlock.placement_reason ?? "No explanation recorded for this block."}
                   </p>
                 </>
               ) : (
@@ -1261,6 +1289,7 @@ export default function MasterSchedulePage() {
         schoolName={selectedSchool?.name}
         schoolYear={schoolYear}
         recessConfig={recessConfig}
+        calendarEvents={calendarEvents}
       />
       <AdminExportModal
         open={adminExportOpen}
@@ -1280,6 +1309,7 @@ export default function MasterSchedulePage() {
           generationId={selectedGen || null}
           onClose={() => setChatOpen(false)}
           onScheduleChanged={() => selectedGen && loadBlocks(selectedGen)}
+          onApplied={flagChangedBlocks}
         />
       )}
 

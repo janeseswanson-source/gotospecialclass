@@ -203,11 +203,23 @@ export const AdminOverview = ({
 
   // Column widths (percentages must sum to 100)
   const timeColW = 8;
-  const sessionColW = hasAB ? 7 : 0;
-  const dayColW = hasAB ? (100 - timeColW - sessionColW * 2) / 5 : (100 - timeColW) / 5;
+  const dayColW = (100 - timeColW) / 5;
 
-  // Recess / lunch derivation (first config row, "all" grade-band)
-  const recess = recessConfig[0] || {};
+  // Recess / lunch windows from EVERY config row (staggered schools have one
+  // row per grade band — using only the first row showed the wrong band's
+  // times and could hide real classes).
+  const recessStarts = new Map<string, string>(); // start -> end
+  const lunchStarts = new Map<string, string>();
+  for (const rc of recessConfig) {
+    if (rc?.am_recess_start && rc?.am_recess_end) recessStarts.set(rc.am_recess_start, rc.am_recess_end);
+    if (rc?.pm_recess_start && rc?.pm_recess_end) recessStarts.set(rc.pm_recess_start, rc.pm_recess_end);
+    if (rc?.lunch_start && rc?.lunch_end) lunchStarts.set(rc.lunch_start, rc.lunch_end);
+  }
+
+  const isRealClass = (b: any) => {
+    const s = (b.subject || '').toLowerCase();
+    return b.specialist_id && !s.includes('lunch') && !s.includes('planning') && !s.includes('plc') && (b.grade || '').toLowerCase() !== 'lunch';
+  };
 
   const headerTitle = `Master Schedule — ${schoolName || 'School'}${schoolYear ? ` — ${schoolYear}` : ''}`;
 
@@ -232,14 +244,16 @@ export const AdminOverview = ({
     return dayClubs.length > 2 ? `${names} +${dayClubs.length - 2}` : names;
   }
 
+  // A slot collapses into a band row ONLY when no real class starts there —
+  // classes overlapping another band's recess/lunch must stay visible.
+  function hasRealClassAt(start: string): boolean {
+    return blocks.some((b) => b.start_time === start && isRealClass(b));
+  }
   function isRecessTime(start: string): boolean {
-    return (
-      (recess.am_recess_start && start === recess.am_recess_start) ||
-      (recess.pm_recess_start && start === recess.pm_recess_start)
-    );
+    return recessStarts.has(start) && !hasRealClassAt(start);
   }
   function isLunchTime(start: string): boolean {
-    return recess.lunch_start && start === recess.lunch_start;
+    return lunchStarts.has(start) && !hasRealClassAt(start);
   }
 
   return (
@@ -260,12 +274,6 @@ export const AdminOverview = ({
             {DAYS.map((d) => (
               <Text key={d.key} style={[styles.colHeaderCell, { width: `${dayColW}%` }]}>{d.label}</Text>
             ))}
-            {hasAB && (
-              <>
-                <Text style={[styles.colHeaderCell, { width: `${sessionColW}%` }]}>Session A</Text>
-                <Text style={[styles.colHeaderCell, { width: `${sessionColW}%`, borderRight: 0 }]}>Session B</Text>
-              </>
-            )}
           </View>
 
           {timeSlots.length === 0 && (
@@ -275,9 +283,9 @@ export const AdminOverview = ({
           )}
 
           {timeSlots.map((slot, slotIdx) => {
-            // Band row (recess / lunch) takes precedence over time grid
+            // Band row (recess / lunch) only when no real class starts here
             if (isRecessTime(slot.start)) {
-              const end = slot.start === recess.am_recess_start ? recess.am_recess_end : recess.pm_recess_end;
+              const end = recessStarts.get(slot.start);
               return (
                 <View key={`band-r-${slotIdx}`} style={styles.bandRow} wrap={false}>
                   <View style={[styles.bandCell, { width: '100%' }]}>
@@ -290,7 +298,7 @@ export const AdminOverview = ({
               return (
                 <View key={`band-l-${slotIdx}`} style={styles.bandRow} wrap={false}>
                   <View style={[styles.timeCell, { width: `${timeColW}%`, backgroundColor: '#F5EFE0' }]}>
-                    <Text>{fmtTime(slot.start)}–{fmtTime(recess.lunch_end)}</Text>
+                    <Text>{fmtTime(slot.start)}–{fmtTime(lunchStarts.get(slot.start))}</Text>
                   </View>
                   {DAYS.map((d) => (
                     <View key={d.key} style={[styles.cell, { width: `${dayColW}%`, justifyContent: 'center' }]}>
@@ -299,12 +307,6 @@ export const AdminOverview = ({
                       </Text>
                     </View>
                   ))}
-                  {hasAB && (
-                    <>
-                      <View style={[styles.cell, { width: `${sessionColW}%` }]} />
-                      <View style={[styles.cell, { width: `${sessionColW}%`, borderRight: 0 }]} />
-                    </>
-                  )}
                 </View>
               );
             }
@@ -329,20 +331,6 @@ export const AdminOverview = ({
                     </View>
                   );
                 })}
-                {hasAB && (
-                  <>
-                    <View style={[styles.cell, { width: `${sessionColW}%` }]}>
-                      {sessionA[slotIdx] && (
-                        <Text style={styles.sessionItem}>{sessionA[slotIdx].text}</Text>
-                      )}
-                    </View>
-                    <View style={[styles.cell, { width: `${sessionColW}%`, borderRight: 0 }]}>
-                      {sessionB[slotIdx] && (
-                        <Text style={styles.sessionItem}>{sessionB[slotIdx].text}</Text>
-                      )}
-                    </View>
-                  </>
-                )}
               </View>
             );
           })}

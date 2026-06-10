@@ -1,6 +1,6 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import { addDays, formatWeekHeader, formatDayHeader } from './lib/weekDates';
-import { getDayLabel } from './lib/holidays';
+import { getDayLabelFor, type SchoolCalendarEvent } from './lib/holidays';
 import { pickQuoteForWeek } from './lib/quotes';
 
 export interface RecessRow {
@@ -35,6 +35,8 @@ export interface SpecialistPlannerProps {
   weekLabels?: (undefined | 'A' | 'B')[]; // one or more; default [undefined]
   recessConfig?: RecessRow[];
   includeNotesBox?: boolean;
+  /** Approved school calendar events — drive HOLIDAY/PD overlays. */
+  calendarEvents?: SchoolCalendarEvent[];
 }
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
@@ -196,7 +198,7 @@ function renderCellContent(b: PlannerBlock | undefined, noteNumber?: number) {
 }
 
 function PlannerPage({
-  specialist, blocks, monday, weekLabel, schoolName, schoolYear, recessConfig, includeNotesBox,
+  specialist, blocks, monday, weekLabel, schoolName, schoolYear, recessConfig, includeNotesBox, calendarEvents,
 }: {
   specialist: { id: string; name: string; subject: string };
   blocks: PlannerBlock[];
@@ -206,6 +208,7 @@ function PlannerPage({
   schoolYear?: string;
   recessConfig: RecessRow[];
   includeNotesBox?: boolean;
+  calendarEvents?: SchoolCalendarEvent[];
 }) {
   // Filter to this specialist + this week label
   const mine = blocks.filter((b) => {
@@ -215,13 +218,13 @@ function PlannerPage({
     return true;
   });
   const slots = dedupeSlots(mine);
-  const dayLabels = DAYS.map((_, i) => getDayLabel(addDays(monday, i)));
+  const dayLabels = DAYS.map((_, i) => getDayLabelFor(addDays(monday, i), calendarEvents));
   const quote = pickQuoteForWeek(monday);
   const { accent } = getSubjectColors(specialist.subject);
   const totalSlots = slots.length * 5;
   const filledSlots = mine.filter((b) => {
     const s = (b.subject || '').toLowerCase();
-    return !s.includes('planning') && !s.includes('plc');
+    return !s.includes('planning') && !s.includes('plc') && !s.includes('lunch') && (b.grade || '').toLowerCase() !== 'lunch';
   }).length;
   const loadPct = totalSlots > 0 ? Math.round((filledSlots / totalSlots) * 100) : 0;
 
@@ -293,7 +296,15 @@ function PlannerPage({
         slots.map((slot, idx) => {
           const rLine = recessLine(slot, recessConfig);
           const lLine = lunchLine(slot, recessConfig);
-          if (rLine || lLine) {
+          // Only collapse the row into a recess/lunch band when the specialist
+          // has NO real classes in this slot — a class can legitimately overlap
+          // another grade band's recess and must never disappear from print.
+          const slotBlocks = mine.filter((b) => b.start_time === slot.start);
+          const hasRealClass = slotBlocks.some((b) => {
+            const s = (b.subject || '').toLowerCase();
+            return !s.includes('planning') && !s.includes('plc') && !s.includes('lunch') && (b.grade || '').toLowerCase() !== 'lunch';
+          });
+          if ((rLine || lLine) && !hasRealClass) {
             return (
               <View key={idx} style={styles.bandRow}>
                 <View style={styles.timeCell}><Text>{fmtTime(slot.start)} – {fmtTime(slot.end)}</Text></View>
@@ -399,7 +410,7 @@ function PlannerPage({
 }
 
 export const SpecialistPlanner = ({
-  specialists, blocks, schoolName, schoolYear, weeks, weekLabels, recessConfig = [], includeNotesBox = true,
+  specialists, blocks, schoolName, schoolYear, weeks, weekLabels, recessConfig = [], includeNotesBox = true, calendarEvents,
 }: SpecialistPlannerProps) => {
   const safeWeeks = weeks && weeks.length > 0 ? weeks : [new Date()];
   const labels = weekLabels && weekLabels.length > 0 ? weekLabels : [undefined];
@@ -418,6 +429,7 @@ export const SpecialistPlanner = ({
               schoolYear={schoolYear}
               recessConfig={recessConfig}
               includeNotesBox={includeNotesBox}
+              calendarEvents={calendarEvents}
             />
           ))
         )

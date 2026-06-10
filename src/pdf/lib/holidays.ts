@@ -1,6 +1,45 @@
-// Stub US K-12 holiday list. Real holiday config can replace this later.
+// Day labels for PDF overlays. The school's own APPROVED calendar events
+// (parsed during setup) take priority; the hardcoded US holiday list below is
+// only the fallback when no school calendar exists.
 
 export type DayLabel = { type: 'holiday' | 'pd' | 'waiver'; label: string };
+
+export interface SchoolCalendarEvent {
+  event_date: string | null; // YYYY-MM-DD
+  end_date?: string | null;
+  title: string;
+  event_type: string;
+}
+
+const NO_SCHOOL_TYPES = new Set(['holiday', 'no_school', 'closure', 'break']);
+const PD_TYPES = new Set(['teacher_workday', 'pd', 'professional_development']);
+
+function isoOf(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/** Label a date from the school's approved calendar events; falls back to the
+ *  generic US holiday list when no events are provided / none match. */
+export function getDayLabelFor(date: Date, events?: SchoolCalendarEvent[] | null): DayLabel | null {
+  if (events && events.length) {
+    const iso = isoOf(date);
+    for (const ev of events) {
+      if (!ev?.event_date) continue;
+      const start = ev.event_date;
+      const end = ev.end_date ?? ev.event_date;
+      if (iso < start || iso > end) continue;
+      if (NO_SCHOOL_TYPES.has(ev.event_type)) return { type: 'holiday', label: ev.title || 'No School' };
+      if (PD_TYPES.has(ev.event_type)) return { type: 'pd', label: ev.title || 'PD Day' };
+    }
+    // A school calendar exists but doesn't mark this date — trust it over the
+    // generic stub (a school in session on a federal holiday prints normally).
+    return null;
+  }
+  return getDayLabel(date);
+}
 
 function nthWeekday(year: number, month: number, weekday: number, n: number): Date {
   // month is 0-indexed; weekday: 0 Sun .. 6 Sat

@@ -118,11 +118,20 @@
     transform: translateY(-2px);
     box-shadow: 0 8px 25px -8px hsl(214 54% 40% / 0.15);
   }
+  /* Attention pulse for blocks just changed by the AI editor. */
+  .animate-pulse-once {
+    animation: pulseOnce 1s ease-in-out 3;
+  }
 }
 
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+@keyframes pulseOnce {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 @keyframes slideUp {

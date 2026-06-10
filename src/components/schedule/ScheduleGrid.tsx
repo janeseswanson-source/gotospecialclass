@@ -45,11 +45,14 @@ interface ScheduleGridProps {
   conflictIds?: Set<string>;
   /** Block IDs to render as ghosts (e.g. lifted into the Scrabble tray). */
   liftedIds?: Set<string>;
+  /** Block IDs recently changed (e.g. by the AI editor) — rendered with a
+   *  prominent "changed" highlight so edits are visible at a glance. */
+  highlightIds?: Set<string>;
 }
 
 export default function ScheduleGrid({
   blocks, timeSlots, onBlockClick, onBlockDrop, lockedIds, onToggleLock,
-  recessBands, onNotesChange, notesEditable, conflictIds, liftedIds,
+  recessBands, onNotesChange, notesEditable, conflictIds, liftedIds, highlightIds,
 }: ScheduleGridProps) {
   const [dragOverCell, setDragOverCell] = useState<string | null>(null);
 
@@ -162,6 +165,7 @@ export default function ScheduleGrid({
                                   isOverride={block.is_override}
                                   hasConflict={conflicts.has(block.id)}
                                   isLocked={lockedIds?.has(block.id)}
+                                  isHighlighted={highlightIds?.has(block.id)}
                                   onToggleLock={onToggleLock ? () => onToggleLock(block.id) : undefined}
                                   onClick={() => onBlockClick?.(block)}
                                   draggable={!!onBlockDrop}
