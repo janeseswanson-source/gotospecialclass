@@ -677,19 +677,36 @@ export function validateContractualTeachers(
 }
 
 // ─── Time slot builder ───────────────────────────────────────────────
+// Slot starts are SNAPPED to a school-wide canonical grid so the Master
+// Schedule shows one tidy row per period across every grade and
+// specialist. The cursor always advances by `canonicalStep` (school
+// default class duration + school passing time), regardless of this
+// specific subject's `classDuration` or grade-level passing/setup
+// overrides. Subjects with shorter durations (e.g. 30 min) still occupy
+// only their own length, but the NEXT slot starts on the canonical
+// boundary — preventing the 5/10-minute drift that produced rows like
+// 7:50, 8:05, 8:10, 8:15 instead of clean 7:45 → 8:30 → 9:15 …
+// `canonicalStep` is required; callers compute it once from school
+// settings. `defaultSetupTime`/`gradeTimeConfig` are kept on the
+// signature for back-compat with other callers that still pass them.
 function buildTimeSlotsForGrade(
-  grade: string,
+  _grade: string,
   classDuration: number,
   startMin: number,
   endMin: number,
-  defaultPassingTime: number,
-  defaultSetupTime: number,
-  gradeTimeConfig: Record<string, { passingTime?: number; resetTime?: number }>,
+  _defaultPassingTime: number,
+  _defaultSetupTime: number,
+  _gradeTimeConfig: Record<string, { passingTime?: number; resetTime?: number }>,
   recessWindows: RecessWindow[],
+  canonicalStep?: number,
 ): TimeSlot[] {
-  const config = gradeTimeConfig[grade];
-  const passing = config?.passingTime ?? defaultPassingTime;
-  const setup = config?.resetTime ?? defaultSetupTime;
+  // Fall back to the legacy per-subject step ONLY if a canonical step
+  // wasn't supplied (defensive — every production caller passes one).
+  const step =
+    canonicalStep && canonicalStep > 0
+      ? canonicalStep
+      : classDuration + (_defaultPassingTime ?? 0);
+
   const slots: TimeSlot[] = [];
   let cursor = startMin;
 
@@ -699,14 +716,9 @@ function buildTimeSlotsForGrade(
     if (!overlaps) {
       slots.push({ start: cursor, end: slotEnd });
     }
-    if (overlaps) {
-      const overlappingWindow = recessWindows.find((w) => cursor < w.end && slotEnd > w.start);
-      if (overlappingWindow) {
-        cursor = overlappingWindow.end + passing;
-        continue;
-      }
-    }
-    cursor = slotEnd + passing + setup;
+    // Always advance by the canonical step so the grid stays aligned —
+    // recess just leaves a gap row instead of resetting the grid.
+    cursor += step;
   }
   return slots;
 }
