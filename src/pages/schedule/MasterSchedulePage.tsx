@@ -501,26 +501,38 @@ export default function MasterSchedulePage() {
       return;
     }
     setResolvingAI(true);
+    // Hard timeout so the spinner can never hang forever if the gateway is
+    // slow or the function never responds. 90s is well above normal latency.
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 90_000);
     try {
-      const { data, error } = await supabase.functions.invoke('resolve-conflicts-ai', {
-        body: {
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess.session?.access_token;
+      if (!token) throw new Error("Signed out — please sign in again.");
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/resolve-conflicts-ai`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
           generation_id: selectedGen,
           conflicts: errors.map(w => ({ type: (w as any).type, message: w.message, suggestion: w.suggestion })),
-        },
+        }),
+        signal: controller.signal,
       });
-      if (error) {
-        toast({ title: "AI resolution failed", description: error.message, variant: "destructive" });
+      const data: any = await resp.json().catch(() => ({}));
+      if (!resp.ok || data?.error) {
+        toast({
+          title: "AI resolution failed",
+          description: data?.error ?? `HTTP ${resp.status}`,
+          variant: "destructive",
+        });
         return;
       }
-      if ((data as any)?.error) {
-        toast({ title: "AI resolution failed", description: (data as any).error, variant: "destructive" });
-        return;
-      }
-      const applied = (data as any)?.applied ?? 0;
-      const updates = (data as any)?.updates ?? 0;
-      const deletes = (data as any)?.deletes ?? 0;
-      const inserts = (data as any)?.inserts ?? 0;
-      const summary = (data as any)?.summary ?? "";
+      const applied = data?.applied ?? 0;
+      const updates = data?.updates ?? 0;
+      const deletes = data?.deletes ?? 0;
+      const inserts = data?.inserts ?? 0;
+      const summary = data?.summary ?? "";
       if (applied === 0) {
         toast({
           title: "AI couldn't resolve automatically",
@@ -535,8 +547,16 @@ export default function MasterSchedulePage() {
       }
       await loadBlocks(selectedGen);
     } catch (e: any) {
-      toast({ title: "AI resolution failed", description: e?.message ?? "Unknown error", variant: "destructive" });
+      const aborted = e?.name === "AbortError";
+      toast({
+        title: aborted ? "AI took too long" : "AI resolution failed",
+        description: aborted
+          ? "The fix request timed out after 90 seconds. Try again, or edit manually."
+          : (e?.message ?? "Unknown error"),
+        variant: "destructive",
+      });
     } finally {
+      window.clearTimeout(timeoutId);
       setResolvingAI(false);
     }
   }
