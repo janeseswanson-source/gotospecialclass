@@ -350,14 +350,23 @@ export default function MasterSchedulePage() {
     if (!block) return;
     if (block.day_of_week === newDay && block.start_time === newTime) return;
 
-    // Detect a block already at the target slot (any subject) → attempt swap.
-    const targetBlock = blocks.find(
-      (b) =>
-        b.id !== blockId &&
-        b.day_of_week === newDay &&
-        b.start_time === newTime &&
-        (!b.week_label || !block.week_label || b.week_label === block.week_label),
-    );
+    // Detect a block whose interval CONTAINS the target time (any subject) on
+    // the same day & coinciding week → attempt a swap. Using interval-contains
+    // (not exact start-time equality) is important: compact-view rows only
+    // expose the start-time of one column's block, so a Tuesday block that
+    // starts a few minutes earlier than the displayed row would otherwise be
+    // invisible to this check and the drop would be rejected as "occupied".
+    const newTimeMin = (() => { const [h, m] = newTime.split(":").map(Number); return h * 60 + m; })();
+    const targetBlock = blocks.find((b) => {
+      if (b.id === blockId) return false;
+      if (b.day_of_week !== newDay) return false;
+      if (b.week_label && block.week_label && b.week_label !== block.week_label) return false;
+      const [bh, bm] = b.start_time.split(":").map(Number);
+      const [eh, em] = b.end_time.split(":").map(Number);
+      const bs = bh * 60 + bm;
+      const be = eh * 60 + em;
+      return newTimeMin >= bs && newTimeMin < be;
+    });
 
     if (targetBlock) {
       if (lockedIds.has(targetBlock.id)) {
