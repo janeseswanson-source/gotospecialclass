@@ -44,9 +44,16 @@ const STRATEGY_LABELS: Record<string, string> = {
 const humanizeStrategy = (s?: string | null) =>
   s ? (STRATEGY_LABELS[s] ?? s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())) : "";
 
-function PrintViewButton({ label }: { label: string }) {
+function PrintViewButton({ label, disabled, disabledReason }: { label: string; disabled?: boolean; disabledReason?: string }) {
   return (
-    <Button variant="outline" size="sm" className="h-8 no-print" onClick={() => window.print()}>
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-8 no-print"
+      onClick={() => !disabled && window.print()}
+      disabled={disabled}
+      title={disabled ? disabledReason : undefined}
+    >
       <Printer className="h-3.5 w-3.5 mr-1.5" /> {label}
     </Button>
   );
@@ -296,6 +303,24 @@ export default function MasterSchedulePage() {
 
   const conflictIds = useMemo(() => computeConflictIds(blocks), [blocks]);
 
+  /**
+   * Error-severity issues that must block Accept/Export. `conflictIds` is the
+   * LIVE interval-overlap set (updates on every edit/drag); the warning panel's
+   * non-overlap errors (e.g. no_coverage) are added on top. When either exists,
+   * the schedule can't be accepted or exported until it's resolved.
+   */
+  const blockingError = useMemo(() => {
+    const parts: string[] = [];
+    if (conflictIds.size > 0) {
+      parts.push(`${conflictIds.size} double-booked block${conflictIds.size !== 1 ? "s" : ""}`);
+    }
+    const nonOverlap = scheduleWarnings.filter((w) => w.severity === "error" && w.type !== "double_booked");
+    if (nonOverlap.length) {
+      parts.push(`${nonOverlap.length} unresolved error${nonOverlap.length !== 1 ? "s" : ""}`);
+    }
+    return { blocked: parts.length > 0, reason: parts.join(" and ") };
+  }, [conflictIds, scheduleWarnings]);
+
   /** Blocks lifted into the Scrabble tray = current conflicts, excluding locked ones. */
   const trayBlocks = useMemo(
     () => blocks.filter((b) => conflictIds.has(b.id) && !lockedIds.has(b.id)),
@@ -503,13 +528,22 @@ export default function MasterSchedulePage() {
     if (!replanSuggestion || !selectedGen) return;
     setReplanLoading(true);
     try {
-      const { error } = await supabase.functions.invoke('replan-subgraph', {
+      const { data, error } = await supabase.functions.invoke('replan-subgraph', {
         body: { generation_id: selectedGen, scope: { specialist_ids: [replanSuggestion.specialistId] } },
       });
       if (error) throw error;
-      toast({ title: "Replan complete", description: `${replanSuggestion.specialistName}'s slots have been replanned.` });
+      if ((data as any)?.error) throw new Error((data as any).error);
       setReplanSuggestion(null);
-      await loadBlocks(selectedGen);
+      // Replan creates a NEW version (the current one is left intact). If nothing
+      // matched the scope, no version is created — just inform the user.
+      if (!(data as any)?.new_generation_id) {
+        toast({ title: "Nothing to replan", description: (data as any)?.message ?? "No matching slots were found." });
+        return;
+      }
+      toast({ title: "Replan complete", description: `${replanSuggestion.specialistName}'s slots were replanned into a new version.` });
+      // Refresh the version list and switch to the newest version (the replan
+      // result); loadGenerations selects the highest version.
+      await loadGenerations();
     } catch (e: any) {
       toast({ title: "Replan failed", description: e?.message ?? "Unknown error", variant: "destructive" });
     } finally {
@@ -519,6 +553,14 @@ export default function MasterSchedulePage() {
 
   async function setReviewState(next: "accepted" | "rejected") {
     if (!selectedGen) return;
+    if (next === "accepted" && blockingError.blocked) {
+      toast({
+        title: "Resolve errors before accepting",
+        description: `This schedule still has ${blockingError.reason}. Fix or remove them, then accept.`,
+        variant: "destructive",
+      });
+      return;
+    }
     setUpdatingReview(true);
     try {
       const { error } = await supabase
@@ -735,24 +777,31 @@ export default function MasterSchedulePage() {
 
 
 
-          {/* Export dropdown */}
+          {/* Export dropdown — disabled while error-severity conflicts exist
+              so a broken schedule can't be exported or printed. */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 gap-1.5">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5"
+                disabled={blockingError.blocked}
+                title={blockingError.blocked ? `Resolve ${blockingError.reason} before exporting` : undefined}
+              >
                 <Download className="h-3.5 w-3.5" />
                 Export
                 <ChevronDown className="h-3 w-3 opacity-60" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => setSpecExportOpen(true)}>
+              <DropdownMenuItem disabled={blockingError.blocked} onClick={() => !blockingError.blocked && setSpecExportOpen(true)}>
                 <FileText className="h-4 w-4 mr-2" /> Specialist Planner (PDF)
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setAdminExportOpen(true)}>
+              <DropdownMenuItem disabled={blockingError.blocked} onClick={() => !blockingError.blocked && setAdminExportOpen(true)}>
                 <LayoutGrid className="h-4 w-4 mr-2" /> Admin Overview (PDF)
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => window.print()}>
+              <DropdownMenuItem disabled={blockingError.blocked} onClick={() => !blockingError.blocked && window.print()}>
                 <Printer className="h-4 w-4 mr-2" /> Print Current View
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -774,7 +823,8 @@ export default function MasterSchedulePage() {
               size="sm"
               className="h-8 gap-1.5"
               onClick={() => setReviewState("accepted")}
-              disabled={updatingReview}
+              disabled={updatingReview || blockingError.blocked}
+              title={blockingError.blocked ? `Resolve ${blockingError.reason} before accepting` : undefined}
             >
               <Check className="h-3.5 w-3.5" /> Accept
             </Button>
@@ -1047,7 +1097,7 @@ export default function MasterSchedulePage() {
                       {specialists.map((s) => <SelectItem key={s.id} value={s.id}>{s.name} ({s.subject})</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  <PrintViewButton label="Print Specialist View" />
+                  <PrintViewButton label="Print Specialist View" disabled={blockingError.blocked} disabledReason={`Resolve ${blockingError.reason} before printing`} />
                 </div>
                 {filterSpecialist === "all" ? (
                   <div className="flex items-center justify-center rounded-xl border border-dashed border-border bg-card p-16 text-sm text-muted-foreground">
@@ -1080,7 +1130,7 @@ export default function MasterSchedulePage() {
                       {teachers.map((t) => <SelectItem key={t.id} value={t.id}>{t.name} ({t.grade})</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  <PrintViewButton label="Print Teacher View" />
+                  <PrintViewButton label="Print Teacher View" disabled={blockingError.blocked} disabledReason={`Resolve ${blockingError.reason} before printing`} />
                 </div>
                 <ScheduleGrid
                   blocks={filteredByTeacher}

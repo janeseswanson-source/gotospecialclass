@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { buildConstraintContext, violations as constraintViolations } from "../_shared/constraints.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -69,7 +70,7 @@ Deno.serve(async (req) => {
       supabase.from("specialists").select("id, name, subject, working_days, uses_cart, location").eq("school_id", schoolId),
       supabase.from("classroom_teachers").select("id, name, grade, am_pm_preference").eq("school_id", schoolId),
       supabase.from("recess_lunch_config").select("*").eq("school_id", schoolId),
-      supabase.from("schools").select("name, start_time, end_time, grades_served, class_duration").eq("id", schoolId).maybeSingle(),
+      supabase.from("schools").select("name, start_time, end_time, grades_served, class_duration, early_release_day, early_release_end_time, recess_grade_bands").eq("id", schoolId).maybeSingle(),
     ]);
 
     const blocks = blocksRes.data ?? [];
@@ -218,6 +219,20 @@ Respond ONLY with valid JSON:
       return false;
     };
 
+    // Edit-time constraint context (recess/lunch/PLC/hours), mirroring the
+    // generator. Overlap is already enforced by `collides`, so we use the
+    // shared validator only for the block-intrinsic + grade-lock rules.
+    const constraintCtx = buildConstraintContext(school, recessRes.data ?? [], blocks);
+    const blockById: Record<string, any> = Object.fromEntries(blocks.map((b: any) => [b.id, b]));
+    const ruleViolations = (day: string | null, startTime?: string | null, endTime?: string | null, grade?: string | null, week?: string | null): string[] => {
+      if (!day || !startTime || !endTime) return [];
+      return constraintViolations(
+        { day_of_week: day, start_time: startTime, end_time: endTime, grade: grade ?? null, week_label: week ?? null },
+        [],
+        constraintCtx,
+      );
+    };
+
     let applied = 0;
     for (const issue of issues) {
       const fix = issue.fix;
@@ -233,6 +248,18 @@ Respond ONLY with valid JSON:
       if (newStart === null || newEnd === null || newEnd <= newStart) continue;
       if (newStart < dayStart || newEnd > dayEnd) continue;
       if (collides(newDay, newStart, newEnd, cur.spec, cur.teacher, fix.block_id)) continue;
+
+      // Recess/lunch/PLC/hours: skip fixes that would violate the same rules
+      // the generator enforces (the model is told them but isn't trusted to obey).
+      const origV = blockById[fix.block_id];
+      const vio = ruleViolations(
+        newDay,
+        fix.new_start ?? origV?.start_time,
+        fix.new_end ?? origV?.end_time,
+        origV?.grade ?? null,
+        origV?.week_label ?? null,
+      );
+      if (vio.length) continue;
 
       const patch: Record<string, any> = { is_override: false };
       if (fix.new_day) patch.day_of_week = fix.new_day;

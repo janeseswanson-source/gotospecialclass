@@ -73,6 +73,7 @@ interface Specialist {
   location: string | null;
   second_location: string | null;
   weekly_planning_minutes: number | null;
+  class_duration?: number | null;
 }
 
 interface Teacher {
@@ -844,6 +845,12 @@ function needsCartBuffer(
 }
 
 // ─── Core assignment loop ────────────────────────────────────────────
+/** A specialist's own class length when set (e.g. 30-min K sessions), else the
+ *  grade/school default. Mirrors the school-level guard: 0/null → fallback. */
+function specClassDuration(spec: Specialist, fallback: number): number {
+  return (spec.class_duration != null && spec.class_duration > 0) ? spec.class_duration : fallback;
+}
+
 function assignDay(
   day: string,
   gradeTeachers: { grade: string; teacher: Teacher | null }[],
@@ -877,20 +884,11 @@ function assignDay(
 
   for (let ci = 0; ci < sortedGT.length; ci++) {
     const gt = sortedGT[ci];
-    const duration = classDurationByGrade(gt.grade);
+    const gradeDefaultDuration = classDurationByGrade(gt.grade);
     const recessWindows = recessWindowsForGrade(gt.grade);
-    const gradeSlots = buildTimeSlotsForGrade(
-      gt.grade, duration, startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindows,
-    );
-    if (gradeSlots.length === 0) continue;
 
     const preferAM = gt.teacher?.am_pm_preference === "AM";
     const preferPM = gt.teacher?.am_pm_preference === "PM";
-    const rankedSlots = [...gradeSlots].sort((a, b) => {
-      if (preferAM) return a.start - b.start;
-      if (preferPM) return b.start - a.start;
-      return a.start - b.start;
-    });
 
     const skipSpecOccupancy = skipSpecialistOccupancyForGrades.has(gt.grade);
     let assigned = false;
@@ -913,6 +911,22 @@ function assignDay(
 
       // Grade rotation filter
       if (!canSpecialistTeachGradeOnDay(spec, gt.grade, day)) continue;
+
+      // Per-specialist class length: a specialist with their own class_duration
+      // (e.g. 30-min K sessions) gets blocks of THAT length; otherwise the
+      // grade/school default. Slots are built per-specialist because the slot
+      // grid stride depends on the duration. (No-op when no specialist sets a
+      // custom duration — identical to the previous per-grade behavior.)
+      const duration = specClassDuration(spec, gradeDefaultDuration);
+      const specSlots = buildTimeSlotsForGrade(
+        gt.grade, duration, startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindows,
+      );
+      if (specSlots.length === 0) continue;
+      const rankedSlots = [...specSlots].sort((a, b) => {
+        if (preferAM) return a.start - b.start;
+        if (preferPM) return b.start - a.start;
+        return a.start - b.start;
+      });
 
       // Two-school max slots check
       const maxSlots = getMaxSlotsPerDay(spec, day, duration, startMin, endMin);
@@ -1959,7 +1973,9 @@ export function generateScheduleBlocks(
   lockedBlocks: Block[] = [],
   weightOverrides?: Partial<Record<keyof ScoreBreakdown, number>>,
 ): SchedulerResult {
-  const classDuration = (school.class_duration ?? school.planning_minutes ?? 45) || 45;
+  // Never borrow planning_minutes (often 200+) as a class length — a null/zero
+  // class_duration must fall back to 45, not to the specialist's weekly prep.
+  const classDuration = (school.class_duration && school.class_duration > 0) ? school.class_duration : 45;
   const strategies: string[] = (school.conflict_strategies && school.conflict_strategies.length > 0)
     ? school.conflict_strategies
     : [school.conflict_strategy ?? "standard"];
@@ -2333,6 +2349,7 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       location: s.location,
       second_location: s.second_location,
       weekly_planning_minutes: s.weekly_planning_minutes,
+      class_duration: s.class_duration ?? null,
     }));
 
     const teachers: Teacher[] = (teachRes.data ?? []).map((t: any) => ({

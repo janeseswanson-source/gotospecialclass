@@ -4,7 +4,8 @@ import { DefaultChatTransport, type UIMessage } from "ai";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { BrainCircuit, X as XIcon, AlertCircle } from "lucide-react";
+import { BrainCircuit, X as XIcon, AlertCircle, Check, Loader2 } from "lucide-react";
+import { toast } from "@/hooks/use-toast";
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { Tool, ToolHeader, ToolContent, ToolInput, ToolOutput } from "@/components/ai-elements/tool";
@@ -29,6 +30,10 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
   const [hydrated, setHydrated] = useState(false);
   const [input, setInput] = useState("");
   const tokenRef = useRef<string | null>(null);
+  // Proposed edits the user has already applied or discarded (by toolCallId),
+  // so they drop out of the pending Apply bar.
+  const [resolvedCallIds, setResolvedCallIds] = useState<Set<string>>(new Set());
+  const [applying, setApplying] = useState(false);
 
   const transport = useMemo(() => {
     const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/schedule-chat`;
@@ -68,6 +73,19 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
       if (!alive) return;
       const hist = Array.isArray((data as any)?.chat_history) ? ((data as any).chat_history as UIMessage[]) : [];
       setHydratedMessages(hist);
+      // Proposals from earlier sessions were already applied or discarded back
+      // then — treat them all as resolved so they don't reappear in the Apply
+      // bar. Only NEW proposals from this session are actionable.
+      const historicalCallIds = new Set<string>();
+      for (const m of hist) {
+        if ((m as any).role !== "assistant") continue;
+        ((m as any).parts ?? []).forEach((part: any, idx: number) => {
+          if (part?.type?.startsWith?.("tool-") && part.output?.status === "proposed") {
+            historicalCallIds.add(part.toolCallId ?? `${m.id}-${idx}`);
+          }
+        });
+      }
+      setResolvedCallIds(historicalCallIds);
       setHydrated(true);
     })();
     return () => { alive = false; };
@@ -90,9 +108,77 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
   const isLoading = status === "submitted" || status === "streaming";
   const canSend = !!generationId && hydrated && !!input.trim() && !isLoading;
 
+  // Pending proposals = tool outputs the AI returned with status "proposed"
+  // that the user hasn't yet applied or discarded. These are the edits the
+  // Apply bar will commit (re-validated server-side) on confirmation.
+  const pendingProposals = useMemo(() => {
+    const out: { toolCallId: string; op: unknown }[] = [];
+    for (const m of messages) {
+      if (m.role !== "assistant") continue;
+      m.parts.forEach((part: any, idx) => {
+        if (!part?.type?.startsWith?.("tool-")) return;
+        const output = part.output;
+        if (!output || output.status !== "proposed" || !output.op) return;
+        const callId = part.toolCallId ?? `${m.id}-${idx}`;
+        if (resolvedCallIds.has(callId)) return;
+        out.push({ toolCallId: callId, op: output.op });
+      });
+    }
+    return out;
+  }, [messages, resolvedCallIds]);
+
+  function markResolved(callIds: string[]) {
+    setResolvedCallIds((prev) => {
+      const next = new Set(prev);
+      callIds.forEach((id) => next.add(id));
+      return next;
+    });
+  }
+
+  async function applyChanges() {
+    if (!generationId || applying || pendingProposals.length === 0) return;
+    setApplying(true);
+    const callIds = pendingProposals.map((p) => p.toolCallId);
+    const ops = pendingProposals.map((p) => p.op);
+    try {
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess.session?.access_token ?? tokenRef.current;
+      if (!token) throw new Error("You're signed out. Sign in again to apply changes.");
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/apply-schedule-edits`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ generation_id: generationId, ops }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data?.error ?? `HTTP ${resp.status}`);
+      markResolved(callIds);
+      onScheduleChanged();
+      const skipped: string[] = Array.isArray(data.skipped) ? data.skipped : [];
+      toast({
+        title: skipped.length
+          ? `Applied ${data.applied}, skipped ${skipped.length}`
+          : `Applied ${data.applied} change${data.applied === 1 ? "" : "s"}`,
+        description: skipped.length ? skipped.slice(0, 3).join("; ") : "The schedule has been updated.",
+        variant: skipped.length ? "destructive" : undefined,
+      });
+    } catch (e: any) {
+      toast({ title: "Couldn't apply changes", description: e?.message ?? "Unknown error", variant: "destructive" });
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  function discardChanges() {
+    markResolved(pendingProposals.map((p) => p.toolCallId));
+  }
+
   async function submit() {
     const text = input.trim();
     if (!text || isLoading || !generationId) return;
+    // Starting a new turn: the server re-plans from the live DB, so any
+    // un-applied proposals from a previous turn are stale — drop them.
+    if (pendingProposals.length) discardChanges();
     setInput("");
     try {
       await sendMessage({ text });
@@ -192,6 +278,24 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
               {q}
             </button>
           ))}
+        </div>
+      )}
+
+      {pendingProposals.length > 0 && !isLoading && (
+        <div className="flex items-center gap-3 border-t border-amber-500/30 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2.5">
+          <div className="flex-1 text-xs">
+            <p className="font-semibold text-foreground">
+              {pendingProposals.length} proposed change{pendingProposals.length === 1 ? "" : "s"} — not saved yet
+            </p>
+            <p className="text-muted-foreground">Review the steps above, then apply or discard.</p>
+          </div>
+          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={discardChanges} disabled={applying}>
+            Discard
+          </Button>
+          <Button size="sm" className="h-7 gap-1 text-xs" onClick={applyChanges} disabled={applying}>
+            {applying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+            {applying ? "Applying…" : "Apply"}
+          </Button>
         </div>
       )}
 

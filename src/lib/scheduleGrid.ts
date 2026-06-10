@@ -93,25 +93,84 @@ export function buildRecessBands(rows: any[], bandLabels?: Record<string, string
   return bands;
 }
 
-/** Compute conflict IDs (same specialist or same teacher overlapping on the same day). */
-export function computeConflictIds(blocks: BlockData[]): Set<string> {
-  const ids = new Set<string>();
+// --- Conflict detection (single source of truth for grid + warning panel) ---
+//
+// A "conflict" = two blocks whose time intervals overlap on the same day, in
+// coinciding weeks, that share the same specialist OR the same teacher.
+// Entities are matched by **id** (falling back to name only when an id is
+// absent) so two people with the same display name don't trip phantom
+// conflicts — and so 45-min/30-min overlaps at different start minutes are
+// still caught (interval overlap, not exact-start equality).
+
+/** Minimal block shape needed for conflict detection. `BlockData` satisfies it. */
+export interface ConflictBlock {
+  id: string;
+  day_of_week: string;
+  start_time: string;
+  end_time: string;
+  specialist_id?: string | null;
+  teacher_id?: string | null;
+  specialist_name?: string | null;
+  teacher_name?: string | null;
+  grade?: string | null;
+  week_label?: string | null;
+}
+
+/** Same entity when ids are present and equal; else fall back to non-empty name equality. */
+function entitiesMatch(aId?: string | null, aName?: string | null, bId?: string | null, bName?: string | null): boolean {
+  if (aId && bId) return aId === bId;
+  return !!aName && aName === bName;
+}
+
+/** A null/empty week label means "every week", so it coincides with any label. */
+function weeksCoincide(a?: string | null, b?: string | null): boolean {
+  if (!a || !b) return true;
+  return a === b;
+}
+
+/** True if two blocks' time intervals overlap on the same day in coinciding weeks. */
+function intervalsOverlap(a: ConflictBlock, b: ConflictBlock): boolean {
+  if (a.day_of_week !== b.day_of_week) return false;
+  if (!weeksCoincide(a.week_label, b.week_label)) return false;
+  return parseTime(a.start_time) < parseTime(b.end_time) && parseTime(b.start_time) < parseTime(a.end_time);
+}
+
+export type ConflictKind = "specialist" | "teacher";
+
+export interface ConflictPair {
+  a: ConflictBlock;
+  b: ConflictBlock;
+  kinds: ConflictKind[];
+}
+
+/** All conflicting block pairs, with which entity (specialist/teacher) collides. */
+export function computeConflictPairs(blocks: ConflictBlock[]): ConflictPair[] {
+  const pairs: ConflictPair[] = [];
   for (let i = 0; i < blocks.length; i++) {
     for (let j = i + 1; j < blocks.length; j++) {
       const a = blocks[i];
       const b = blocks[j];
-      if (a.day_of_week !== b.day_of_week) continue;
-      const overlaps = parseTime(a.start_time) < parseTime(b.end_time) && parseTime(b.start_time) < parseTime(a.end_time);
-      if (!overlaps) continue;
-      const sameSpec = a.specialist_name && a.specialist_name === b.specialist_name;
-      const sameTeacher = a.teacher_name && a.teacher_name === b.teacher_name;
-      // Different week labels (A vs B) are allowed to share a slot
-      const sameWeek = (a.week_label ?? null) === (b.week_label ?? null);
-      if ((sameSpec || sameTeacher) && sameWeek) {
-        ids.add(a.id);
-        ids.add(b.id);
+      if (a.id === b.id) continue;
+      if (!intervalsOverlap(a, b)) continue;
+      const kinds: ConflictKind[] = [];
+      if ((a.specialist_id || a.specialist_name) && entitiesMatch(a.specialist_id, a.specialist_name, b.specialist_id, b.specialist_name)) {
+        kinds.push("specialist");
       }
+      if ((a.teacher_id || a.teacher_name) && entitiesMatch(a.teacher_id, a.teacher_name, b.teacher_id, b.teacher_name)) {
+        kinds.push("teacher");
+      }
+      if (kinds.length) pairs.push({ a, b, kinds });
     }
+  }
+  return pairs;
+}
+
+/** Conflict IDs (same specialist or same teacher overlapping on the same day). */
+export function computeConflictIds(blocks: ConflictBlock[]): Set<string> {
+  const ids = new Set<string>();
+  for (const { a, b } of computeConflictPairs(blocks)) {
+    ids.add(a.id);
+    ids.add(b.id);
   }
   return ids;
 }

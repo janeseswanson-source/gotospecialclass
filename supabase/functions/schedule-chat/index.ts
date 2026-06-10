@@ -1,10 +1,13 @@
 // Streaming AI chat editor for the master schedule.
-// Tools mutate schedule_blocks directly, using the same constraint helpers
-// the generator uses. Conversation persists per generation_id.
+// Mutating tools PROPOSE edits (validated with the same constraint helpers the
+// generator uses) but do NOT persist them — they return an `op` the client
+// collects and commits via apply-schedule-edits after the user clicks Apply.
+// Conversation persists per generation_id.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { convertToModelMessages, streamText, stepCountIs, tool, type UIMessage } from "npm:ai";
 import { z } from "npm:zod";
 import { createLovableAiGatewayProvider } from "../_shared/ai-gateway.ts";
+import { buildConstraintContext, violations as constraintViolations, describeViolation } from "../_shared/constraints.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -88,16 +91,31 @@ Deno.serve(async (req) => {
     .maybeSingle();
   if (genErr || !gen) return json(404, { error: "Generation not found" });
 
-  const [{ data: school }, { data: specialistsRaw }, { data: teachersRaw }, { data: blocksRaw }] = await Promise.all([
-    supabase.from("schools").select("id, name, grades_served, start_time, end_time, class_duration").eq("id", gen.school_id).maybeSingle(),
+  const [{ data: school }, { data: specialistsRaw }, { data: teachersRaw }, { data: blocksRaw }, { data: recessRaw }] = await Promise.all([
+    supabase.from("schools").select("id, name, grades_served, start_time, end_time, class_duration, early_release_day, early_release_end_time, recess_grade_bands").eq("id", gen.school_id).maybeSingle(),
     supabase.from("specialists").select("id, name, subject").eq("school_id", gen.school_id),
     supabase.from("classroom_teachers").select("id, name, grade, room").eq("school_id", gen.school_id),
     supabase.from("schedule_blocks").select("*").eq("generation_id", generationId),
+    supabase.from("recess_lunch_config").select("*").eq("school_id", gen.school_id),
   ]);
 
   const specialists = specialistsRaw ?? [];
   const teachers = teachersRaw ?? [];
   let blocks: BlockRow[] = (blocksRaw ?? []) as BlockRow[];
+
+  // Edit-time constraint context (school hours, recess/lunch, PLC/Admin
+  // grade-range locks), mirroring the generator. PLC/Admin locks are derived
+  // from the persisted blocks and are stable across these tool edits, so the
+  // context is built once. Specialist/teacher overlap is checked separately by
+  // each tool (for richer error messages), so we surface only the
+  // block-intrinsic + grade-lock violations here (empty allBlocks).
+  const constraintCtx = buildConstraintContext(school ?? {}, recessRaw ?? [], blocks as any);
+  const ruleViolations = (day: string, startTime: string, endTime: string, grade: string | null, week: string | null): string[] =>
+    constraintViolations(
+      { day_of_week: day, start_time: startTime, end_time: endTime, grade, week_label: week },
+      [],
+      constraintCtx,
+    ).map(describeViolation);
 
   const specMap = new Map(specialists.map((s: any) => [s.id, s]));
   const teachMap = new Map(teachers.map((t: any) => [t.id, t]));
@@ -109,8 +127,11 @@ Deno.serve(async (req) => {
     return `${b.id} | ${b.day_of_week} ${b.start_time.slice(0, 5)}-${b.end_time.slice(0, 5)} | ${b.subject} | Grade ${b.grade ?? "—"} | Specialist: ${spec} | Teacher: ${teach}${week}`;
   }
 
-  const systemPrompt = `You are an AI scheduling assistant for ${school?.name ?? "this school"}, a K-6 school.
+  const gradesLabel = (school?.grades_served ?? []).length ? `${(school?.grades_served ?? [])[0]}–${(school?.grades_served ?? []).slice(-1)[0]}` : "elementary";
+  const systemPrompt = `You are an AI scheduling assistant for ${school?.name ?? "this school"}, a ${gradesLabel} elementary school.
 You can edit the existing master schedule by calling the provided tools. Always call tools to make changes — never just describe them in prose.
+
+IMPORTANT: move/swap/add/delete tools PROPOSE changes — they are NOT saved yet. After you propose them, the user sees an "Apply changes" bar and decides whether to commit them. So: never tell the user a change is "done" or "saved"; instead say what you've proposed (e.g. "I've proposed moving …") and that they can review and Apply it.
 
 CURRENT SCHEDULE CONTEXT
 - School day: ${school?.start_time ?? "?"} – ${school?.end_time ?? "?"}; default class duration ${school?.class_duration ?? 45} min.
@@ -128,12 +149,28 @@ RULES
 - Times are 24-hour HH:MM. End must be after start.
 - Never overlap a specialist with themselves at the same time (same week).
 - Never overlap a teacher with themselves at the same time (same week).
-- After each edit, briefly confirm what you changed. If a tool returns an error, explain and propose an alternative.
-- For complex rewrites that touch many blocks, use bulk_replan.`;
+- Keep every block inside school hours (the early-release day ends earlier).
+- Never place a class during that grade's recess or lunch, or during a PLC/Admin block for that grade. The tools enforce these and will reject violating edits — read the error and pick a valid slot.
+- After each edit, briefly confirm what you PROPOSED. If a tool returns an error, explain and propose an alternative.
+- For complex rewrites that touch many blocks, use bulk_replan. Note: bulk_replan applies immediately (it regenerates into a new schedule version) and is NOT part of the Apply bar — only use it when the user asks for a broad regeneration, not for a couple of edits.`;
 
   const initialRunId = req.headers.get("X-Lovable-AIG-Run-ID") ?? undefined;
   const gateway = createLovableAiGatewayProvider(apiKey, initialRunId);
   const model = gateway("google/gemini-3-flash-preview");
+
+  // ── Human-in-the-loop: tools PROPOSE changes, they don't persist. ──
+  // Each mutating tool validates the edit (constraints + overlap) and updates
+  // the in-memory `blocks` so the model reasons over a consistent view across
+  // steps, then RETURNS the change as an `op` in its output instead of writing
+  // to the DB. The client collects these ops from the streamed tool outputs and
+  // shows an Apply/Discard bar; on Apply it POSTs them to `apply-schedule-edits`,
+  // which re-validates and persists. Nothing the AI does touches the database
+  // until the user confirms.
+  type EditOp =
+    | { kind: "move"; block_id: string; day_of_week: string; start_time: string; end_time: string }
+    | { kind: "swap"; a_id: string; a_day: string; a_start: string; a_end: string; b_id: string; b_day: string; b_start: string; b_end: string }
+    | { kind: "delete"; block_id: string }
+    | { kind: "insert"; day_of_week: string; start_time: string; end_time: string; subject: string; specialist_id: string | null; teacher_id: string | null; grade: string | null; room: string | null; week_label: string | null };
 
   // ─── Tools ───
   const listBlocks = tool({
@@ -181,13 +218,13 @@ RULES
       }
       const newStartStr = minToTime(newStart);
       const newEndStr = minToTime(newEnd);
-      const { error } = await supabase.from("schedule_blocks").update({
-        day_of_week: day, start_time: newStartStr, end_time: newEndStr,
-        is_override: true,
-      }).eq("id", block_id);
-      if (error) return { ok: false, error: error.message };
+      const vio = ruleViolations(day, newStartStr, newEndStr, blk.grade, blk.week_label);
+      if (vio.length) {
+        return { ok: false, error: `Cannot move there — it ${vio.join(" and ")}. Pick a slot inside school hours that avoids this grade's recess/lunch and PLC time.` };
+      }
       blk.day_of_week = day; blk.start_time = newStartStr; blk.end_time = newEndStr;
-      return { ok: true, moved: describeBlock(blk) };
+      const op: EditOp = { kind: "move", block_id, day_of_week: day, start_time: newStartStr, end_time: newEndStr };
+      return { ok: true, status: "proposed", op, moved: describeBlock(blk) };
     },
   });
 
@@ -203,20 +240,24 @@ RULES
       if (!a || !b) return { ok: false, error: "One or both blocks not found" };
       const aSlot = { day: a.day_of_week, start: a.start_time, end: a.end_time };
       const bSlot = { day: b.day_of_week, start: b.start_time, end: b.end_time };
-      const { error: e1 } = await supabase.from("schedule_blocks").update({
-        day_of_week: bSlot.day, start_time: bSlot.start, end_time: bSlot.end, is_override: true,
-      }).eq("id", a.id);
-      if (e1) return { ok: false, error: e1.message };
-      const { error: e2 } = await supabase.from("schedule_blocks").update({
-        day_of_week: aSlot.day, start_time: aSlot.start, end_time: aSlot.end, is_override: true,
-      }).eq("id", b.id);
-      if (e2) {
-        await supabase.from("schedule_blocks").update(aSlot).eq("id", a.id);
-        return { ok: false, error: e2.message };
+      // Each block lands in the other's slot — validate both against recess/
+      // lunch/PLC/hours for their own grade before committing the swap.
+      const aVio = ruleViolations(bSlot.day, bSlot.start, bSlot.end, a.grade, a.week_label);
+      const bVio = ruleViolations(aSlot.day, aSlot.start, aSlot.end, b.grade, b.week_label);
+      if (aVio.length || bVio.length) {
+        const parts: string[] = [];
+        if (aVio.length) parts.push(`moving ${describeBlock(a)} ${aVio.join(" and ")}`);
+        if (bVio.length) parts.push(`moving ${describeBlock(b)} ${bVio.join(" and ")}`);
+        return { ok: false, error: `Swap rejected: ${parts.join("; ")}.` };
       }
       a.day_of_week = bSlot.day; a.start_time = bSlot.start; a.end_time = bSlot.end;
       b.day_of_week = aSlot.day; b.start_time = aSlot.start; b.end_time = aSlot.end;
-      return { ok: true, swapped: [describeBlock(a), describeBlock(b)] };
+      const op: EditOp = {
+        kind: "swap",
+        a_id: a.id, a_day: bSlot.day, a_start: bSlot.start, a_end: bSlot.end,
+        b_id: b.id, b_day: aSlot.day, b_start: aSlot.start, b_end: aSlot.end,
+      };
+      return { ok: true, status: "proposed", op, swapped: [describeBlock(a), describeBlock(b)] };
     },
   });
 
@@ -226,10 +267,10 @@ RULES
     execute: async ({ block_id }) => {
       const blk = blocks.find((b) => b.id === block_id);
       if (!blk) return { ok: false, error: "Block not found" };
-      const { error } = await supabase.from("schedule_blocks").delete().eq("id", block_id);
-      if (error) return { ok: false, error: error.message };
+      const summary = describeBlock(blk);
       blocks = blocks.filter((b) => b.id !== block_id);
-      return { ok: true, deleted: describeBlock(blk) };
+      const op: EditOp = { kind: "delete", block_id };
+      return { ok: true, status: "proposed", op, deleted: summary };
     },
   });
 
@@ -255,8 +296,17 @@ RULES
         overlaps(other, day, startMin, endMin, null)
       );
       if (conflicts.length > 0) return { ok: false, error: `Conflict: ${conflicts.map(describeBlock).join("; ")}` };
-      const { data: inserted, error } = await supabase.from("schedule_blocks").insert({
-        generation_id: generationId,
+      const insGrade = grade ?? (teachId ? teachMap.get(teachId)?.grade ?? null : null);
+      const insVio = ruleViolations(day, minToTime(startMin), minToTime(endMin), insGrade, null);
+      if (insVio.length) {
+        return { ok: false, error: `Cannot add there — it ${insVio.join(" and ")}. Choose a time inside school hours that avoids this grade's recess/lunch and PLC time.` };
+      }
+      const room = teachId ? teachMap.get(teachId)?.room ?? null : null;
+      // No DB write yet — give the in-memory block a temporary id so the model
+      // can still reference it within this turn. The real id is assigned on apply.
+      const proposed: BlockRow = {
+        id: `tmp_${crypto.randomUUID()}`,
+        generation_id: generationId!,
         day_of_week: day,
         start_time: minToTime(startMin),
         end_time: minToTime(endMin),
@@ -264,12 +314,23 @@ RULES
         specialist_id: specId ?? null,
         teacher_id: teachId ?? null,
         grade: grade ?? null,
-        room: teachId ? teachMap.get(teachId)?.room ?? null : null,
-        is_override: true,
-      }).select("*").single();
-      if (error || !inserted) return { ok: false, error: error?.message ?? "Insert failed" };
-      blocks.push(inserted as BlockRow);
-      return { ok: true, inserted: describeBlock(inserted as BlockRow) };
+        room,
+        week_label: null,
+      };
+      blocks.push(proposed);
+      const op: EditOp = {
+        kind: "insert",
+        day_of_week: day,
+        start_time: proposed.start_time,
+        end_time: proposed.end_time,
+        subject,
+        specialist_id: specId ?? null,
+        teacher_id: teachId ?? null,
+        grade: grade ?? null,
+        room,
+        week_label: null,
+      };
+      return { ok: true, status: "proposed", op, inserted: describeBlock(proposed) };
     },
   });
 

@@ -1,3 +1,5 @@
+import { computeConflictPairs, type ConflictBlock } from "@/lib/scheduleGrid";
+
 export interface StrategyContext {
   conflictGrades: string[];
   gradesServed: string[];
@@ -136,10 +138,14 @@ export interface ScheduleWarning {
 
 export function analyzeScheduleBlocks(
   blocks: Array<{
+    id?: string;
     day_of_week: string;
     start_time: string;
+    end_time?: string;
     specialist_name?: string | null;
     specialist_id?: string | null;
+    teacher_name?: string | null;
+    teacher_id?: string | null;
     grade?: string | null;
     week_label?: string | null;
     subject?: string | null;
@@ -164,27 +170,49 @@ export function analyzeScheduleBlocks(
     }
   }
 
-  // 2. Specialist double-booking (same specialist, same day, same time)
-  const slotMap = new Map<string, string[]>();
-  for (const b of blocks) {
-    if (!b.specialist_id) continue;
-    const key = `${b.specialist_id}:${b.day_of_week}:${b.start_time}:${b.week_label ?? "all"}`;
-    const existing = slotMap.get(key) || [];
-    existing.push(b.grade ?? "?");
-    slotMap.set(key, existing);
-  }
-  for (const [key, grades] of slotMap) {
-    if (grades.length > 1) {
-      const [specId, day, time] = key.split(":");
-      const spec = specialists.find(s => s.id === specId);
-      warnings.push({
-        type: "double_booked",
-        severity: "error",
-        message: `${spec?.name ?? "Specialist"} is double-booked on ${day} at ${time} (grades: ${grades.join(", ")}).`,
-        suggestion: "Move one block or enable Make-Up Sessions for overflow.",
-        fixAction: { label: 'Update conflicts', target: 'conflicts' },
-      });
+  // 2. Double-booking via the SHARED interval-overlap detector (same source the
+  //    grid uses), so a 45-min block overlapping a 30-min one at a different
+  //    start minute is caught and the panel never disagrees with the grid rings.
+  const conflictBlocks: ConflictBlock[] = blocks
+    .filter((b): b is typeof b & { id: string; end_time: string } => !!b.id && !!b.end_time)
+    .map(b => ({
+      id: b.id,
+      day_of_week: b.day_of_week,
+      start_time: b.start_time,
+      end_time: b.end_time,
+      specialist_id: b.specialist_id,
+      teacher_id: b.teacher_id,
+      specialist_name: b.specialist_name,
+      teacher_name: b.teacher_name,
+      grade: b.grade,
+      week_label: b.week_label,
+    }));
+
+  // Group conflicting pairs by colliding entity + day so we emit one readable
+  // warning per double-booked person/day instead of N pairwise rows.
+  const doubleBookGroups = new Map<string, { who: string; day: string; entries: Set<string>; isTeacher: boolean }>();
+  for (const { a, b, kinds } of computeConflictPairs(conflictBlocks)) {
+    for (const kind of kinds) {
+      const isTeacher = kind === "teacher";
+      const id = isTeacher ? (a.teacher_id ?? a.teacher_name) : (a.specialist_id ?? a.specialist_name);
+      const who = (isTeacher ? a.teacher_name : a.specialist_name) ?? (isTeacher ? "Teacher" : "Specialist");
+      const key = `${kind}:${id}:${a.day_of_week}`;
+      const group = doubleBookGroups.get(key) ?? { who, day: a.day_of_week, entries: new Set<string>(), isTeacher };
+      group.entries.add(`${a.start_time} (Gr ${a.grade ?? "?"})`);
+      group.entries.add(`${b.start_time} (Gr ${b.grade ?? "?"})`);
+      doubleBookGroups.set(key, group);
     }
+  }
+  for (const { who, day, entries, isTeacher } of doubleBookGroups.values()) {
+    warnings.push({
+      type: "double_booked",
+      severity: "error",
+      message: `${who} is double-booked on ${day} (${Array.from(entries).join(", ")}).`,
+      suggestion: isTeacher
+        ? "Move one block so the class isn't scheduled with two specialists at once."
+        : "Move one block or enable Make-Up Sessions for overflow.",
+      fixAction: { label: 'Update conflicts', target: 'conflicts' },
+    });
   }
 
   // 3. Uneven A/B week distribution

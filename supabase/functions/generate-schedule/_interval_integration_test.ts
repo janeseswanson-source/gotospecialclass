@@ -262,3 +262,35 @@ Deno.test("standard generation is internally conflict-free", () => {
   const teaching = result.blocks.filter((b) => b.grade !== "Lunch");
   assertEquals(conflictCount(teaching, specialists, grades), 0);
 });
+
+Deno.test("per-specialist class_duration: a 30-min specialist gets 30-min blocks", () => {
+  // School default is 45 (baseSchool). Music has its own 30-min class length;
+  // Art uses the default. Each specialist's blocks must match THEIR duration.
+  const specialists = [
+    spec("11111111-1111-4111-a111-111111111111", "Art", "Art"),
+    spec("22222222-2222-4222-a222-222222222222", "Music", "Music", { class_duration: 30 }),
+  ];
+  const grades = ["K", "1", "2", "3"];
+  const teachers = grades.map((g, i) =>
+    teacher(`dddddddd-dddd-4ddd-dddd-${(i + 10).toString().padStart(12, "0")}`, `T${g}`, g),
+  );
+  const school = { ...baseSchool, conflict_strategy: "standard", conflict_strategies: ["standard"], conflict_grades: [], conflict_timing: "before" };
+
+  const result = generateScheduleBlocks(
+    "00000000-0000-4000-a000-00000perspc",
+    specialists, teachers, grades, school, [], [], [], [], [],
+  );
+  const teaching = result.blocks.filter((b) => b.specialist_id && b.grade !== "Lunch");
+  const dur = (b: any) => timeToMinutes(b.end_time) - timeToMinutes(b.start_time);
+
+  const artBlocks = teaching.filter((b) => b.specialist_id === specialists[0].id);
+  const musicBlocks = teaching.filter((b) => b.specialist_id === specialists[1].id);
+
+  assert(artBlocks.length > 0, "Art should have blocks");
+  assert(musicBlocks.length > 0, "Music should have blocks");
+  for (const b of artBlocks) assertEquals(dur(b), 45, `Art block ${b.start_time}-${b.end_time} should be 45 min`);
+  for (const b of musicBlocks) assertEquals(dur(b), 30, `Music block ${b.start_time}-${b.end_time} should be 30 min`);
+
+  // And no overlaps from the mixed durations.
+  assertEquals(conflictCount(teaching, specialists, grades), 0);
+});

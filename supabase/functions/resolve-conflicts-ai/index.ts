@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { buildConstraintContext, violations as constraintViolations, describeViolation } from "../_shared/constraints.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -84,7 +85,7 @@ Deno.serve(async (req) => {
           .eq("school_id", schoolId),
         supabase
           .from("schools")
-          .select("name, start_time, end_time, grades_served, class_duration, passing_time")
+          .select("name, start_time, end_time, grades_served, class_duration, passing_time, early_release_day, early_release_end_time, recess_grade_bands")
           .eq("id", schoolId)
           .maybeSingle(),
       ]);
@@ -448,6 +449,23 @@ Respond with ONLY a JSON object matching:
       return false;
     };
 
+    // Edit-time constraint context (school hours, recess/lunch, PLC/Admin
+    // grade-range locks) mirroring the generator. Built from the ORIGINAL
+    // blocks — PLC/Admin locks are never moved during resolution, so the lock
+    // set is stable. Specialist/teacher overlap is still enforced by
+    // `collides` against the running effective view, so here we only surface
+    // the block-intrinsic + grade-lock violations (empty allBlocks).
+    const constraintCtx = buildConstraintContext(school, recessRes.data ?? [], blocks);
+    const blockById: Record<string, any> = Object.fromEntries(blocks.map((b: any) => [b.id, b]));
+    const ruleViolations = (day: string | null, startTime?: string | null, endTime?: string | null, grade?: string | null, week?: string | null): string[] => {
+      if (!day || !startTime || !endTime) return [];
+      return constraintViolations(
+        { day_of_week: day, start_time: startTime, end_time: endTime, grade: grade ?? null, week_label: week ?? null },
+        [],
+        constraintCtx,
+      ).map(describeViolation);
+    };
+
     const deleteIds = new Set(deletes.map((d) => d.block_id));
     // Apply deletes to the effective view first (they free up space).
     for (let i = effective.length - 1; i >= 0; i--) {
@@ -471,6 +489,20 @@ Respond with ONLY a JSON object matching:
       }
       if (collides(newDay, newStart, newEnd, newSpec, newTeacher, u.block_id)) {
         skipped.push(`update ${u.block_id}: would overlap an existing block`);
+        continue;
+      }
+      // Recess/lunch/PLC/hours: reject edits that violate the same rules the
+      // generator enforces, not just specialist/teacher overlap.
+      const origU = blockById[u.block_id];
+      const ruleVio = ruleViolations(
+        newDay,
+        u.start_time ?? origU?.start_time,
+        u.end_time ?? origU?.end_time,
+        origU?.grade ?? null,
+        u.week_label !== undefined ? u.week_label : (origU?.week_label ?? null),
+      );
+      if (ruleVio.length) {
+        skipped.push(`update ${u.block_id}: ${ruleVio.join("; ")}`);
         continue;
       }
       const patch: Record<string, any> = { is_override: true };
@@ -510,6 +542,12 @@ Respond with ONLY a JSON object matching:
       if (startM < dayStart || endM > dayEnd) continue;
       if (collides(ins.day_of_week, startM, endM, ins.specialist_id, ins.teacher_id)) {
         skipped.push(`insert ${ins.grade ?? "?"} ${ins.day_of_week} ${ins.start_time}: would overlap`);
+        continue;
+      }
+      const teachForGrade = teacherById[ins.teacher_id];
+      const insVio = ruleViolations(ins.day_of_week, ins.start_time, ins.end_time, ins.grade ?? teachForGrade?.grade ?? null, ins.week_label ?? null);
+      if (insVio.length) {
+        skipped.push(`insert ${ins.grade ?? "?"} ${ins.day_of_week} ${ins.start_time}: ${insVio.join("; ")}`);
         continue;
       }
       const spec = specById[ins.specialist_id];

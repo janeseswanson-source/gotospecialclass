@@ -71,18 +71,17 @@ Deno.serve(async (req) => {
       return json(200, { replanned: 0, message: "No blocks matched the scope." });
     }
 
-    // Locked block IDs = everything NOT disturbed (except system blocks)
+    // Locked block IDs = everything NOT disturbed (except system blocks).
+    // generate-schedule creates a NEW generation (version) and copies these
+    // locked blocks forward into it, regenerating only the disturbed scope
+    // around them. We deliberately DO NOT delete the disturbed blocks from the
+    // current generation: that would mutate/corrupt the old version, and if the
+    // regen below failed the old schedule would be left damaged. Leaving it
+    // untouched makes replan atomic — the old version stays a pristine prior
+    // version, and the new version only materializes if generation succeeds.
     const lockedBlockIds = blocks
       .filter(b => !disturbedIds.has(b.id) && b.subject !== "Specialist Lunch")
       .map(b => b.id);
-
-    // Delete disturbed blocks
-    const disturbedArr = [...disturbedIds];
-    const { error: deleteErr } = await supabase
-      .from("schedule_blocks")
-      .delete()
-      .in("id", disturbedArr);
-    if (deleteErr) return json(500, { error: `Delete failed: ${deleteErr.message}` });
 
     // Call generate-schedule with locked_block_ids
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
