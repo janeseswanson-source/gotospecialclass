@@ -350,14 +350,23 @@ export default function MasterSchedulePage() {
     if (!block) return;
     if (block.day_of_week === newDay && block.start_time === newTime) return;
 
-    // Detect a block already at the target slot (any subject) → attempt swap.
-    const targetBlock = blocks.find(
-      (b) =>
-        b.id !== blockId &&
-        b.day_of_week === newDay &&
-        b.start_time === newTime &&
-        (!b.week_label || !block.week_label || b.week_label === block.week_label),
-    );
+    // Detect a block whose interval CONTAINS the target time (any subject) on
+    // the same day & coinciding week → attempt a swap. Using interval-contains
+    // (not exact start-time equality) is important: compact-view rows only
+    // expose the start-time of one column's block, so a Tuesday block that
+    // starts a few minutes earlier than the displayed row would otherwise be
+    // invisible to this check and the drop would be rejected as "occupied".
+    const newTimeMin = (() => { const [h, m] = newTime.split(":").map(Number); return h * 60 + m; })();
+    const targetBlock = blocks.find((b) => {
+      if (b.id === blockId) return false;
+      if (b.day_of_week !== newDay) return false;
+      if (b.week_label && block.week_label && b.week_label !== block.week_label) return false;
+      const [bh, bm] = b.start_time.split(":").map(Number);
+      const [eh, em] = b.end_time.split(":").map(Number);
+      const bs = bh * 60 + bm;
+      const be = eh * 60 + em;
+      return newTimeMin >= bs && newTimeMin < be;
+    });
 
     if (targetBlock) {
       if (lockedIds.has(targetBlock.id)) {
@@ -492,26 +501,38 @@ export default function MasterSchedulePage() {
       return;
     }
     setResolvingAI(true);
+    // Hard timeout so the spinner can never hang forever if the gateway is
+    // slow or the function never responds. 90s is well above normal latency.
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 90_000);
     try {
-      const { data, error } = await supabase.functions.invoke('resolve-conflicts-ai', {
-        body: {
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess.session?.access_token;
+      if (!token) throw new Error("Signed out — please sign in again.");
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/resolve-conflicts-ai`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
           generation_id: selectedGen,
           conflicts: errors.map(w => ({ type: (w as any).type, message: w.message, suggestion: w.suggestion })),
-        },
+        }),
+        signal: controller.signal,
       });
-      if (error) {
-        toast({ title: "AI resolution failed", description: error.message, variant: "destructive" });
+      const data: any = await resp.json().catch(() => ({}));
+      if (!resp.ok || data?.error) {
+        toast({
+          title: "AI resolution failed",
+          description: data?.error ?? `HTTP ${resp.status}`,
+          variant: "destructive",
+        });
         return;
       }
-      if ((data as any)?.error) {
-        toast({ title: "AI resolution failed", description: (data as any).error, variant: "destructive" });
-        return;
-      }
-      const applied = (data as any)?.applied ?? 0;
-      const updates = (data as any)?.updates ?? 0;
-      const deletes = (data as any)?.deletes ?? 0;
-      const inserts = (data as any)?.inserts ?? 0;
-      const summary = (data as any)?.summary ?? "";
+      const applied = data?.applied ?? 0;
+      const updates = data?.updates ?? 0;
+      const deletes = data?.deletes ?? 0;
+      const inserts = data?.inserts ?? 0;
+      const summary = data?.summary ?? "";
       if (applied === 0) {
         toast({
           title: "AI couldn't resolve automatically",
@@ -526,8 +547,16 @@ export default function MasterSchedulePage() {
       }
       await loadBlocks(selectedGen);
     } catch (e: any) {
-      toast({ title: "AI resolution failed", description: e?.message ?? "Unknown error", variant: "destructive" });
+      const aborted = e?.name === "AbortError";
+      toast({
+        title: aborted ? "AI took too long" : "AI resolution failed",
+        description: aborted
+          ? "The fix request timed out after 90 seconds. Try again, or edit manually."
+          : (e?.message ?? "Unknown error"),
+        variant: "destructive",
+      });
     } finally {
+      window.clearTimeout(timeoutId);
       setResolvingAI(false);
     }
   }

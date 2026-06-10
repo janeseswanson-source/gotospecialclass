@@ -211,17 +211,23 @@ export function computeAutoFit(opts: {
 
   // Find earliest barrier strictly after slotStart on this day
   let barrier = schoolEnd ? parseTime(schoolEnd) : Number.POSITIVE_INFINITY;
+  let blockingLabel: string | null = null;
 
   allBlocks
     .filter((b) => b.id !== movingBlock.id && b.day_of_week === targetDay)
     .forEach((b) => {
       const bStart = parseTime(b.start_time);
       const bEnd = parseTime(b.end_time);
-      // If slotStart is already inside another block, that's a collision: barrier=slotStart
+      // If slotStart is already inside another block, that's a collision.
       if (slotStart >= bStart && slotStart < bEnd) {
-        barrier = Math.min(barrier, slotStart); // forces avail=0 -> reject
-      } else if (bStart >= slotStart) {
-        barrier = Math.min(barrier, bStart);
+        barrier = Math.min(barrier, slotStart);
+        if (!blockingLabel) {
+          const who = b.subject ?? "another block";
+          const grade = b.grade ? ` · Gr ${b.grade}` : "";
+          blockingLabel = `${who}${grade} (${formatTimeHM(bStart)}–${formatTimeHM(bEnd)})`;
+        }
+      } else if (bStart >= slotStart && bStart < barrier) {
+        barrier = bStart;
       }
     });
 
@@ -230,8 +236,9 @@ export function computeAutoFit(opts: {
     const re = parseTime(r.end_time);
     if (slotStart >= rs && slotStart < re) {
       barrier = Math.min(barrier, slotStart);
-    } else if (rs >= slotStart) {
-      barrier = Math.min(barrier, rs);
+      if (!blockingLabel) blockingLabel = `${r.label} (${formatTimeHM(rs)}–${formatTimeHM(re)})`;
+    } else if (rs >= slotStart && rs < barrier) {
+      barrier = rs;
     }
   });
 
@@ -243,7 +250,9 @@ export function computeAutoFit(opts: {
       end: targetTime,
       duration: 0,
       shortened: false,
-      reason: avail <= 0 ? "Slot is occupied" : `Only ${avail} min available (min ${minDuration})`,
+      reason: avail <= 0
+        ? (blockingLabel ? `Slot is occupied by ${blockingLabel}` : "Slot is occupied")
+        : `Only ${avail} min available (min ${minDuration})`,
     };
   }
 
