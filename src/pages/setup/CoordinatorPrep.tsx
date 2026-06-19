@@ -517,4 +517,80 @@ const PrepCheckbox = ({ label, placeholder, value, onChange }: {
   );
 };
 
+const CalendarAttach = ({ schoolId, filePath, fileName, onChange }: {
+  schoolId: string | null;
+  filePath: string;
+  fileName: string;
+  onChange: (path: string, name: string) => void;
+}) => {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (file: File | null) => {
+    if (!file) return;
+    if (!schoolId) {
+      toast.error('Pick a school first.');
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      toast.error('File too large. Max 20 MB.');
+      return;
+    }
+    setUploading(true);
+    try {
+      const path = `${schoolId}/prep_${Date.now()}_${file.name}`;
+      const { error } = await supabase.storage.from('calendar-uploads').upload(path, file);
+      if (error) throw error;
+      onChange(path, file.name);
+      toast.success('Calendar attached');
+    } catch (e) {
+      console.error('[CalendarAttach]', e);
+      toast.error("Couldn't upload — try again.");
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
+  const handleRemove = async () => {
+    if (filePath) {
+      await supabase.storage.from('calendar-uploads').remove([filePath]).catch(() => {});
+    }
+    onChange('', '');
+  };
+
+  if (filePath) {
+    return (
+      <div className="flex items-center gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm">
+        <FileText className="h-4 w-4 text-primary shrink-0" />
+        <span className="truncate flex-1" title={fileName}>{fileName || 'Calendar attached'}</span>
+        <Button variant="ghost" size="sm" onClick={handleRemove}>Remove</Button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="application/pdf,image/*"
+        className="hidden"
+        onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
+      />
+      <Button
+        variant="outline"
+        onClick={() => inputRef.current?.click()}
+        disabled={uploading || !schoolId}
+      >
+        <Download className="h-4 w-4 mr-2 rotate-180" />
+        {uploading ? 'Uploading…' : 'Attach calendar'}
+      </Button>
+      {!schoolId && (
+        <p className="text-xs text-muted-foreground mt-2">Pick a school above to enable upload.</p>
+      )}
+    </div>
+  );
+};
+
 export default CoordinatorPrep;
