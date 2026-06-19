@@ -346,6 +346,94 @@ const StepRecessLunch = () => {
     updateData({ scheduleType: next });
   };
 
+  // ------- New simpler UI helpers -------
+  const [defaultLunchMinutes, setDefaultLunchMinutes] = useState<number>(data.lunchMinutes || 30);
+  useEffect(() => {
+    if (data.lunchMinutes) setDefaultLunchMinutes(data.lunchMinutes);
+  }, [data.lunchMinutes]);
+
+  const setCount = (period: PeriodKey, target: number) => {
+    setCards(prev => {
+      const cur = prev[period];
+      const clamped = Math.max(1, Math.min(8, target));
+      if (clamped === cur.length) return prev;
+      if (clamped < cur.length) {
+        return { ...prev, [period]: cur.slice(0, clamped) };
+      }
+      // Grow
+      let next = [...cur];
+      while (next.length < clamped) {
+        const firstAcrossAll = PERIOD_ORDER.flatMap(p => p === period ? next : prev[p])[0];
+        const fallbackGrades = firstAcrossAll?.grades ?? [...gradesServed];
+        let bandKey: string, label: string, grades: string[];
+        let start = '';
+        let end = '';
+        if (next.length === 0) {
+          bandKey = firstAcrossAll?.bandKey || 'all';
+          label = PERIOD_LABEL[period];
+          grades = fallbackGrades;
+        } else {
+          bandKey = genBandKey();
+          label = `${PERIOD_LABEL[period]} (group ${next.length + 1})`;
+          const taken = new Set(next.flatMap(r => r.grades));
+          const leftover = gradesServed.filter(g => !taken.has(g));
+          grades = leftover.length ? leftover : fallbackGrades;
+        }
+        // For PM Recess: try to auto-populate from corresponding lunch row.
+        if (period === 'pmRecess') {
+          const lunchRow = prev.lunch[next.length];
+          if (lunchRow) {
+            grades = [...lunchRow.grades];
+            bandKey = lunchRow.bandKey;
+            if (lunchRow.end) {
+              start = lunchRow.end;
+              end = addMinutes(start, 15);
+            }
+          }
+        }
+        next.push({ rowId: genRowId(), bandKey, label, grades, start, end });
+      }
+      return { ...prev, [period]: next };
+    });
+    if (target > 1 && data.scheduleType !== 'staggered') updateData({ scheduleType: 'staggered' });
+  };
+
+  // Update start time → auto-derive end based on the period's default duration.
+  const setRowStart = (period: PeriodKey, rowId: string, start: string) => {
+    const dur = period === 'lunch' ? defaultLunchMinutes : 15;
+    const end = start ? addMinutes(start, dur) : '';
+    updateRow(period, rowId, { start, end });
+  };
+
+  // When defaultLunchMinutes changes, recompute lunch ends.
+  useEffect(() => {
+    setCards(prev => ({
+      ...prev,
+      lunch: prev.lunch.map(r => r.start ? { ...r, end: addMinutes(r.start, defaultLunchMinutes) } : r),
+    }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultLunchMinutes]);
+
+  const syncPmFromLunch = () => {
+    setCards(prev => {
+      const next = prev.lunch.map((l, i) => {
+        const existing = prev.pmRecess[i];
+        const start = l.end || '';
+        return {
+          rowId: existing?.rowId ?? genRowId(),
+          bandKey: l.bandKey,
+          label: existing?.label ?? `${PERIOD_LABEL.pmRecess}${prev.lunch.length > 1 ? ` (group ${i + 1})` : ''}`,
+          grades: [...l.grades],
+          start,
+          end: start ? addMinutes(start, 15) : '',
+          erStart: existing?.erStart,
+          erEnd: existing?.erEnd,
+        };
+      });
+      return { ...prev, pmRecess: next };
+    });
+  };
+
   // ------- Render -------
   return (
     <div className="rounded-xl border border-border bg-card p-6 space-y-5">
@@ -386,24 +474,60 @@ const StepRecessLunch = () => {
         </div>
       ) : (
         <>
-          {/* Three period cards — stack on small/medium, side-by-side at xl+ */}
-          <div className="grid gap-3 grid-cols-1 md:grid-cols-2 xl:grid-cols-3 min-w-0">
-            {PERIOD_ORDER.map(p => (
-              <PeriodCard
-                key={p}
-                period={p}
-                rows={cards[p]}
-                gradesServed={gradesServed}
-                showGrades={isStaggered}
-                showEarlyRelease={false}
-                onAddRow={addRow}
-                onRemoveRow={removeRow}
-                onUpdate={updateRow}
-              />
-            ))}
+          <div className="space-y-3">
+            <CompactSection
+              period="amRecess"
+              rows={cards.amRecess}
+              gradesServed={gradesServed}
+              showGrades={isStaggered}
+              countLocked={!isStaggered}
+              defaultDuration={15}
+              onSetCount={(n) => setCount('amRecess', n)}
+              onSetStart={(rowId, s) => setRowStart('amRecess', rowId, s)}
+              onUpdate={(rowId, patch) => updateRow('amRecess', rowId, patch)}
+              onRemove={(rowId) => removeRow('amRecess', rowId)}
+            />
+
+            <CompactSection
+              period="lunch"
+              rows={cards.lunch}
+              gradesServed={gradesServed}
+              showGrades={isStaggered}
+              countLocked={!isStaggered}
+              defaultDuration={defaultLunchMinutes}
+              onDefaultDurationChange={setDefaultLunchMinutes}
+              onSetCount={(n) => setCount('lunch', n)}
+              onSetStart={(rowId, s) => setRowStart('lunch', rowId, s)}
+              onUpdate={(rowId, patch) => updateRow('lunch', rowId, patch)}
+              onRemove={(rowId) => removeRow('lunch', rowId)}
+            />
+
+            <CompactSection
+              period="pmRecess"
+              rows={cards.pmRecess}
+              gradesServed={gradesServed}
+              showGrades={isStaggered}
+              countLocked={!isStaggered}
+              defaultDuration={15}
+              onSetCount={(n) => setCount('pmRecess', n)}
+              onSetStart={(rowId, s) => setRowStart('pmRecess', rowId, s)}
+              onUpdate={(rowId, patch) => updateRow('pmRecess', rowId, patch)}
+              onRemove={(rowId) => removeRow('pmRecess', rowId)}
+              extraHeader={
+                cards.lunch.some(l => l.end) && (
+                  <button
+                    type="button"
+                    onClick={syncPmFromLunch}
+                    className="inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                  >
+                    <RefreshCw className="h-3 w-3" /> Auto from Lunch
+                  </button>
+                )
+              }
+            />
           </div>
 
-          {/* Early release block — collapsed by default */}
+          {/* Early release block — collapsed by default, unchanged */}
           {hasEarlyRelease ? (
             <Collapsible open={erOpen} onOpenChange={setErOpen}>
               <div className="rounded-xl border border-border bg-muted/20">
@@ -446,7 +570,6 @@ const StepRecessLunch = () => {
             </div>
           )}
 
-
           {validation.hasError && (
             <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs space-y-1">
               <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300 font-medium">
@@ -468,5 +591,174 @@ const StepRecessLunch = () => {
     </div>
   );
 };
+
+// ------- Compact section (count-first, auto-fill end times) -------
+interface CompactSectionProps {
+  period: PeriodKey;
+  rows: PeriodRow[];
+  gradesServed: string[];
+  showGrades: boolean;
+  countLocked: boolean;
+  defaultDuration: number;
+  onDefaultDurationChange?: (n: number) => void;
+  onSetCount: (n: number) => void;
+  onSetStart: (rowId: string, start: string) => void;
+  onUpdate: (rowId: string, patch: Partial<PeriodRow>) => void;
+  onRemove: (rowId: string) => void;
+  extraHeader?: React.ReactNode;
+}
+
+const CompactSection = ({
+  period, rows, gradesServed, showGrades, countLocked, defaultDuration,
+  onDefaultDurationChange, onSetCount, onSetStart, onUpdate, onRemove, extraHeader,
+}: CompactSectionProps) => {
+  const meta = PERIOD_META[period];
+  const Icon = meta.Icon;
+  const count = rows.length;
+
+  return (
+    <div className="rounded-xl border border-border bg-muted/10">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 px-4 py-3">
+        <div className={cn('flex items-center gap-2 text-sm font-semibold', meta.accent)}>
+          <Icon className="h-4 w-4" />
+          <span>{meta.title}</span>
+          <span className="text-xs font-normal text-muted-foreground">· {defaultDuration} min blocks</span>
+        </div>
+        <div className="flex items-center gap-3">
+          {extraHeader}
+          {period === 'lunch' && onDefaultDurationChange && (
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              Length
+              <Input
+                type="number"
+                min={5}
+                max={120}
+                value={defaultDuration}
+                onChange={(e) => onDefaultDurationChange(Math.max(5, Math.min(120, Number(e.target.value) || 30)))}
+                className="h-7 w-16 text-xs"
+              />
+              min
+            </label>
+          )}
+          {!countLocked && (
+            <div className="flex items-center gap-1 rounded-md border border-border bg-background px-1 py-0.5">
+              <button
+                type="button"
+                onClick={() => onSetCount(count - 1)}
+                disabled={count <= 1}
+                className="rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-30"
+                aria-label="Decrease"
+              >
+                <Minus className="h-3.5 w-3.5" />
+              </button>
+              <span className="min-w-[1.5rem] text-center text-xs font-medium">{count}</span>
+              <button
+                type="button"
+                onClick={() => onSetCount(count + 1)}
+                disabled={count >= 8}
+                className="rounded p-1 text-muted-foreground hover:text-foreground disabled:opacity-30"
+                aria-label="Increase"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Rows */}
+      <div className="divide-y divide-border/40">
+        {rows.length === 0 && (
+          <p className="px-4 py-3 text-xs italic text-muted-foreground">No rows.</p>
+        )}
+        {rows.map((row, idx) => (
+          <div key={row.rowId} className="px-4 py-3 space-y-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-primary/10 px-2 text-[11px] font-semibold text-primary">
+                #{idx + 1}
+              </span>
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                Start
+                <Input
+                  type="time"
+                  value={row.start}
+                  onChange={(e) => onSetStart(row.rowId, e.target.value)}
+                  className="h-8 w-[7.5rem] text-xs"
+                />
+              </label>
+              <span className="text-xs text-muted-foreground">→</span>
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                End
+                <Input
+                  type="time"
+                  value={row.end}
+                  onChange={(e) => onUpdate(row.rowId, { end: e.target.value })}
+                  className="h-8 w-[7.5rem] text-xs"
+                  title="Auto-filled — edit to override"
+                />
+              </label>
+              {row.start && row.end && row.end === addMinutes(row.start, defaultDuration) && (
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">auto</span>
+              )}
+              {!countLocked && rows.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => onRemove(row.rowId)}
+                  className="ml-auto rounded p-1 text-muted-foreground hover:text-destructive"
+                  aria-label="Remove row"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            {showGrades && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground mr-1">Grades</span>
+                {gradesServed.map(g => {
+                  const selected = row.grades.includes(g);
+                  return (
+                    <button
+                      key={g}
+                      type="button"
+                      onClick={() => {
+                        const next = selected ? row.grades.filter(x => x !== g) : [...row.grades, g];
+                        onUpdate(row.rowId, { grades: next });
+                      }}
+                      className={cn(
+                        'rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors',
+                        selected
+                          ? 'border-primary bg-primary text-primary-foreground'
+                          : 'border-border bg-background text-muted-foreground hover:border-primary/40',
+                      )}
+                    >
+                      {g}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => onUpdate(row.rowId, { grades: [...gradesServed] })}
+                  className="ml-2 text-[10px] text-primary hover:underline"
+                >
+                  All
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onUpdate(row.rowId, { grades: [] })}
+                  className="text-[10px] text-muted-foreground hover:underline"
+                >
+                  None
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 
 export default StepRecessLunch;
