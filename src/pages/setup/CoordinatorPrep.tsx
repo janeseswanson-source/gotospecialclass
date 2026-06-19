@@ -194,8 +194,19 @@ const CoordinatorPrep = () => {
         calendar_file_path: s.calendar_file_path || null,
         calendar_file_name: s.calendar_file_name || null,
         has_special_rotation: s.has_special_rotation,
+        plus_mode: s.plus_mode || null,
+        plus_days: s.plus_days,
+        plus_rationale: s.plus_rationale || null,
         special_rotation_notes: s.special_rotation_notes || null,
       };
+
+      // Mirror plus_mode to schools.plus_auto_fit so the generator can branch on it.
+      if (selectedSchoolId) {
+        await supabase
+          .from('schools')
+          .update({ plus_auto_fit: s.plus_mode === 'ai_auto_fit' } as any)
+          .eq('id', selectedSchoolId);
+      }
 
       const { error } = existing
         ? await supabase.from('coordinator_prep').update(payload).eq('id', existing.id)
