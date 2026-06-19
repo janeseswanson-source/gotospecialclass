@@ -64,6 +64,13 @@ const SECTIONS = [
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
+function schedulingStyleLabel(v: string): string {
+  if (v === 'keep_together') return 'Keep grades together';
+  if (v === 'waterfall') return 'Waterfall (rolling rotation of mismatched lessons)';
+  if (v === 'fixed_sequence') return 'Fixed Daily Sequence (K → 5)';
+  return '';
+}
+
 function buildRows(p: PrepState, schoolName?: string): PrepRow[] {
   return [
     { question: 'School name', answer: schoolName },
@@ -71,9 +78,7 @@ function buildRows(p: PrepState, schoolName?: string): PrepRow[] {
     { question: 'District calendar URL', answer: p.district_calendar_url },
     { question: 'Weekly early-release day', answer: p.early_release_day || 'None' },
     { question: 'Early-release end time', answer: p.early_release_end_time },
-    { question: 'Specialist scheduling preference', answer: p.grade_preference === 'keep_together' ? 'Keep grades together' : p.grade_preference === 'waterfall' ? 'Waterfall (K → 5)' : '' },
-    { question: 'Day preference for specialists', answer: p.day_preference.join(', ') },
-    { question: 'AM / PM preference', answer: p.am_pm_preference },
+    { question: 'Specialist scheduling style', answer: schedulingStyleLabel(p.grade_preference) },
     { question: 'How many specialist teachers?', answer: p.specialist_count == null ? '' : String(p.specialist_count) },
     { question: 'Specialists using a teaching cart', answer: p.cart_users },
     { question: 'Specialists at two schools', answer: p.two_school_users },
@@ -92,6 +97,7 @@ const CoordinatorPrep = () => {
   const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [downloading, setDownloading] = useState(false);
+  const [activeSection, setActiveSection] = useState<string>(SECTIONS[0].id);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const stateRef = useRef(state);
   stateRef.current = state;
@@ -191,14 +197,24 @@ const CoordinatorPrep = () => {
   const set = <K extends keyof PrepState>(k: K, v: PrepState[K]) =>
     setState(prev => ({ ...prev, [k]: v }));
 
-  const toggleDay = (day: string) => {
-    setState(prev => ({
-      ...prev,
-      day_preference: prev.day_preference.includes(day)
-        ? prev.day_preference.filter(d => d !== day)
-        : [...prev.day_preference, day],
-    }));
-  };
+  // Scroll-spy: highlight the section currently in view
+  useEffect(() => {
+    if (loading) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (visible?.target.id) setActiveSection(visible.target.id);
+      },
+      { rootMargin: '-80px 0px -60% 0px', threshold: 0 }
+    );
+    SECTIONS.forEach((s) => {
+      const el = document.getElementById(s.id);
+      if (el) observer.observe(el);
+    });
+    return () => observer.disconnect();
+  }, [loading]);
 
   const handleDownloadPdf = async () => {
     setDownloading(true);
@@ -255,15 +271,23 @@ const CoordinatorPrep = () => {
       <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-6">
         {/* Left rail */}
         <aside className="lg:sticky lg:top-4 self-start space-y-1">
-          {SECTIONS.map(s => (
-            <button
-              key={s.id}
-              onClick={() => scrollTo(s.id)}
-              className="block w-full text-left text-sm px-3 py-2 rounded-md text-muted-foreground hover:bg-accent/10 hover:text-foreground transition-colors"
-            >
-              {s.label}
-            </button>
-          ))}
+          {SECTIONS.map(s => {
+            const isActive = activeSection === s.id;
+            return (
+              <button
+                key={s.id}
+                onClick={() => { setActiveSection(s.id); scrollTo(s.id); }}
+                aria-current={isActive ? 'true' : undefined}
+                className={`relative block w-full text-left text-sm px-3 py-2 rounded-md transition-colors ${
+                  isActive
+                    ? 'bg-accent/20 text-foreground font-medium after:content-[""] after:absolute after:right-[-6px] after:top-1/2 after:-translate-y-1/2 after:border-y-[6px] after:border-y-transparent after:border-l-[6px] after:border-l-accent'
+                    : 'text-muted-foreground hover:bg-accent/10 hover:text-foreground'
+                }`}
+              >
+                {s.label}
+              </button>
+            );
+          })}
           <div className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
             <FileText className="h-4 w-4 mb-1 text-primary" />
             Autosaves as you type. Safe to leave anytime.
@@ -315,39 +339,28 @@ const CoordinatorPrep = () => {
 
             <div className="space-y-2">
               <Label>Specialist scheduling style</Label>
-              <RadioGroup value={state.grade_preference} onValueChange={(v) => set('grade_preference', v)} className="gap-2">
+              <RadioGroup value={state.grade_preference} onValueChange={(v) => set('grade_preference', v)} className="gap-3">
                 <label className="flex items-start gap-2 text-sm cursor-pointer">
                   <RadioGroupItem value="keep_together" className="mt-0.5" />
                   <span><strong>Keep grades together as much as possible</strong> — minimize the spread across the day.</span>
                 </label>
                 <label className="flex items-start gap-2 text-sm cursor-pointer">
                   <RadioGroupItem value="waterfall" className="mt-0.5" />
-                  <span><strong>Waterfall</strong> — go K → 5 in order each day.</span>
+                  <span>
+                    <strong>Waterfall</strong> — same grade, same day, totally different lesson days in each time block
+                    <span className="block text-xs text-muted-foreground mt-1">
+                      e.g. Period 1 = 3A intro, Period 3 = 3B mid-unit, Period 5 = 3C wrap-up.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-sm cursor-pointer">
+                  <RadioGroupItem value="fixed_sequence" className="mt-0.5" />
+                  <span><strong>Fixed Daily Sequence</strong> — go K → 5 in order each day.</span>
                 </label>
               </RadioGroup>
             </div>
-
-            <div className="space-y-2">
-              <Label>Day preference for specialists</Label>
-              <div className="flex flex-wrap gap-3">
-                {DAYS.map(d => (
-                  <label key={d} className="flex items-center gap-2 text-sm cursor-pointer">
-                    <Checkbox checked={state.day_preference.includes(d)} onCheckedChange={() => toggleDay(d)} />
-                    {d}
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>AM / PM preference</Label>
-              <RadioGroup value={state.am_pm_preference} onValueChange={(v) => set('am_pm_preference', v)} className="flex gap-6">
-                <label className="flex items-center gap-2 text-sm cursor-pointer"><RadioGroupItem value="AM" /> AM</label>
-                <label className="flex items-center gap-2 text-sm cursor-pointer"><RadioGroupItem value="PM" /> PM</label>
-                <label className="flex items-center gap-2 text-sm cursor-pointer"><RadioGroupItem value="none" /> No preference</label>
-              </RadioGroup>
-            </div>
           </section>
+
 
           {/* Specialist Specifics */}
           <section id="specialists" className="rounded-xl border border-border bg-card p-6 space-y-4">

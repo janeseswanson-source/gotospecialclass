@@ -1,33 +1,41 @@
-## Problem in the new PDF
+# Coordinator Prep — Feedback Fixes
 
-Every grade is generating its own start-time grid, so the Master Schedule has a row for 7:45, 7:50, 8:05, 8:10, 8:15, 8:30, 8:35, 8:50, 8:55, 9:00, 9:05, 9:10, 9:15… Each class drifts because `buildTimeSlotsForGrade` (in `supabase/functions/generate-schedule/index.ts`) advances its own cursor using that grade's `passing + setup` times, which differ per grade/subject. The result: legitimate placements, but visually chaotic — and drag/drop reports "occupied" because target rows don't line up with source rows.
+Three small changes to `src/pages/setup/CoordinatorPrep.tsx` based on your sticky-note annotations.
 
-## Fix
+## 1. Active section indicator on the left rail
+**Feedback:** "Keep the light on when at the area. Maybe add a triangle to show it as well."
 
-Snap every generated block to a single **school-wide canonical slot grid** so the Master Schedule shows one tidy row per period across all grades and specialists.
+Today the left-rail buttons highlight on hover only — no persistent "you are here" state. Add scroll-spy so the section the user is currently viewing stays highlighted and gets a small triangle pointer on its right edge.
 
-1. **Build the canonical grid once per generation run** (not per grade):
-   - Start at `school.start_time`.
-   - Step = `defaultClassDuration + defaultPassingTime` (school-level defaults).
-   - Skip any slot that overlaps a recess/lunch window applicable to anyone.
-   - Stop at the day's end (early-release aware).
-2. **Per grade, filter (not regenerate)**: take the canonical grid and drop slots that overlap that grade's specific recess/lunch windows or fall outside that grade's hours. Keep `start`/`end` identical to the canonical row so they align across grades.
-3. **Per subject/specialist**, allow duration to differ but keep the slot **start** aligned to the canonical grid; end = start + that subject's duration. Reject candidates whose end pushes into the next canonical slot start minus the required passing buffer (existing back-to-back logic already handles this).
-4. **Validator/UI** already uses the same scheduleGrid utilities — no change needed there once start times converge.
+- Add an `activeSection` state, default `'school-info'`.
+- Use an `IntersectionObserver` on each `<section id=…>` to set `activeSection` when it enters the upper portion of the viewport.
+- Style the active rail button with the cream/gold accent background, dark navy text, and a right-pointing triangle (▶ via a small absolutely-positioned `border` triangle) so the eye snaps to it.
+- Clicking a rail button still scrolls and immediately marks that section active.
 
-This is generator-only; the Master Grid page, exports, and drag/drop logic stay as-is and benefit automatically.
+## 2. Clarify the "Waterfall" option
+**Feedback:** "Waterfall = a rolling rotation of mismatched lessons" with the Period 1 (3A intro) → Period 3 (3B mid-unit) → Period 5 (3C end) example.
+
+Today: `Waterfall — go K → 5 in order each day.` That description is misleading — Waterfall actually means same grade, different lesson days across each time block.
+
+- Rewrite the Waterfall radio description to: **"Waterfall"** — *same grade, same day, totally different lesson days in each time block (e.g. Period 1 = 3A intro, Period 3 = 3B mid-unit, Period 5 = 3C wrap-up).*
+- Add a third option **"Fixed Daily Sequence"** — *go K → 5 in order each day* (this is what the old "Waterfall" copy actually described — preserving the option, just under the right name).
+- Update the PDF row label mapping in `buildRows` to match the three options.
+
+## 3. Remove global Day / AM-PM preference from Schedule Preferences
+**Feedback:** "REMOVE as this maybe a feature of each specialist not all."
+
+The "Day preference for specialists" and "AM / PM preference" controls under Schedule Preferences treat all specialists as one. These already live per-specialist in the Specialists step of the wizard.
+
+- Remove both controls from the Schedule Preferences section.
+- Remove their rows from the PDF (`Day preference for specialists`, `AM / PM preference` in `buildRows`).
+- Leave the underlying `day_preference` and `am_pm_preference` columns alone (no migration) so existing rows stay intact; the page just stops reading/writing them.
+
+## Technical notes
+- File: `src/pages/setup/CoordinatorPrep.tsx` only (plus its PDF doc `src/pdf/CoordinatorPrep.tsx` if `PrepRow` shape changes — it won't; we just drop rows).
+- No DB schema change. No new dependencies. No changes to wizard/generator code.
+- Triangle indicator: pure CSS via Tailwind (`after:` pseudo with border tricks) — no new icon import needed.
 
 ## Out of scope
-
-- Drag/drop "occupied" UX (was already patched and will improve once rows align).
-- Fix-with-AI timeout (already patched).
-- Visual styling of the Master Schedule page.
-
-## Technical detail
-
-- File: `supabase/functions/generate-schedule/index.ts`.
-  - Add `buildCanonicalSlotsForDay(day, school, allRecessWindows)` returning the shared `TimeSlot[]`.
-  - Refactor `buildTimeSlotsForGrade` to take the canonical list and filter, instead of advancing its own cursor.
-  - Keep existing `getEndMinForDay` and recess-window selection.
-- Run existing unit/integration tests in `supabase/functions/generate-schedule/_*_test.ts`; they will surface any regression where a per-grade timing previously produced extra slots. Expected effect: slightly fewer total candidate slots → marginally lower density but uniform rows. Acceptable trade-off and what the user asked for.
-- After the change, re-generate the King Kamehameha schedule in the app to verify the Master Schedule shows one row per canonical period (7:45, 8:30, 9:15, 10:00 …) instead of 13+ misaligned rows.
+- Per-specialist day/AM-PM editing UI (already exists in StepSpecialists).
+- Visual redesign of the rail beyond the active state.
+- Wiring the new "Fixed Daily Sequence" choice into the generator (it can read the same `grade_preference` column with the new value; generator-side handling is a follow-up if you confirm semantics).
