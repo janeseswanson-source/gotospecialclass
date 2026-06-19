@@ -1,6 +1,14 @@
-import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
+import { Document, Page, Text, View, Image, StyleSheet } from '@react-pdf/renderer';
 import { abbrevSubject, lastName } from './lib/subjectAbbrev';
 import { generateSessionRanges } from './lib/sessionCalendar';
+import logoAsset from '@/assets/logo.png.asset.json';
+
+const LOGO_URL = (() => {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return new URL(logoAsset.url, window.location.origin).toString();
+  }
+  return logoAsset.url;
+})();
 
 export interface Teacher {
   id: string;
@@ -39,10 +47,15 @@ const DAYS: { key: string; label: string }[] = [
 ];
 
 const styles = StyleSheet.create({
-  page: { paddingTop: 28, paddingBottom: 40, paddingHorizontal: 24, fontSize: 8, fontFamily: 'Helvetica' },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, paddingBottom: 4, borderBottom: '1pt solid #1B2A4A' },
-  headerTitle: { fontSize: 11, fontFamily: 'Helvetica-Bold', color: '#1B2A4A' },
+  page: { paddingTop: 28, paddingBottom: 42, paddingHorizontal: 24, fontSize: 8, fontFamily: 'Helvetica' },
+  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, paddingBottom: 6, borderBottom: '1.5pt solid #C5A55A' },
+  headerLogo: { width: 26, height: 26, marginRight: 8 },
+  headerTitleBlock: { flex: 1 },
+  headerTitle: { fontSize: 12, fontFamily: 'Helvetica-Bold', color: '#1B2A4A' },
+  headerSubtitle: { fontSize: 7, color: '#6b7280', letterSpacing: 1, textTransform: 'uppercase', marginTop: 1 },
   headerPage: { fontSize: 8, color: '#555' },
+  brandFooter: { position: 'absolute', left: 24, right: 24, bottom: 14, flexDirection: 'row', justifyContent: 'space-between', borderTop: '0.8pt solid #C5A55A', paddingTop: 4, fontSize: 7.5, color: '#1B2A4A' },
+  brandFooterMute: { color: '#6b7280' },
   table: { borderTop: '1pt solid #1B2A4A', borderLeft: '1pt solid #1B2A4A' },
   colHeader: { flexDirection: 'row', backgroundColor: '#1B2A4A' },
   colHeaderCell: { padding: 4, fontSize: 8, fontFamily: 'Helvetica-Bold', color: '#fff', borderRight: '1pt solid #fff', textAlign: 'center' },
@@ -54,7 +67,7 @@ const styles = StyleSheet.create({
   subHeader: { fontSize: 6, fontFamily: 'Helvetica-Bold', color: '#C5A55A', marginBottom: 1 },
   entry: { fontSize: 7, marginBottom: 1 },
   footnote: { marginTop: 8, fontSize: 7, color: '#555', fontStyle: 'italic' },
-  legendPage: { paddingTop: 32, paddingBottom: 40, paddingHorizontal: 36, fontSize: 10, fontFamily: 'Helvetica' },
+  legendPage: { paddingTop: 28, paddingBottom: 42, paddingHorizontal: 36, fontSize: 10, fontFamily: 'Helvetica' },
   legendTitle: { fontSize: 16, fontFamily: 'Helvetica-Bold', color: '#1B2A4A', marginBottom: 12 },
   legendGroup: { marginBottom: 8 },
   legendSubject: { fontSize: 11, fontFamily: 'Helvetica-Bold', color: '#C5A55A', marginBottom: 3 },
