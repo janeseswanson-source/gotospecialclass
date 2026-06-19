@@ -89,18 +89,18 @@ export function monteCarloRun<T>(
  * Time a single calibration run of `strategyFn` and choose an iteration
  * count that stays under a total-time budget.
  *
- *   ≤200ms  → 50 iterations
- *   ≤500ms  → 25 iterations
- *   else    → 10 iterations
+ *   ≤200ms  → 200 iterations
+ *   ≤500ms  → 100 iterations
+ *   else    → 50 iterations
  *
- * Throws a tagged error if projected total > 30s so the caller can
+ * Throws a tagged error if projected total > 60s so the caller can
  * surface a 422 instead of silently producing a worse schedule.
  */
 export class MonteCarloBudgetExceededError extends Error {
   constructor(public calibrationMs: number, public projectedMs: number) {
     super(
       `Schedule too large to optimize — try reducing complexity. ` +
-      `(calibration ${calibrationMs.toFixed(0)}ms × 10 iters = ${projectedMs.toFixed(0)}ms > 30000ms budget)`,
+      `(calibration ${calibrationMs.toFixed(0)}ms × N iters = ${projectedMs.toFixed(0)}ms > 60000ms budget)`,
     );
     this.name = "MonteCarloBudgetExceededError";
   }
@@ -128,7 +128,7 @@ export function calibrateMonteCarlo<T>(
   else iterations = 50;
 
   const projectedMs = calibrationMs * iterations;
-  if (projectedMs > 30_000) {
+  if (projectedMs > 60_000) {
     throw new MonteCarloBudgetExceededError(calibrationMs, projectedMs);
   }
 
