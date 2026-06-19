@@ -671,23 +671,20 @@ const StepSpecialists = () => {
           <p className="text-xs text-accent mt-0.5 uppercase tracking-wide">Bulk deploy your specialist roster. Use our tactical template for fastest results.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="outline" className="gap-1.5 border-accent text-accent hover:bg-accent/10" onClick={() => downloadTemplate('specialists', '/templates/specialists_template.csv')}>
+          <Button size="sm" variant="outline" className="gap-1.5 border-accent text-accent hover:bg-accent/10" onClick={() => downloadTemplate('specialists', '/templates/specialists_template.xlsx')}>
             <Download className="h-3.5 w-3.5" /> Download Template
           </Button>
-          <Button size="sm" className="gap-1.5" onClick={() => fileRef.current?.click()}>
-            <Upload className="h-3.5 w-3.5" /> Quick Update (CSV)
+          <Button size="sm" className="gap-1.5" onClick={() => fileRef.current?.click()} disabled={aiParsing}>
+            {aiParsing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+            {aiParsing ? 'AI is reading…' : 'Upload Filled Template'}
           </Button>
-          <a
-            href="/templates/specialists_template_README.txt"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-muted-foreground hover:text-accent inline-flex items-center gap-1 underline-offset-2 hover:underline"
-          >
-            <HelpCircle className="h-3 w-3" /> Format help
-          </a>
-          <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleCSVUpload} />
+          <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
+            <Sparkles className="h-3 w-3 text-accent" /> Accepts .xlsx or .csv — AI auto-fills the rest.
+          </span>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleTemplateUpload} />
         </div>
       </div>
+
 
       {/* Quick Add */}
       <div className="rounded-lg border border-border bg-background p-5 space-y-3">
