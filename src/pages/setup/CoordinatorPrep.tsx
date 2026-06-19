@@ -97,6 +97,7 @@ const CoordinatorPrep = () => {
   const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [downloading, setDownloading] = useState(false);
+  const [activeSection, setActiveSection] = useState<string>(SECTIONS[0].id);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const stateRef = useRef(state);
   stateRef.current = state;
