@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { logActivity } from "@/lib/activityLogger";
 import { exportSchedulePDF } from "@/lib/exportPdf";
+import { exportMasterAdminXlsx } from "@/lib/exportMasterAdminXlsx";
 import { formatTime } from "@/lib/utils";
 
 export default function ExportsPage() {
