@@ -719,7 +719,7 @@ const StepSpecialists = () => {
             <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${meta.iconBg}`}>
               <SubjectIcon className={`h-5 w-5 ${meta.iconText}`} />
             </div>
-            <div className="flex-1 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="flex-1 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <div className="space-y-1">
                 <FieldLabel className="text-xs" tooltip="Specialist teacher's full name">Name</FieldLabel>
                 <Input className="h-8 text-xs" value={s.name} onChange={(e) => update(s.id, 'name', e.target.value)} placeholder="Teacher name" />
@@ -730,7 +730,14 @@ const StepSpecialists = () => {
                   {subjects.map(sub => <option key={sub} value={sub}>{sub}</option>)}
                 </select>
               </div>
-              <div className="hidden sm:block" />
+              <div className="space-y-1">
+                <FieldLabel className="text-xs" tooltip="Optional. Used for contact only.">Phone</FieldLabel>
+                <Input className="h-8 text-xs" value={s.phone} onChange={(e) => update(s.id, 'phone', e.target.value)} placeholder="(optional)" />
+              </div>
+              <div className="space-y-1">
+                <FieldLabel className="text-xs" tooltip="Optional. Used for contact only.">Email</FieldLabel>
+                <Input className="h-8 text-xs" type="email" value={s.email} onChange={(e) => update(s.id, 'email', e.target.value)} placeholder="(optional)" />
+              </div>
             </div>
             <Button size="sm" variant="ghost" className="shrink-0" onClick={() => setPendingDeleteId(s.id)}>
               <Trash2 className="h-4 w-4 text-destructive" />
