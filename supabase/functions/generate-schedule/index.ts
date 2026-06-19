@@ -1964,7 +1964,7 @@ function runSimulatedAnnealing(
       if (!occ.isGradeRangeFree(newB.day_of_week, newB.grade, bStart, bEnd)) { T *= SA_COOLING; continue; }
 
       candidateBlocks = currentBlocks.map(b => b === blockA ? newA : b === blockB ? newB : b);
-    } else {
+    } else if (mutationType === 1) {
       // MOVE: pick one block and relocate to a free slot for same (specialist, teacher)
       const blockToMove = teachingBlocks[Math.floor(rng() * teachingBlocks.length)];
       const spec = specialists.find(s => s.id === blockToMove.specialist_id);
