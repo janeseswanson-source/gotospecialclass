@@ -36,6 +36,9 @@ interface PrepState {
   calendar_file_path: string;
   calendar_file_name: string;
   has_special_rotation: boolean | null;
+  plus_mode: string; // '' | 'admin' | 'ai_auto_fit'
+  plus_days: string[];
+  plus_rationale: string;
   special_rotation_notes: string;
 }
 
@@ -59,6 +62,9 @@ const empty: PrepState = {
   calendar_file_path: '',
   calendar_file_name: '',
   has_special_rotation: null,
+  plus_mode: '',
+  plus_days: [],
+  plus_rationale: '',
   special_rotation_notes: '',
 };
 
