@@ -1891,11 +1891,11 @@ function runSimulatedAnnealing(
   rng: Rng,
   weightOverrides?: Partial<Record<keyof ScoreBreakdown, number>>,
 ): { blocks: Block[]; preferenceViolations: PreferenceViolation[]; score: number; iterations: number; improvement: number } {
-  const SA_MAX_ITER = 200;
+  const SA_MAX_ITER = 500;
   const SA_T_START = 50;
-  const SA_COOLING = 0.95;
+  const SA_COOLING = 0.97;
   const SA_T_MIN = 1;
-  const SA_TIME_BUDGET_MS = 8000;
+  const SA_TIME_BUDGET_MS = 12000;
 
   let currentBlocks = initialResult.blocks.slice();
   let currentViolations = initialResult.preferenceViolations.slice();
