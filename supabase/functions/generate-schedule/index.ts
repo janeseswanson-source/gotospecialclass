@@ -2187,6 +2187,26 @@ export function generateScheduleBlocks(
   lockedBlocks: Block[] = [],
   weightOverrides?: Partial<Record<keyof ScoreBreakdown, number>>,
 ): SchedulerResult {
+  // ─── E: Pre-flight feasibility ────────────────────────────────────
+  // Per-day capacity = Σ specialists working that day × max slots/day.
+  // Demand = grades × specialists (1 session per grade per specialist).
+  // If capacity < demand, no Monte-Carlo run can hit full coverage —
+  // surface an actionable error instead of producing a mediocre schedule.
+  const workingDays = new Set<string>();
+  for (const s of specialists) for (const d of (s.working_days ?? DAYS)) if (DAYS.includes(d)) workingDays.add(d);
+  const totalSpecDayCount = specialists.reduce(
+    (acc, s) => acc + ((s.working_days ?? DAYS).filter((d) => DAYS.includes(d)).length),
+    0,
+  );
+  const requiredPairs = grades.length * specialists.length;
+  if (specialists.length > 0 && grades.length > 0 && totalSpecDayCount < requiredPairs) {
+    throw new Error(
+      `Infeasible schedule: ${specialists.length} specialists × ${totalSpecDayCount} total working-days ` +
+      `cannot cover ${grades.length} grades × ${specialists.length} subjects = ${requiredPairs} required sessions. ` +
+      `Add specialists, expand working days, or enable A/B Week to halve weekly demand.`,
+    );
+  }
+
   // Never borrow planning_minutes (often 200+) as a class length — a null/zero
   // class_duration must fall back to 45, not to the specialist's weekly prep.
   const classDuration = (school.class_duration && school.class_duration > 0) ? school.class_duration : 45;
