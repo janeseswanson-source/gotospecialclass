@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { FieldLabel } from '@/components/ui/field-label';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, Upload, Download, Palette, Monitor, Dumbbell, FlaskConical, BookOpen, Sprout, Cog, Music, MoreHorizontal, Loader2, Check, ChevronDown, ChevronUp, HelpCircle } from 'lucide-react';
+import { Plus, Trash2, Upload, Download, Palette, Monitor, Dumbbell, FlaskConical, BookOpen, Sprout, Cog, Music, MoreHorizontal, Loader2, Check, ChevronDown, ChevronUp, HelpCircle, Sparkles } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { downloadTemplate } from '@/lib/templateDownload';
@@ -88,6 +89,8 @@ interface GradeRotationEntry {
 interface Specialist {
   id: string;
   name: string;
+  phone: string;
+  email: string;
   subject: string;
   workingDays: string[];
   planningMinutes: number;
@@ -185,7 +188,7 @@ function parseCSV(text: string): string[][] {
 }
 
 const defaultSpecialist = (subject = 'Art'): Specialist => ({
-  id: crypto.randomUUID(), name: '', subject,
+  id: crypto.randomUUID(), name: '', phone: '', email: '', subject,
   workingDays: [...days], planningMinutes: 45, weeklyPlanningMinutes: 225, planningType: 'during_rotations',
   lunchMinutes: 30, extraMinutes: 0, notes: '',
   twoSchools: false, secondSchoolName: '', usesCart: false,
