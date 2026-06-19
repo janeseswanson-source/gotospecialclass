@@ -339,39 +339,28 @@ const CoordinatorPrep = () => {
 
             <div className="space-y-2">
               <Label>Specialist scheduling style</Label>
-              <RadioGroup value={state.grade_preference} onValueChange={(v) => set('grade_preference', v)} className="gap-2">
+              <RadioGroup value={state.grade_preference} onValueChange={(v) => set('grade_preference', v)} className="gap-3">
                 <label className="flex items-start gap-2 text-sm cursor-pointer">
                   <RadioGroupItem value="keep_together" className="mt-0.5" />
                   <span><strong>Keep grades together as much as possible</strong> — minimize the spread across the day.</span>
                 </label>
                 <label className="flex items-start gap-2 text-sm cursor-pointer">
                   <RadioGroupItem value="waterfall" className="mt-0.5" />
-                  <span><strong>Waterfall</strong> — go K → 5 in order each day.</span>
+                  <span>
+                    <strong>Waterfall</strong> — same grade, same day, totally different lesson days in each time block
+                    <span className="block text-xs text-muted-foreground mt-1">
+                      e.g. Period 1 = 3A intro, Period 3 = 3B mid-unit, Period 5 = 3C wrap-up.
+                    </span>
+                  </span>
+                </label>
+                <label className="flex items-start gap-2 text-sm cursor-pointer">
+                  <RadioGroupItem value="fixed_sequence" className="mt-0.5" />
+                  <span><strong>Fixed Daily Sequence</strong> — go K → 5 in order each day.</span>
                 </label>
               </RadioGroup>
             </div>
-
-            <div className="space-y-2">
-              <Label>Day preference for specialists</Label>
-              <div className="flex flex-wrap gap-3">
-                {DAYS.map(d => (
-                  <label key={d} className="flex items-center gap-2 text-sm cursor-pointer">
-                    <Checkbox checked={state.day_preference.includes(d)} onCheckedChange={() => toggleDay(d)} />
-                    {d}
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>AM / PM preference</Label>
-              <RadioGroup value={state.am_pm_preference} onValueChange={(v) => set('am_pm_preference', v)} className="flex gap-6">
-                <label className="flex items-center gap-2 text-sm cursor-pointer"><RadioGroupItem value="AM" /> AM</label>
-                <label className="flex items-center gap-2 text-sm cursor-pointer"><RadioGroupItem value="PM" /> PM</label>
-                <label className="flex items-center gap-2 text-sm cursor-pointer"><RadioGroupItem value="none" /> No preference</label>
-              </RadioGroup>
-            </div>
           </section>
+
 
           {/* Specialist Specifics */}
           <section id="specialists" className="rounded-xl border border-border bg-card p-6 space-y-4">
