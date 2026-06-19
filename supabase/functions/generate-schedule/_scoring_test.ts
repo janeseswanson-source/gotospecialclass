@@ -158,7 +158,7 @@ Deno.test("scoreSchedule: full-week coverage uses real specialist working days",
 });
 
 Deno.test("scoreSchedule: class_repeats penalises a class seeing the same specialist twice", () => {
-  // One class (t1) visits specialist s1 three times → 2 repeats → −16.
+  // One class (t1) visits specialist s1 three times → 2 repeats × −25 = −50.
   const repeated: ScoreableResult = {
     blocks: [
       block({ teacher_id: "t1", specialist_id: "s1", day_of_week: "Mon" }),
@@ -168,7 +168,7 @@ Deno.test("scoreSchedule: class_repeats penalises a class seeing the same specia
     warnings: [],
     preferenceViolations: [],
   };
-  assertEquals(scoreSchedule(repeated, baseInput).breakdown.class_repeats, -16);
+  assertEquals(scoreSchedule(repeated, baseInput).breakdown.class_repeats, -50);
 
   // Distinct specialists → no penalty.
   const distinct: ScoreableResult = {
