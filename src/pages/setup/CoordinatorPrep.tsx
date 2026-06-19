@@ -21,6 +21,8 @@ interface PrepState {
   district_calendar_url: string;
   early_release_day: string;
   early_release_end_time: string;
+  teacher_union_url: string;
+  teacher_contract_url: string;
   grade_preference: string;
   day_preference: string[];
   am_pm_preference: string;
@@ -31,6 +33,8 @@ interface PrepState {
   custom_grade_prefs: string;
   mostly_monday_holidays: boolean | null;
   holiday_notes: string;
+  calendar_file_path: string;
+  calendar_file_name: string;
   has_special_rotation: boolean | null;
   special_rotation_notes: string;
 }
@@ -40,6 +44,8 @@ const empty: PrepState = {
   district_calendar_url: '',
   early_release_day: '',
   early_release_end_time: '',
+  teacher_union_url: '',
+  teacher_contract_url: '',
   grade_preference: '',
   day_preference: [],
   am_pm_preference: '',
@@ -50,17 +56,21 @@ const empty: PrepState = {
   custom_grade_prefs: '',
   mostly_monday_holidays: null,
   holiday_notes: '',
+  calendar_file_path: '',
+  calendar_file_name: '',
   has_special_rotation: null,
   special_rotation_notes: '',
 };
 
 const SECTIONS = [
   { id: 'school-info', label: 'School Info' },
+  { id: 'teacher-links', label: 'Teacher Links' },
   { id: 'schedule-prefs', label: 'Schedule Preferences' },
   { id: 'specialists', label: 'Specialist Specifics' },
-  { id: 'calendar', label: 'Calendar & Holidays' },
+  { id: 'calendar', label: 'Calendar' },
   { id: 'rotations', label: 'Special Rotations' },
 ];
+
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
@@ -78,14 +88,15 @@ function buildRows(p: PrepState, schoolName?: string): PrepRow[] {
     { question: 'District calendar URL', answer: p.district_calendar_url },
     { question: 'Weekly early-release day', answer: p.early_release_day || 'None' },
     { question: 'Early-release end time', answer: p.early_release_end_time },
+    { question: 'Teacher union link', answer: p.teacher_union_url },
+    { question: 'Teacher contract link', answer: p.teacher_contract_url },
     { question: 'Specialist scheduling style', answer: schedulingStyleLabel(p.grade_preference) },
     { question: 'How many specialist teachers?', answer: p.specialist_count == null ? '' : String(p.specialist_count) },
     { question: 'Specialists using a teaching cart', answer: p.cart_users },
     { question: 'Specialists at two schools', answer: p.two_school_users },
     { question: 'Part-time specialists (with days)', answer: p.part_time_users },
     { question: 'Specialists with custom grade preferences', answer: p.custom_grade_prefs },
-    { question: 'Are most holidays on Mondays?', answer: p.mostly_monday_holidays == null ? '' : p.mostly_monday_holidays ? 'Yes' : 'No' },
-    { question: 'Other notes about holidays / waiver / PD days', answer: p.holiday_notes },
+    { question: 'Calendar attached', answer: p.calendar_file_name || 'Not uploaded' },
     { question: 'Special additional rotation (PLUS)?', answer: p.has_special_rotation == null ? '' : p.has_special_rotation ? 'Yes' : 'No' },
     { question: 'PLUS rotation details (days, time, grades)', answer: p.special_rotation_notes },
   ];
@@ -119,6 +130,8 @@ const CoordinatorPrep = () => {
           district_calendar_url: data.district_calendar_url ?? '',
           early_release_day: data.early_release_day ?? '',
           early_release_end_time: data.early_release_end_time ?? '',
+          teacher_union_url: (data as any).teacher_union_url ?? '',
+          teacher_contract_url: (data as any).teacher_contract_url ?? '',
           grade_preference: data.grade_preference ?? '',
           day_preference: data.day_preference ?? [],
           am_pm_preference: data.am_pm_preference ?? '',
@@ -129,6 +142,8 @@ const CoordinatorPrep = () => {
           custom_grade_prefs: data.custom_grade_prefs ?? '',
           mostly_monday_holidays: data.mostly_monday_holidays,
           holiday_notes: data.holiday_notes ?? '',
+          calendar_file_path: (data as any).calendar_file_path ?? '',
+          calendar_file_name: (data as any).calendar_file_name ?? '',
           has_special_rotation: data.has_special_rotation,
           special_rotation_notes: data.special_rotation_notes ?? '',
         });
@@ -155,6 +170,8 @@ const CoordinatorPrep = () => {
         district_calendar_url: s.district_calendar_url || null,
         early_release_day: s.early_release_day || null,
         early_release_end_time: s.early_release_end_time || null,
+        teacher_union_url: s.teacher_union_url || null,
+        teacher_contract_url: s.teacher_contract_url || null,
         grade_preference: s.grade_preference || null,
         day_preference: s.day_preference,
         am_pm_preference: s.am_pm_preference || null,
@@ -165,6 +182,8 @@ const CoordinatorPrep = () => {
         custom_grade_prefs: s.custom_grade_prefs || null,
         mostly_monday_holidays: s.mostly_monday_holidays,
         holiday_notes: s.holiday_notes || null,
+        calendar_file_path: s.calendar_file_path || null,
+        calendar_file_name: s.calendar_file_name || null,
         has_special_rotation: s.has_special_rotation,
         special_rotation_notes: s.special_rotation_notes || null,
       };
@@ -333,6 +352,27 @@ const CoordinatorPrep = () => {
             </div>
           </section>
 
+          {/* Teacher Links */}
+          <section id="teacher-links" className="rounded-xl border border-border bg-card p-6 space-y-4">
+            <h2 className="font-semibold text-card-foreground">Teacher Links <span className="text-xs font-normal text-muted-foreground ml-1">(optional)</span></h2>
+            <p className="text-sm text-muted-foreground">
+              Handy references for contract-driven scheduling rules. We don't share these — they just live on your prep sheet.
+            </p>
+
+            <div className="space-y-2">
+              <Label htmlFor="union-url">Teacher union link</Label>
+              <Input id="union-url" placeholder="https://localunion.org"
+                value={state.teacher_union_url} onChange={(e) => set('teacher_union_url', e.target.value)} />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="contract-url">Teacher contract link</Label>
+              <Input id="contract-url" placeholder="https://district.org/contract.pdf"
+                value={state.teacher_contract_url} onChange={(e) => set('teacher_contract_url', e.target.value)} />
+            </div>
+          </section>
+
+
           {/* Schedule Preferences */}
           <section id="schedule-prefs" className="rounded-xl border border-border bg-card p-6 space-y-4">
             <h2 className="font-semibold text-card-foreground">Schedule Preferences</h2>
@@ -399,28 +439,22 @@ const CoordinatorPrep = () => {
             />
           </section>
 
-          {/* Calendar & Holidays */}
+          {/* Calendar */}
           <section id="calendar" className="rounded-xl border border-border bg-card p-6 space-y-4">
-            <h2 className="font-semibold text-card-foreground">Calendar & Holidays</h2>
-
-            <div className="space-y-2">
-              <Label>Are most holidays on Mondays?</Label>
-              <RadioGroup
-                value={state.mostly_monday_holidays == null ? '' : state.mostly_monday_holidays ? 'yes' : 'no'}
-                onValueChange={(v) => set('mostly_monday_holidays', v === 'yes')}
-                className="flex gap-6"
-              >
-                <label className="flex items-center gap-2 text-sm cursor-pointer"><RadioGroupItem value="yes" /> Yes</label>
-                <label className="flex items-center gap-2 text-sm cursor-pointer"><RadioGroupItem value="no" /> No</label>
-              </RadioGroup>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="hol-notes">Other notes about holidays / waiver days / PD days</Label>
-              <Textarea id="hol-notes" rows={3}
-                value={state.holiday_notes} onChange={(e) => set('holiday_notes', e.target.value)} />
-            </div>
+            <h2 className="font-semibold text-card-foreground">Calendar</h2>
+            <p className="text-sm text-muted-foreground">
+              Attach your district calendar (PDF or image). We'll pull holidays and special days from it during the Setup Wizard's Calendar step.
+            </p>
+            <CalendarAttach
+              schoolId={selectedSchoolId}
+              filePath={state.calendar_file_path}
+              fileName={state.calendar_file_name}
+              onChange={(path, name) => {
+                setState(prev => ({ ...prev, calendar_file_path: path, calendar_file_name: name }));
+              }}
+            />
           </section>
+
 
           {/* Special Rotations */}
           <section id="rotations" className="rounded-xl border border-border bg-card p-6 space-y-4">
@@ -478,6 +512,82 @@ const PrepCheckbox = ({ label, placeholder, value, onChange }: {
       {open && (
         <Textarea rows={2} placeholder={placeholder}
           value={value} onChange={(e) => onChange(e.target.value)} />
+      )}
+    </div>
+  );
+};
+
+const CalendarAttach = ({ schoolId, filePath, fileName, onChange }: {
+  schoolId: string | null;
+  filePath: string;
+  fileName: string;
+  onChange: (path: string, name: string) => void;
+}) => {
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = async (file: File | null) => {
+    if (!file) return;
+    if (!schoolId) {
+      toast.error('Pick a school first.');
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      toast.error('File too large. Max 20 MB.');
+      return;
+    }
+    setUploading(true);
+    try {
+      const path = `${schoolId}/prep_${Date.now()}_${file.name}`;
+      const { error } = await supabase.storage.from('calendar-uploads').upload(path, file);
+      if (error) throw error;
+      onChange(path, file.name);
+      toast.success('Calendar attached');
+    } catch (e) {
+      console.error('[CalendarAttach]', e);
+      toast.error("Couldn't upload — try again.");
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
+  const handleRemove = async () => {
+    if (filePath) {
+      await supabase.storage.from('calendar-uploads').remove([filePath]).catch(() => {});
+    }
+    onChange('', '');
+  };
+
+  if (filePath) {
+    return (
+      <div className="flex items-center gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm">
+        <FileText className="h-4 w-4 text-primary shrink-0" />
+        <span className="truncate flex-1" title={fileName}>{fileName || 'Calendar attached'}</span>
+        <Button variant="ghost" size="sm" onClick={handleRemove}>Remove</Button>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept="application/pdf,image/*"
+        className="hidden"
+        onChange={(e) => handleFile(e.target.files?.[0] ?? null)}
+      />
+      <Button
+        variant="outline"
+        onClick={() => inputRef.current?.click()}
+        disabled={uploading || !schoolId}
+      >
+        <Download className="h-4 w-4 mr-2 rotate-180" />
+        {uploading ? 'Uploading…' : 'Attach calendar'}
+      </Button>
+      {!schoolId && (
+        <p className="text-xs text-muted-foreground mt-2">Pick a school above to enable upload.</p>
       )}
     </div>
   );

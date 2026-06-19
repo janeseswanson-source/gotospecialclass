@@ -327,6 +327,8 @@ export type Database = {
       coordinator_prep: {
         Row: {
           am_pm_preference: string | null
+          calendar_file_name: string | null
+          calendar_file_path: string | null
           cart_users: string | null
           created_at: string
           custom_grade_prefs: string | null
@@ -345,12 +347,16 @@ export type Database = {
           school_site_url: string | null
           special_rotation_notes: string | null
           specialist_count: number | null
+          teacher_contract_url: string | null
+          teacher_union_url: string | null
           two_school_users: string | null
           updated_at: string
           workspace_id: string
         }
         Insert: {
           am_pm_preference?: string | null
+          calendar_file_name?: string | null
+          calendar_file_path?: string | null
           cart_users?: string | null
           created_at?: string
           custom_grade_prefs?: string | null
@@ -369,12 +375,16 @@ export type Database = {
           school_site_url?: string | null
           special_rotation_notes?: string | null
           specialist_count?: number | null
+          teacher_contract_url?: string | null
+          teacher_union_url?: string | null
           two_school_users?: string | null
           updated_at?: string
           workspace_id: string
         }
         Update: {
           am_pm_preference?: string | null
+          calendar_file_name?: string | null
+          calendar_file_path?: string | null
           cart_users?: string | null
           created_at?: string
           custom_grade_prefs?: string | null
@@ -393,6 +403,8 @@ export type Database = {
           school_site_url?: string | null
           special_rotation_notes?: string | null
           specialist_count?: number | null
+          teacher_contract_url?: string | null
+          teacher_union_url?: string | null
           two_school_users?: string | null
           updated_at?: string
           workspace_id?: string

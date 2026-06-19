@@ -1,41 +1,39 @@
-# Coordinator Prep — Feedback Fixes
+# Coordinator Prep — Calendar simplification + Teacher Links section
 
-Three small changes to `src/pages/setup/CoordinatorPrep.tsx` based on your sticky-note annotations.
+## 1. Add "Teacher Links" section after School Info
+**Feedback:** "ADD A SECTION ON TEACHER Union Link and Teacher CONTRACT OPTIONAL LINKs after school info."
 
-## 1. Active section indicator on the left rail
-**Feedback:** "Keep the light on when at the area. Maybe add a triangle to show it as well."
+New collapsible section between **School Info** and **Schedule Preferences** in the left rail.
 
-Today the left-rail buttons highlight on hover only — no persistent "you are here" state. Add scroll-spy so the section the user is currently viewing stays highlighted and gets a small triangle pointer on its right edge.
+- Section id: `teacher-links`, label: **Teacher Links**.
+- Two optional URL inputs:
+  - **Teacher Union Link** (e.g. https://localunion.org)
+  - **Teacher Contract Link** (e.g. https://district.org/contract.pdf)
+- Both fields are optional and autosave like the rest of the page.
+- Surfaced as two rows in the printable Prep PDF.
 
-- Add an `activeSection` state, default `'school-info'`.
-- Use an `IntersectionObserver` on each `<section id=…>` to set `activeSection` when it enters the upper portion of the viewport.
-- Style the active rail button with the cream/gold accent background, dark navy text, and a right-pointing triangle (▶ via a small absolutely-positioned `border` triangle) so the eye snaps to it.
-- Clicking a rail button still scrolls and immediately marks that section active.
+## 2. Slim down the "Calendar & Holidays" section
+**Feedback:** "This should be just adding the calendar maybe."
 
-## 2. Clarify the "Waterfall" option
-**Feedback:** "Waterfall = a rolling rotation of mismatched lessons" with the Period 1 (3A intro) → Period 3 (3B mid-unit) → Period 5 (3C end) example.
+The District Calendar URL already lives in School Info, so this section currently duplicates that intent with two text questions. Replace the noisy Q&A with one focused action: attach the calendar.
 
-Today: `Waterfall — go K → 5 in order each day.` That description is misleading — Waterfall actually means same grade, different lesson days across each time block.
+- Rename section to **Calendar** (drop "& Holidays") with id `calendar`.
+- **Remove** the "Are most holidays on Mondays?" radio and the "Other notes about holidays / waiver / PD days" textarea from the UI and the PDF.
+- Add **Upload calendar (PDF or image)** — a single file picker that stores the file in the existing Lovable Cloud storage bucket used by Calendar Upload elsewhere in the wizard, plus shows the file name + a Remove button after upload.
+- Keep a small helper line: "We'll pull holidays from this calendar during setup." linking to the wizard's Calendar Upload step.
 
-- Rewrite the Waterfall radio description to: **"Waterfall"** — *same grade, same day, totally different lesson days in each time block (e.g. Period 1 = 3A intro, Period 3 = 3B mid-unit, Period 5 = 3C wrap-up).*
-- Add a third option **"Fixed Daily Sequence"** — *go K → 5 in order each day* (this is what the old "Waterfall" copy actually described — preserving the option, just under the right name).
-- Update the PDF row label mapping in `buildRows` to match the three options.
-
-## 3. Remove global Day / AM-PM preference from Schedule Preferences
-**Feedback:** "REMOVE as this maybe a feature of each specialist not all."
-
-The "Day preference for specialists" and "AM / PM preference" controls under Schedule Preferences treat all specialists as one. These already live per-specialist in the Specialists step of the wizard.
-
-- Remove both controls from the Schedule Preferences section.
-- Remove their rows from the PDF (`Day preference for specialists`, `AM / PM preference` in `buildRows`).
-- Leave the underlying `day_preference` and `am_pm_preference` columns alone (no migration) so existing rows stay intact; the page just stops reading/writing them.
+Existing DB columns `mostly_monday_holidays` and `holiday_notes` stay in the table (no migration to drop them) so old rows are preserved — the page just stops reading/writing them.
 
 ## Technical notes
-- File: `src/pages/setup/CoordinatorPrep.tsx` only (plus its PDF doc `src/pdf/CoordinatorPrep.tsx` if `PrepRow` shape changes — it won't; we just drop rows).
-- No DB schema change. No new dependencies. No changes to wizard/generator code.
-- Triangle indicator: pure CSS via Tailwind (`after:` pseudo with border tricks) — no new icon import needed.
+- **DB migration** on `public.coordinator_prep`:
+  - Add `teacher_union_url text`
+  - Add `teacher_contract_url text`
+  - Add `calendar_file_path text` (storage object path)
+- **File upload**: reuse the existing storage bucket already used by `StepCalendarUpload` (will confirm bucket name when implementing — likely `school-calendars` or similar; will read `useCalendarUpload` to match).
+- **Files touched**: `src/pages/setup/CoordinatorPrep.tsx` only on the UI side (plus the migration). No changes to wizard, generator, or other pages.
+- **PDF**: `buildRows` gets two new rows for the teacher links; the two holiday rows are removed.
 
 ## Out of scope
-- Per-specialist day/AM-PM editing UI (already exists in StepSpecialists).
-- Visual redesign of the rail beyond the active state.
-- Wiring the new "Fixed Daily Sequence" choice into the generator (it can read the same `grade_preference` column with the new value; generator-side handling is a follow-up if you confirm semantics).
+- Auto-parsing the uploaded calendar (that already happens in the wizard's Calendar Upload step).
+- Migrating data out of the deprecated `mostly_monday_holidays` / `holiday_notes` columns.
+- Restyling the section cards.
