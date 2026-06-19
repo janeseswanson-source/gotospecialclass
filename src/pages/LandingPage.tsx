@@ -39,6 +39,7 @@ const LandingPage = () => {
       <section className="relative overflow-hidden py-24 sm:py-32">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5" />
         <div className="relative mx-auto max-w-4xl px-6 text-center">
+          <img src={badge} alt="Specialist Ops! Class Scheduler badge" className="mx-auto mb-6 h-28 w-28 sm:h-32 sm:w-32 drop-shadow-lg" />
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-1.5 text-xs font-medium text-muted-foreground">
             <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
             Built for Grades K–6 Specials Coordinators
