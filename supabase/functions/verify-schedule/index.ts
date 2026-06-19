@@ -215,10 +215,11 @@ Respond ONLY with valid JSON:
     }
 
     if (!verifyPlan) {
-      return json(200, { quality_score: null, issues_found: 0, summary: null, applied: 0 });
+      return json(200, { quality_score: rubricScore, issues_found: 0, summary: null, applied: 0 });
     }
 
-    const qualityScore = typeof verifyPlan.quality_score === "number" ? verifyPlan.quality_score : null;
+    // D: ignore any AI-provided score — use the deterministic rubric score.
+    const qualityScore = rubricScore;
     const issues: any[] = Array.isArray(verifyPlan.issues_found) ? verifyPlan.issues_found : [];
     const summary = verifyPlan.summary ?? null;
 
