@@ -82,6 +82,7 @@ const App = () => (
                   <Route path="coordinator-prep" element={<CoordinatorPrep />} />
                   <Route path="prep" element={<GatedRoute><PrepPage /></GatedRoute>} />
                   <Route path="schedule" element={<GatedRoute><MasterSchedulePage /></GatedRoute>} />
+                  <Route path="admin-view" element={<GatedRoute><MasterAdminViewPage /></GatedRoute>} />
                   <Route path="planner" element={<GatedRoute><SpecialistPlannerPage /></GatedRoute>} />
                   <Route path="lesson-planner" element={<GatedRoute><LessonPlannerPage /></GatedRoute>} />
                   <Route path="exports" element={<GatedRoute><ExportsPage /></GatedRoute>} />
