@@ -246,6 +246,8 @@ const StepSpecialists = () => {
         setSpecialists(dbData.map((s: any) => ({
           id: s.id,
           name: s.name,
+          phone: (s as any).phone || '',
+          email: (s as any).email || '',
           subject: s.subject,
           workingDays: s.working_days || [...days],
           planningMinutes: s.planning_minutes ?? 45,
@@ -320,6 +322,8 @@ const StepSpecialists = () => {
         id: s.id,
         school_id: schoolId,
         name: s.name,
+        phone: s.phone || null,
+        email: s.email || null,
         subject: s.subject,
         working_days: s.workingDays,
         planning_minutes: s.planningMinutes,
