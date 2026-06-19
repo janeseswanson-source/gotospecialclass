@@ -140,6 +140,14 @@ export default function ExportsPage() {
               disabled={!hasSchedule}
               onExport={() => setPlannerOpen(true)}
             />
+            <ExportCard
+              title="Master Admin Workbook (XLSX)"
+              description="7-sheet workbook: Master Admin View grid + Schools, Specialists, Schedule Blocks, Rotations, Classrooms, PLUS Rotations."
+              icon={CsvIcon}
+              format="XLSX"
+              disabled={false}
+              onExport={exportMasterAdminWorkbook}
+            />
           </div>
         )}
       </div>
