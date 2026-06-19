@@ -12,7 +12,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Loader2, ChevronDown, Check, Sparkles, Users2 } from 'lucide-react';
+import { Loader2, ChevronDown, Check, Sparkles, Users2, Coffee, ListOrdered } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 
@@ -142,12 +142,30 @@ const StepSchoolInfo = () => {
           .single();
         if (!error && newSchool) setSchoolId(newSchool.id);
       }
+
+      // Mirror Daily sequence selection into coordinator_prep so the prep sheet stays in sync.
+      if (data.gradePreference && workspaceIdRef.current) {
+        const targetSchoolId = schoolId;
+        let q = supabase.from('coordinator_prep').select('id').eq('workspace_id', workspaceIdRef.current);
+        q = targetSchoolId ? q.eq('school_id', targetSchoolId) : q.is('school_id', null);
+        const { data: existingPrep } = await q.maybeSingle();
+        if (existingPrep?.id) {
+          await supabase.from('coordinator_prep').update({ grade_preference: data.gradePreference } as any).eq('id', existingPrep.id);
+        } else {
+          await supabase.from('coordinator_prep').insert({
+            workspace_id: workspaceIdRef.current,
+            school_id: targetSchoolId,
+            grade_preference: data.gradePreference,
+          } as any);
+        }
+      }
+
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
     } catch {
       setSaveStatus('idle');
     }
-  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, schoolId]);
+  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, data.gradePreference, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, schoolId]);
 
   useFlushOnUnmount(saveTimer, () => { if (isLoaded.current) autoSave(); });
 
@@ -369,6 +387,8 @@ const StepSchoolInfo = () => {
           <Sparkles className="h-4 w-4 text-primary" />
           <h3 className="text-sm font-semibold text-foreground">Scheduling preferences</h3>
         </div>
+
+        {/* Row 1 — keep grades together */}
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
@@ -381,18 +401,23 @@ const StepSchoolInfo = () => {
           </div>
           <Switch checked={keepGradesTogether} onCheckedChange={setKeepGradesTogether} />
         </div>
+
+        {/* Row 2 — Open time slot (was: Suggest extra PLT) */}
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
-            <FieldLabel className="text-sm font-medium" tooltip="When feasible, the AI will suggest an additional Planning/Learning Time block so teachers get more prep.">
-              Suggest extra PLT when feasible
-            </FieldLabel>
-            <p className="text-xs text-muted-foreground">AI looks for a common free slot and proposes one extra prep block per week.</p>
+            <div className="flex items-center gap-2">
+              <Coffee className="h-4 w-4 text-muted-foreground" />
+              <FieldLabel className="text-sm font-medium" tooltip="A shared free block in the week — used by the coordinator to discuss make-up time (e.g. lunch clubs counted toward instructional minutes).">
+                Open time slot
+              </FieldLabel>
+            </div>
+            <p className="text-xs text-muted-foreground">A common free slot per week. The coordinator uses it to track make-up teaching minutes (e.g. lunch clubs).</p>
           </div>
           <Switch checked={suggestExtraPlt} onCheckedChange={setSuggestExtraPlt} />
         </div>
         {suggestExtraPlt && (
-          <div className="space-y-2">
-            <FieldLabel className="text-xs" tooltip="Target additional planning minutes per week to aim for">Target extra minutes / week</FieldLabel>
+          <div className="space-y-2 pl-6">
+            <FieldLabel className="text-xs" tooltip="Target free minutes per week to reserve for make-up teaching">Target minutes / week</FieldLabel>
             <Input
               type="number"
               className="h-9 max-w-[160px]"
@@ -402,6 +427,45 @@ const StepSchoolInfo = () => {
             />
           </div>
         )}
+
+        {/* Row 3 — Daily sequence */}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <ListOrdered className="h-4 w-4 text-muted-foreground" />
+            <FieldLabel className="text-sm font-medium" tooltip="How the scheduler orders grades across the day.">
+              Daily sequence
+            </FieldLabel>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {[
+              { v: 'keep_together', label: 'Keep grades together' },
+              { v: 'waterfall', label: 'Waterfall' },
+              { v: 'fixed_sequence', label: 'Fixed K → 5' },
+            ].map(opt => {
+              const active = data.gradePreference === opt.v;
+              return (
+                <button
+                  key={opt.v}
+                  type="button"
+                  onClick={() => updateData({ gradePreference: opt.v as any })}
+                  className={cn(
+                    'rounded-full border px-3 py-1.5 text-xs font-medium transition-colors',
+                    active
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-border bg-background text-muted-foreground hover:border-primary/40',
+                  )}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {data.gradePreference === 'waterfall' && 'Same grade, different blocks/days — e.g. 3A intro Period 1, 3B mid-unit Period 3.'}
+            {data.gradePreference === 'fixed_sequence' && 'Walk K → 5 in order every day.'}
+            {(data.gradePreference === 'keep_together' || !data.gradePreference) && 'Minimize the spread of each grade across the day.'}
+          </p>
+        </div>
       </div>
 
       <div className="mt-4 space-y-2">

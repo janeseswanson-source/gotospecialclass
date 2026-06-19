@@ -47,7 +47,7 @@ export interface SchoolSetupData {
   defaultAmPmPreference: string;
   defaultDayPreference: string;
   makeupPolicy: string;
-  gradePreference: 'keep_together' | 'waterfall' | '';
+  gradePreference: 'keep_together' | 'waterfall' | 'fixed_sequence' | '';
 }
 
 export interface PrefilledTeacher {
@@ -167,8 +167,8 @@ export const SetupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           const seed: Partial<SchoolSetupData> = {};
           if (!prev.earlyReleaseDay && prep.early_release_day) seed.earlyReleaseDay = prep.early_release_day;
           if (!prev.earlyReleaseEndTime && prep.early_release_end_time) seed.earlyReleaseEndTime = prep.early_release_end_time;
-          if (!prev.gradePreference && (prep.grade_preference === 'keep_together' || prep.grade_preference === 'waterfall')) {
-            seed.gradePreference = prep.grade_preference;
+          if (!prev.gradePreference && (prep.grade_preference === 'keep_together' || prep.grade_preference === 'waterfall' || prep.grade_preference === 'fixed_sequence')) {
+            seed.gradePreference = prep.grade_preference as 'keep_together' | 'waterfall' | 'fixed_sequence';
           }
           if (!prev.defaultAmPmPreference && prep.am_pm_preference) seed.defaultAmPmPreference = prep.am_pm_preference;
           if (!prev.defaultDayPreference && Array.isArray(prep.day_preference) && prep.day_preference.length) {
