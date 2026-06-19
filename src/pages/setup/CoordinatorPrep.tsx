@@ -418,28 +418,22 @@ const CoordinatorPrep = () => {
             />
           </section>
 
-          {/* Calendar & Holidays */}
+          {/* Calendar */}
           <section id="calendar" className="rounded-xl border border-border bg-card p-6 space-y-4">
-            <h2 className="font-semibold text-card-foreground">Calendar & Holidays</h2>
-
-            <div className="space-y-2">
-              <Label>Are most holidays on Mondays?</Label>
-              <RadioGroup
-                value={state.mostly_monday_holidays == null ? '' : state.mostly_monday_holidays ? 'yes' : 'no'}
-                onValueChange={(v) => set('mostly_monday_holidays', v === 'yes')}
-                className="flex gap-6"
-              >
-                <label className="flex items-center gap-2 text-sm cursor-pointer"><RadioGroupItem value="yes" /> Yes</label>
-                <label className="flex items-center gap-2 text-sm cursor-pointer"><RadioGroupItem value="no" /> No</label>
-              </RadioGroup>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="hol-notes">Other notes about holidays / waiver days / PD days</Label>
-              <Textarea id="hol-notes" rows={3}
-                value={state.holiday_notes} onChange={(e) => set('holiday_notes', e.target.value)} />
-            </div>
+            <h2 className="font-semibold text-card-foreground">Calendar</h2>
+            <p className="text-sm text-muted-foreground">
+              Attach your district calendar (PDF or image). We'll pull holidays and special days from it during the Setup Wizard's Calendar step.
+            </p>
+            <CalendarAttach
+              schoolId={selectedSchoolId}
+              filePath={state.calendar_file_path}
+              fileName={state.calendar_file_name}
+              onChange={(path, name) => {
+                setState(prev => ({ ...prev, calendar_file_path: path, calendar_file_name: name }));
+              }}
+            />
           </section>
+
 
           {/* Special Rotations */}
           <section id="rotations" className="rounded-xl border border-border bg-card p-6 space-y-4">
