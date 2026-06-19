@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { FieldLabel } from '@/components/ui/field-label';
 import { Wand2, Download, Upload, CheckCircle2, FileText, AlertTriangle, XCircle, Info, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { downloadTemplate } from '@/lib/templateDownload';
+
 import { supabase } from '@/integrations/supabase/client';
 import * as XLSX from 'xlsx';
 
