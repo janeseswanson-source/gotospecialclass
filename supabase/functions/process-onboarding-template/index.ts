@@ -40,14 +40,17 @@ serve(async (req) => {
       .map((r: string[]) => `Q: ${r[0]?.trim() || ''}\nA: ${r[1]?.trim() || '[NOT ANSWERED]'}`)
       .join("\n\n");
 
-    const systemPrompt = `You are a school onboarding data extractor. You receive a questionnaire with questions and answers from a school coordinator. Extract ALL available information into structured data using the provided tool. Be thorough:
+    const systemPrompt = `You are a school onboarding data extractor. You receive a "Coordinator Prep — Intake Sheet" with questions and answers from a school coordinator. Extract ALL available information into structured data using the provided tool. Be thorough and tolerant of free-form answers:
 
-- For admin rotation, parse natural language like "Tuesday (4,2,K) and Thursday (5,3,1)" into structured entries with day and grade arrays.
-- For specialists, extract names, subjects, cart usage, two-school status, part-time status, and working days from the answers.
-- For conflict strategies, map answers to these strategy keys: ab_week, aa_bb_week, quick_30, big_group, makeup, lunch_clubs, event_planning, extra_rotation. Order them by the priority implied in the questionnaire.
-- For grade preference, determine if the school prefers "keep_together" or "waterfall" scheduling.
-- Flag any unanswered or ambiguous questions as warnings.
-- If an answer references an external file (e.g. "see the file on PLC schedule"), flag it as a warning that additional data is needed.`;
+- "School site URL" → school_info.website. "District calendar URL" → school_info.calendar_url.
+- "Weekly early-release day" → school_info.early_release_day (e.g. "Wednesday"). "Early-release end time" → school_info.early_release_end_time (HH:MM 24h).
+- "Day preference for specialists" → school_info.default_day_preference. "AM / PM preference" → school_info.default_am_pm_preference.
+- "Specialist scheduling preference" → grade_preference ("keep_together" if grades stay together, "waterfall" if grades cascade).
+- "How many specialist teachers?", "Specialists using a teaching cart", "Specialists at two schools", "Part-time specialists (with days)", "Specialists with custom grade preferences" → build the specialists array. Each named or counted specialist becomes an entry with subject, uses_cart, two_schools, is_part_time, working_days, grade_preference as appropriate.
+- "Are most holidays on Mondays?" and "Other notes about holidays / waiver / PD days" → makeup_policy (concise summary).
+- "Special additional rotation (PLUS)?" and "PLUS rotation details (days, time, grades)" → parse into admin_rotation entries (one per day) with day, grades, start_time, end_time, notes including "PLUS".
+- For conflict strategies, map any mentioned approaches to these keys: ab_week, aa_bb_week, quick_30, big_group, makeup, lunch_clubs, event_planning, extra_rotation. Order by stated priority.
+- Flag unanswered, ambiguous, or "see attached" answers as warnings.`;
 
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
