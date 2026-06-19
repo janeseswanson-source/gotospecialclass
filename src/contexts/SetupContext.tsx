@@ -47,7 +47,7 @@ export interface SchoolSetupData {
   defaultAmPmPreference: string;
   defaultDayPreference: string;
   makeupPolicy: string;
-  gradePreference: 'keep_together' | 'waterfall' | '';
+  gradePreference: 'keep_together' | 'waterfall' | 'fixed_sequence' | '';
 }
 
 export interface PrefilledTeacher {
