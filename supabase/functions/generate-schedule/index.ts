@@ -1916,8 +1916,8 @@ function runSimulatedAnnealing(
     );
     if (teachingBlocks.length < 2) break;
 
-    // Choose mutation type: 0 = swap, 1 = move
-    const mutationType = Math.floor(rng() * 2);
+    // Choose mutation type: 0 = swap, 1 = move, 2 = anti-cluster shuffle
+    const mutationType = Math.floor(rng() * 3);
     let candidateBlocks: Block[] | null = null;
 
     if (mutationType === 0) {
