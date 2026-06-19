@@ -1,16 +1,31 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSchool } from '@/contexts/SchoolContext';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Download, Printer, FileSpreadsheet } from 'lucide-react';
+import { Printer, FileSpreadsheet, CalendarPlus } from 'lucide-react';
 import logo from '@/assets/logo.png';
 import { formatTime } from '@/lib/utils';
 import { exportMasterAdminXlsx } from '@/lib/exportMasterAdminXlsx';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const;
+const DAY_SHORT: Record<string, typeof DAYS[number]> = {
+  Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday',
+};
+
+// Stable grade ordering: K, TK, PreK first, then numeric.
+function gradeRank(g: string | null | undefined): number {
+  if (!g) return 999;
+  const u = g.toUpperCase();
+  if (u === 'TK') return -2;
+  if (u === 'PREK' || u === 'PRE-K') return -3;
+  if (u === 'K') return -1;
+  const n = parseInt(g, 10);
+  return Number.isFinite(n) ? n : 998;
+}
 
 type Block = {
   id: string;
@@ -25,8 +40,28 @@ type Block = {
   teacher_id: string | null;
 };
 
+type Rotation = {
+  id: string;
+  school_id: string;
+  specialist_id: string | null;
+  teacher_id: string | null;
+  grade: string | null;
+  week_label: string | null;
+  day_of_week: string | null;
+  slot_index: number;
+  rotation_type: string | null;
+  notes: string | null;
+};
+
 type Specialist = { id: string; name: string; subject: string | null };
 type Teacher = { id: string; name: string; grade: string | null };
+type RecessRow = {
+  id: string;
+  grade_band: string;
+  am_recess_start: string | null; am_recess_end: string | null;
+  lunch_start: string | null; lunch_end: string | null;
+  pm_recess_start: string | null; pm_recess_end: string | null;
+};
 type AdminRot = {
   day: string;
   startTime?: string;
@@ -37,7 +72,7 @@ type AdminRot = {
 };
 
 const isPlanningPrep = (s?: string | null) =>
-  !!s && /planning|prep/i.test(s);
+  !!s && /planning|prep|plc/i.test(s);
 const isRecess = (s?: string | null) => !!s && /recess/i.test(s);
 const isLunch = (s?: string | null) => !!s && /lunch/i.test(s);
 const isDismissal = (s?: string | null) => !!s && /dismiss/i.test(s);
@@ -50,8 +85,10 @@ export default function MasterAdminViewPage() {
   const [loading, setLoading] = useState(true);
   const [school, setSchool] = useState<any | null>(null);
   const [blocks, setBlocks] = useState<Block[]>([]);
+  const [rotations, setRotations] = useState<Rotation[]>([]);
   const [specialists, setSpecialists] = useState<Specialist[]>([]);
   const [teachers, setTeachers] = useState<Teacher[]>([]);
+  const [recess, setRecess] = useState<RecessRow[]>([]);
   const [genId, setGenId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -65,7 +102,7 @@ export default function MasterAdminViewPage() {
 
   async function load() {
     setLoading(true);
-    const [{ data: s }, { data: gen }, { data: sp }, { data: t }] =
+    const [{ data: s }, { data: gen }, { data: sp }, { data: t }, { data: rot }, { data: rc }] =
       await Promise.all([
         supabase.from('schools').select('*').eq('id', selectedSchoolId!).maybeSingle(),
         supabase
@@ -80,10 +117,14 @@ export default function MasterAdminViewPage() {
           .from('classroom_teachers')
           .select('id, name, grade')
           .eq('school_id', selectedSchoolId!),
+        supabase.from('class_rotations').select('*').eq('school_id', selectedSchoolId!),
+        supabase.from('recess_lunch_config').select('*').eq('school_id', selectedSchoolId!),
       ]);
     setSchool(s);
     setSpecialists((sp ?? []) as Specialist[]);
     setTeachers((t ?? []) as Teacher[]);
+    setRotations((rot ?? []) as Rotation[]);
+    setRecess((rc ?? []) as RecessRow[]);
     if (gen?.id) {
       setGenId(gen.id);
       const { data: b } = await supabase
@@ -95,6 +136,7 @@ export default function MasterAdminViewPage() {
       setBlocks((b ?? []) as Block[]);
     } else {
       setBlocks([]);
+      setGenId(null);
     }
     setLoading(false);
   }
@@ -107,51 +149,129 @@ export default function MasterAdminViewPage() {
   const endTime = school?.end_time as string | undefined;
   const adminRotation = (school?.admin_rotation ?? []) as AdminRot[];
 
-  // Build planning & prep cells per day from admin_rotation
-  const planningPerDay: Record<string, AdminRot[]> = {};
+  const specialistById = new Map(specialists.map((s) => [s.id, s]));
+  const teacherById = new Map(teachers.map((t) => [t.id, t]));
+
+  // ── Planning & Prep band (live from class_rotations grouped by day+slot) ──
+  // Falls back to school.admin_rotation labels when class_rotations is empty.
+  const planningPerDay: Record<string, { label: string; weekLabel?: string; pairs: { specialist: string; teacher: string; grade: string; subject: string }[] }[]> = {};
   for (const day of DAYS) planningPerDay[day] = [];
-  for (const ar of adminRotation) {
-    const key = DAYS.find((d) => d.toLowerCase() === (ar.day || '').toLowerCase());
-    if (key) planningPerDay[key].push(ar);
+
+  // Group rotations by long-day name + slot_index. class_rotations stores day_of_week
+  // as 'Mon', 'Tue' etc; normalize to long form.
+  const rotByDaySlot = new Map<string, Rotation[]>();
+  for (const r of rotations) {
+    const dayLong = DAY_SHORT[r.day_of_week as keyof typeof DAY_SHORT] ?? (DAYS.find((d) => d.toLowerCase() === (r.day_of_week ?? '').toLowerCase()) ?? null);
+    if (!dayLong) continue;
+    const key = `${dayLong}|${r.slot_index ?? 0}|${r.week_label ?? ''}`;
+    (rotByDaySlot.get(key) ?? rotByDaySlot.set(key, []).get(key)!).push(r);
   }
 
-  // Specialist rotation rows: group remaining blocks by start_time
+  for (const day of DAYS) {
+    // Find all slot keys for this day, sorted by slot_index.
+    const dayKeys = [...rotByDaySlot.keys()]
+      .filter((k) => k.startsWith(`${day}|`))
+      .sort((a, b) => {
+        const ai = parseInt(a.split('|')[1], 10);
+        const bi = parseInt(b.split('|')[1], 10);
+        return ai - bi;
+      });
+    for (const key of dayKeys) {
+      const slot = rotByDaySlot.get(key)!;
+      const weekLabel = slot[0]?.week_label ?? undefined;
+      const slotIdx = parseInt(key.split('|')[1], 10);
+      const label = `Rotation ${slotIdx + 1}`;
+      const pairs = slot
+        .map((r) => ({
+          specialist: r.specialist_id ? specialistById.get(r.specialist_id)?.name ?? '—' : '—',
+          subject: r.specialist_id ? specialistById.get(r.specialist_id)?.subject ?? '' : '',
+          teacher: r.teacher_id ? teacherById.get(r.teacher_id)?.name ?? '' : '',
+          grade: r.grade ?? '',
+        }))
+        .slice(0, 6);
+      planningPerDay[day].push({ label, weekLabel: weekLabel ?? undefined, pairs });
+    }
+    // Layer in school.admin_rotation labels (the user-defined rotation labels with A/B and times).
+    for (const ar of adminRotation) {
+      if ((ar.day || '').toLowerCase() !== day.toLowerCase()) continue;
+      // Only add a "label-only" entry if class_rotations is empty for this day.
+      if (planningPerDay[day].length === 0) {
+        planningPerDay[day].push({
+          label: ar.rotationLabel || 'Planning Block',
+          weekLabel: ar.weekLabel ?? undefined,
+          pairs: [],
+        });
+      } else if (ar.rotationLabel) {
+        // Replace generic "Rotation N" label with user-defined label if available.
+        const idx = adminRotation.filter((x) => (x.day || '').toLowerCase() === day.toLowerCase()).indexOf(ar);
+        if (planningPerDay[day][idx]) {
+          planningPerDay[day][idx].label = ar.rotationLabel;
+          if (ar.weekLabel) planningPerDay[day][idx].weekLabel = ar.weekLabel;
+        }
+      }
+    }
+  }
+
+  // ── Specialist rotation rows: group by unique time slot, stable-sorted by start time ──
   const rotationBlocks = blocks.filter((b) => !isChrome(b.subject));
   const slotKeys = Array.from(
     new Set(rotationBlocks.map((b) => `${b.start_time}|${b.end_time}`))
   ).sort();
 
-  const chromeBlocks = blocks.filter((b) => isChrome(b.subject) && !isPlanningPrep(b.subject));
-
-  // Group chrome (recess/lunch/dismissal) by their type bucket per day
-  const chromeGrouped = chromeBlocks.reduce<Record<string, Block[]>>((acc, b) => {
-    const key = isRecess(b.subject)
-      ? 'RECESS'
-      : isLunch(b.subject)
-      ? 'LUNCH'
-      : 'DISMISSAL';
-    (acc[key] ??= []).push(b);
-    return acc;
-  }, {});
+  // ── Chrome rows from recess_lunch_config (source of truth) ──
+  // Build per-day windows by union across all grade bands.
+  const chromeForDay = (kind: 'RECESS' | 'LUNCH' | 'DISMISSAL', day: string) => {
+    if (kind === 'DISMISSAL') {
+      // No DB row for dismissal — show school end_time uniformly.
+      return endTime ? [{ label: 'Dismissal', time: formatTime(endTime) }] : [];
+    }
+    const out: { label: string; time: string }[] = [];
+    for (const r of recess) {
+      if (kind === 'RECESS') {
+        if (r.am_recess_start && r.am_recess_end) {
+          out.push({
+            label: r.grade_band === 'all' ? 'AM Recess' : `${r.grade_band} AM`,
+            time: `${formatTime(r.am_recess_start)}–${formatTime(r.am_recess_end)}`,
+          });
+        }
+        if (r.pm_recess_start && r.pm_recess_end) {
+          out.push({
+            label: r.grade_band === 'all' ? 'PM Recess' : `${r.grade_band} PM`,
+            time: `${formatTime(r.pm_recess_start)}–${formatTime(r.pm_recess_end)}`,
+          });
+        }
+      } else if (kind === 'LUNCH') {
+        if (r.lunch_start && r.lunch_end) {
+          out.push({
+            label: r.grade_band === 'all' ? 'Lunch' : `${r.grade_band}`,
+            time: `${formatTime(r.lunch_start)}–${formatTime(r.lunch_end)}`,
+          });
+        }
+      }
+    }
+    // Same content every day unless we layer per-day exceptions later.
+    return out;
+  };
 
   const specialistName = (id: string | null) =>
-    (id && specialists.find((s) => s.id === id)?.name) || '';
+    (id && specialistById.get(id)?.name) || '';
   const specialistSubject = (id: string | null) =>
-    (id && specialists.find((s) => s.id === id)?.subject) || '';
+    (id && specialistById.get(id)?.subject) || '';
   const teacherName = (id: string | null) =>
-    (id && teachers.find((t) => t.id === id)?.name) || '';
+    (id && teacherById.get(id)?.name) || '';
 
   const blocksFor = (day: string, key: string) => {
     const [start, end] = key.split('|');
+    const dayShort = day.slice(0, 3); // Monday -> Mon
     return rotationBlocks
       .filter(
-        (b) => b.day_of_week === day && b.start_time === start && b.end_time === end
+        (b) =>
+          (b.day_of_week === day || b.day_of_week === dayShort) &&
+          b.start_time === start &&
+          b.end_time === end
       )
-      .sort((a, b) => (a.grade ?? '').localeCompare(b.grade ?? ''));
+      .sort((a, b) => gradeRank(a.grade) - gradeRank(b.grade));
   };
-
-  const chromeFor = (day: string, kind: string) =>
-    (chromeGrouped[kind] ?? []).filter((b) => b.day_of_week === day);
 
   async function handleXlsx() {
     if (!selectedSchoolId) return;
@@ -180,6 +300,8 @@ export default function MasterAdminViewPage() {
     );
   }
 
+  const hasAnyData = blocks.length > 0 || rotations.length > 0;
+
   return (
     <div className="space-y-4 animate-fade-in">
       {/* Toolbar (hidden when printing) */}
@@ -191,16 +313,27 @@ export default function MasterAdminViewPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => window.print()}>
+          <Button variant="outline" size="sm" onClick={() => window.print()} disabled={!hasAnyData}>
             <Printer className="h-4 w-4 mr-1.5" /> Print
           </Button>
-          <Button size="sm" onClick={handleXlsx}>
+          <Button size="sm" onClick={handleXlsx} disabled={!hasAnyData}>
             <FileSpreadsheet className="h-4 w-4 mr-1.5" /> Download Master Admin XLSX
           </Button>
         </div>
       </div>
 
-      {/* Planner card */}
+      {!hasAnyData ? (
+        <div className="rounded-xl border-2 border-dashed border-border bg-card p-12 text-center">
+          <CalendarPlus className="h-12 w-12 mx-auto text-muted-foreground mb-3" />
+          <h3 className="text-lg font-semibold text-foreground mb-1">No schedule yet</h3>
+          <p className="text-sm text-muted-foreground mb-4 max-w-md mx-auto">
+            Generate a schedule from the Master Schedule page to populate this branded weekly view.
+          </p>
+          <Button asChild>
+            <Link to="/app/schedule">Go to Master Schedule</Link>
+          </Button>
+        </div>
+      ) : (
       <div
         id="master-admin-print"
         className="rounded-xl border border-border bg-card text-foreground shadow-sm overflow-hidden print:rounded-none print:border-0 print:shadow-none"
@@ -264,33 +397,38 @@ export default function MasterAdminViewPage() {
               {planningPerDay[d].length === 0 ? (
                 <div className="text-muted-foreground italic opacity-60">—</div>
               ) : (
-                planningPerDay[d].map((ar, i) => (
+                planningPerDay[d].map((slot, i) => (
                   <div key={i} className="rounded border border-border/60 bg-background/60 p-1.5">
                     <div className="flex items-center justify-between">
-                      <span className="text-accent font-semibold">
-                        {ar.rotationLabel || `Rotation ${i + 1}`}
-                      </span>
-                      {ar.weekLabel && (
+                      <span className="text-accent font-semibold">{slot.label}</span>
+                      {slot.weekLabel && (
                         <span className="text-[9px] font-bold uppercase rounded bg-accent/20 text-accent px-1.5 py-0.5">
-                          {ar.weekLabel}
+                          {slot.weekLabel}
                         </span>
                       )}
                     </div>
-                    {ar.startTime && ar.endTime && (
-                      <div className="text-muted-foreground">
-                        {formatTime(ar.startTime)} – {formatTime(ar.endTime)}
+                    {slot.pairs.length === 0 ? (
+                      <div className="text-muted-foreground italic mt-1 opacity-70">
+                        No assignments yet
                       </div>
+                    ) : (
+                      <ul className="mt-1 space-y-0.5">
+                        {slot.pairs.map((p, j) => (
+                          <li key={j} className="flex gap-1">
+                            {p.grade && (
+                              <span className="text-primary font-semibold w-6 truncate">
+                                {p.grade}
+                              </span>
+                            )}
+                            <span className="text-foreground truncate flex-1">
+                              {p.subject ? `${p.subject} · ` : ''}
+                              {p.specialist}
+                              {p.teacher ? ` → ${p.teacher.split(' ').slice(-1)[0]}` : ''}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
                     )}
-                    <ul className="mt-1 space-y-0.5">
-                      {specialists.slice(0, 4).map((s) => (
-                        <li key={s.id} className="flex gap-1">
-                          <span className="text-primary font-medium w-12 truncate">
-                            {s.subject ?? ''}
-                          </span>
-                          <span className="text-foreground truncate">{s.name}</span>
-                        </li>
-                      ))}
-                    </ul>
                   </div>
                 ))
               )}
@@ -361,27 +499,23 @@ export default function MasterAdminViewPage() {
 
         {/* Chrome rows: Recess / Lunch / Dismissal */}
         {(['RECESS', 'LUNCH', 'DISMISSAL'] as const).map((kind) => {
-          const anyData = DAYS.some((d) => chromeFor(d, kind).length > 0);
-          if (!anyData) return null;
+          const hasData = DAYS.some((d) => chromeForDay(kind, d).length > 0);
+          if (!hasData) return null;
           return (
             <div key={kind}>
               <div className="bg-muted/70 px-3 py-1 text-[11px] font-semibold text-primary border-b border-border">
                 {kind}
               </div>
-              <div className="grid grid-cols-5 border-b border-border min-h-[60px]">
+              <div className="grid grid-cols-5 border-b border-border min-h-[44px]">
                 {DAYS.map((d) => (
                   <div
                     key={d}
-                    className="border-r last:border-r-0 border-border p-2 text-[11px] space-y-1 bg-muted/30"
+                    className="border-r last:border-r-0 border-border p-2 text-[11px] space-y-0.5 bg-muted/30"
                   >
-                    {chromeFor(d, kind).map((b) => (
-                      <div key={b.id}>
-                        {b.grade && (
-                          <div className="text-foreground font-medium">{b.grade} Graders</div>
-                        )}
-                        <div className="text-muted-foreground">
-                          {formatTime(b.start_time)} – {formatTime(b.end_time)}
-                        </div>
+                    {chromeForDay(kind, d).map((entry, i) => (
+                      <div key={i} className="flex justify-between gap-2">
+                        <span className="text-foreground font-medium truncate">{entry.label}</span>
+                        <span className="text-muted-foreground shrink-0">{entry.time}</span>
                       </div>
                     ))}
                   </div>
@@ -414,6 +548,7 @@ export default function MasterAdminViewPage() {
           </a>
         </div>
       </div>
+      )}
 
       {/* Print styles */}
       <style>{`
