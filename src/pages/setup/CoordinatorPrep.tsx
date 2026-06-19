@@ -129,6 +129,8 @@ const CoordinatorPrep = () => {
           district_calendar_url: data.district_calendar_url ?? '',
           early_release_day: data.early_release_day ?? '',
           early_release_end_time: data.early_release_end_time ?? '',
+          teacher_union_url: (data as any).teacher_union_url ?? '',
+          teacher_contract_url: (data as any).teacher_contract_url ?? '',
           grade_preference: data.grade_preference ?? '',
           day_preference: data.day_preference ?? [],
           am_pm_preference: data.am_pm_preference ?? '',
@@ -139,6 +141,8 @@ const CoordinatorPrep = () => {
           custom_grade_prefs: data.custom_grade_prefs ?? '',
           mostly_monday_holidays: data.mostly_monday_holidays,
           holiday_notes: data.holiday_notes ?? '',
+          calendar_file_path: (data as any).calendar_file_path ?? '',
+          calendar_file_name: (data as any).calendar_file_name ?? '',
           has_special_rotation: data.has_special_rotation,
           special_rotation_notes: data.special_rotation_notes ?? '',
         });
