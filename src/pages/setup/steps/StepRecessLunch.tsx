@@ -605,7 +605,7 @@ interface CompactSectionProps {
   onSetStart: (rowId: string, start: string) => void;
   onUpdate: (rowId: string, patch: Partial<PeriodRow>) => void;
   onRemove: (rowId: string) => void;
-  extraHeader?: React.ReactNode;
+  extraHeader?: ReactNode;
 }
 
 const CompactSection = ({
