@@ -1093,7 +1093,7 @@ const StepSpecialists = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>We couldn't read that file</AlertDialogTitle>
             <AlertDialogDescription>
-              Make sure it's a CSV and matches the template. Download a fresh template?
+              Make sure it's an .xlsx or .csv that matches the template. Download a fresh template?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
