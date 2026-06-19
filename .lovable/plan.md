@@ -1,68 +1,61 @@
 ## Goal
 
-Replace the current CSV specialist template with the user-provided `SpecialistOps_SpecialistTeacher_Template.xlsx`, serve it as the official download, and make the upload flow accept that filled-in `.xlsx` so AI auto-populates every specialist field without re-keying.
+Use the new **Coordinator Prep — Intake Sheet** (from your PDF) as the official Quick Start template in the Setup Wizard. Coordinators download it, fill it in, upload it, and the AI populates the wizard sections.
 
-## New template columns (locked to this layout)
+## What changes
 
-| Col | Field | Maps to |
-|---|---|---|
-| A | Specialist Teacher Name | `name` |
-| B | Phone (Optional) | `phone` *(new optional field, UI-only for now)* |
-| C | Email (Optional) | `email` *(new optional field, UI-only for now)* |
-| D | Specialist Subject | `subject` |
-| E | Location (Room # or other) | `location` |
-| F | Working Days at School | `workingDays` (parsed: `Mon,Tue,Wed,Thu,Fri`, `Mon-Fri`, `MWF`, `All`, blank → all five) |
-| G | Two School Sites? (Yes/No) | `twoSchools` |
-| H | Second Site Name | `secondSchoolName` |
+### 1. New downloadable template
+Generate `public/templates/onboarding_template.xlsx` (replaces existing) as a clean two-column intake sheet matching the PDF exactly:
 
-Fields absent from the new template (planning minutes, lunch minutes, cart, part-time, second-location) keep their existing defaults from `defaultSpecialist()`.
+```text
+Row 1: Title — "Coordinator Prep — Intake Sheet"
+Row 2: Instruction — "Fill this out before the Setup Wizard. Answers will be transferred into the app for quick prefill."
+Row 3: Headers — Ask | Answer
+Rows 4–20: One row per question, mirroring the PDF:
+  - School name
+  - School site URL
+  - District calendar URL
+  - Weekly early-release day
+  - Early-release end time
+  - Specialist scheduling preference
+  - Day preference for specialists
+  - AM / PM preference
+  - How many specialist teachers?
+  - Specialists using a teaching cart
+  - Specialists at two schools
+  - Part-time specialists (with days)
+  - Specialists with custom grade preferences
+  - Are most holidays on Mondays?
+  - Other notes about holidays / waiver / PD days
+  - Special additional rotation (PLUS)?
+  - PLUS rotation details (days, time, grades)
+```
 
-## Changes
+Styled with the brand navy header row, light banded rows, frozen header, and a wide answer column so it prints/edits nicely. A matching PDF (`coordinator_prep_template.pdf`, copied from your upload) is also placed alongside it so coordinators can print and hand-fill.
 
-### 1. Ship the new template file
-- Add `public/templates/specialists_template.xlsx` (copy of the uploaded file).
-- Keep the old `specialists_template.csv` + README on disk for backward compatibility, but stop linking to them.
+### 2. Wizard UI (`StepWelcome.tsx`)
+- Rename the panel from “Quick Start with Template” to **“Quick Start — Coordinator Prep”** with copy explaining the intake-sheet workflow.
+- “Download Template” button serves the new XLSX (default) with a small secondary link to download the print-friendly PDF.
+- “Upload Filled Template” button unchanged — accepts `.xlsx`, `.xls`, `.csv`.
 
-### 2. Download buttons → new XLSX
-In `src/pages/setup/steps/StepSpecialists.tsx`:
-- Change both `downloadTemplate('specialists', '/templates/specialists_template.csv')` calls (lines 572, 996) to `downloadTemplate('specialists', '/templates/specialists_template.xlsx')`.
-- Remove the "Format help" link pointing to the old README; the new sheet has a header row that documents itself.
-- Update button labels: "Quick Update (CSV)" → "Upload Filled Template" and update `accept` to `.xlsx,.xls,.csv` so the existing CSV path still works.
+### 3. AI extraction (`supabase/functions/process-onboarding-template/index.ts`)
+The function already parses Q&A rows + drives Gemini Flash with structured tool-calling. Light updates so the new questions are mapped cleanly:
+- Expand the system prompt with explicit guidance for the new fields: `default_day_preference`, `default_am_pm_preference`, PLUS rotation (mapped into `admin_rotation`), holiday/PD notes (into `makeup_policy`), specialist scheduling preference (into `grade_preference`).
+- Add an optional `plus_rotation` array to the tool schema (day, time, grades, notes) and, in the client, merge it into the existing PLUS-rotation context state alongside `admin_rotation`.
+- Keep all existing field handling so the previous template still works.
 
-### 3. Parse the uploaded `.xlsx`
-- Add `xlsx` (SheetJS) dependency.
-- In `handleCSVUpload` (rename to `handleTemplateUpload`):
-  - Detect extension; for `.xlsx`/`.xls`, read with `XLSX.read(arrayBuffer)`, take the first sheet, convert with `sheet_to_json({ header: 1, defval: '' })`.
-  - Skip the title row (A1) and instruction row (A2); treat row 3 as the header; data starts at row 4. Stop at the footer row (`A19` content begins with "Specialist Ops!").
-  - Reuse the existing column-detection logic (case-insensitive `includes` on header text, e.g. `name`, `subject`, `working days`, `two school`, `second site`, `location`, `phone`, `email`).
-  - Drop fully-empty rows (only the F/G defaults filled with no name + no subject).
-- CSV path stays as-is for the legacy template.
-
-### 4. AI auto-fill fallback
-- After local parsing, if a row has any data but is missing required mappings (no detected `name`/`subject` headers, free-form working days like "Tuesdays and Thursdays", odd subject spellings), POST the raw 2-D array to a new edge function `parse-specialist-template`:
-  - Reuses the existing `process-onboarding-template` pattern (verify user, call Lovable AI Gateway with `google/gemini-2.5-flash`, single tool call).
-  - Tool schema returns `specialists: [{ name, phone, email, subject, location, working_days[], two_schools, second_school_name }]` plus `warnings[]`.
-  - System prompt: "Normalize subject names to one of: Art, Music, PE, Library, STEM, Spanish, Science Lab, Technology, Other. Convert working-days phrases to `Mon|Tue|Wed|Thu|Fri` arrays. Empty cells → omit."
-- Merge AI rows into `setSpecialists` the same way as parsed rows.
-- Show toast: "AI auto-filled N rows from your template."
-
-### 5. New optional `phone` / `email` fields
-- Add `phone?: string` and `email?: string` to the local `Specialist` type and `defaultSpecialist()` so import doesn't drop them.
-- Display them as optional inputs inside the specialist card header (small two-column row under the name). No DB migration in this change — values persist in `specialists.notes` JSON or are ignored on save until a follow-up adds columns; flag this in the warnings list so we revisit.
-
-### 6. Admin template slot
-`AdminSettingsPage` already drives the `specialists` template key via `downloadTemplate`. No code change; admins can replace the bundled XLSX by uploading their own through Admin Settings (the new fallback path also points to the XLSX).
+### 4. Client mapping (`StepWelcome.tsx`)
+- Map `school_info.calendar_url` → `data.calendarUrl` (currently ignored).
+- Map new `plus_rotation` → setup context PLUS rotation entries (same shape used by `StepPlusRotation`).
+- Everything else (specialists, admin rotation, conflict strategies, grade preference, makeup policy) already wires through — no change.
 
 ## Out of scope
-- DB migration to persist `phone` / `email` on `specialists` (call out as follow-up).
-- Reworking the onboarding `process-onboarding-template` function.
-- Changes to the teachers template or the bulk onboarding template.
-- Visual redesign of the Specialists step beyond the small phone/email inputs.
+- No DB schema changes.
+- No changes to the in-app Coordinator Prep print page (`src/pdf/CoordinatorPrep.tsx` / `src/pages/setup/CoordinatorPrep.tsx`) — they stay as-is.
+- Specialist teacher template (separate XLSX) is untouched.
 
-## Files touched
-- `public/templates/specialists_template.xlsx` (new)
-- `src/pages/setup/steps/StepSpecialists.tsx` (download links, upload handler, optional inputs)
-- `src/lib/templateDownload.ts` (no change; just used)
-- `supabase/functions/parse-specialist-template/index.ts` (new edge function)
-- `supabase/config.toml` (register the new function with `verify_jwt = false` per existing pattern)
-- `package.json` (add `xlsx`)
+## Files
+- `public/templates/onboarding_template.xlsx` (regenerated)
+- `public/templates/coordinator_prep_template.pdf` (new — copy of your upload)
+- `src/pages/setup/steps/StepWelcome.tsx`
+- `supabase/functions/process-onboarding-template/index.ts`
