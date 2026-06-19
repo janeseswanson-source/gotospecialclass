@@ -1,52 +1,92 @@
-# Special Rotations (PLUS) — two modes + generator flag
+# Simpler, modern UI for Scheduling Preferences + Recess & Lunch
 
-Make the PLUS section on Coordinator Prep customizable, with the choice mapping to a school-level flag the generator already (or will soon) respect.
+Two clunky surfaces from the Setup Wizard get a focused rework. No data-model changes, no generator changes — purely UI/UX + label semantics.
 
-## UX changes — `src/pages/setup/CoordinatorPrep.tsx`
+---
 
-Replace the current Yes/No + free-text textarea with:
+## 1. Scheduling Preferences (StepSchoolInfo)
 
-1. **Top question**: "Is there a special additional rotation beyond the normal routine?" — Yes / No (unchanged).
-2. **When Yes**, show a sub-radio: **How should we handle PLUS?**
-   - **I'll specify the day(s)** — admin owns it. Shows the existing structured fields: days (Mon–Fri checkboxes), time block, grades involved, "why this day?" rationale.
-   - **Let AI fit it in** — no extra day. Shows a short helper: "We'll absorb PLUS into the regular weekly rotation. If it can't fit, we'll warn you before generating."
-3. Save status / autosave behavior unchanged.
+File: `src/pages/setup/steps/StepSchoolInfo.tsx`
 
-PDF (`buildRows`) gets:
-- "PLUS rotation handling" → "Admin-specified" / "AI auto-fit" / "—"
-- (When admin-specified) days, time block, grades, rationale rows.
+**Rename** "Suggest extra PLT when feasible" → **"Open time slot"**
+- Subtext: *"A shared free block in the week — the coordinator uses this for make-up teaching minutes (e.g. lunch clubs counted toward instructional time)."*
+- Keep the toggle + the existing "Target extra minutes / week" field (relabel to "Target minutes / week").
 
-## Data — `coordinator_prep`
+**Add** a third row in the same Scheduling Preferences card: **"Daily sequence"**
+- A small segmented selector (3 chips) mirroring the prep-sheet's `grade_preference`:
+  - Keep grades together
+  - Waterfall (same grade, different blocks/days)
+  - Fixed K → 5 sequence
+- Bound to `data.gradeSequence` (new wizard-data field, mirrors `coordinator_prep.grade_preference`). Persists alongside the other two prefs in the same auto-save.
 
-Add three columns via migration:
-- `plus_mode text` — `'admin' | 'ai_auto_fit' | null`
-- `plus_days text[]` — selected weekday short codes
-- `plus_rationale text` — optional "why this day"
+Visual: three stacked rows with the same icon-left / toggle-or-chips-right layout used today, so the card feels uniform and not overwhelming.
 
-(Existing `special_rotation_notes` keeps the time-block + grades free text, so no breakage.)
+---
 
-## Generator flag — `schools.plus_auto_fit`
+## 2. Recess & Lunch (StepRecessLunch + PeriodCard)
 
-Add `plus_auto_fit boolean default false` to `public.schools`. Whenever `plus_mode` is saved on `coordinator_prep` for that school, mirror it: `'ai_auto_fit'` → true, otherwise false. Persistence happens in the same `persist()` call (one extra `schools.update`).
+The "Staggered by Grade" mode currently renders 3 wide cards × N rows × grade chips × start/end inputs side-by-side → too much on screen. Replace with a **count-first, auto-fill** flow.
 
-## Generator behavior — `supabase/functions/generate-schedule/index.ts`
+Files: `src/pages/setup/steps/StepRecessLunch.tsx`, `src/pages/setup/steps/recessLunch/PeriodCard.tsx` (the latter gets a simpler row variant; old card retained only for Early-Release overrides which already works).
 
-Read `school.plus_auto_fit` once at the top of generation:
-- **false (default)** — current behavior; PLUS sessions come from the wizard's `PlusRotationMatrix` step and slot into the matrix-specified day/time as today.
-- **true** — skip the dedicated PLUS day. Instead, when building candidates for each PLUS-eligible grade, add **one extra weekly visit** of the PLUS subject into the normal grid alongside the regular specials. If the canonical grid has no room after all other constraints, emit a non-blocking warning (`type: 'plus_no_fit', severity: 'warning'`) so the user knows to switch back to admin-specified.
+### New layout — single vertical column, three compact sections
 
-No changes to the wizard's `PlusRotationMatrix` step — admins who pick "I'll specify" still go there for the matrix; admins who pick "Let AI fit it in" can skip it.
+```text
+┌─ AM Recess ──────────────────────────────────┐
+│  How many AM recess periods?  [ – ] 2 [ + ]  │
+│  ─────────────────────────────────────────── │
+│  #1   Grades [K] [1] [2]   Start 10:00  →    │
+│       End 10:15  (auto)                      │
+│  #2   Grades [3] [4] [5]   Start 10:20  →    │
+│       End 10:35  (auto)                      │
+└──────────────────────────────────────────────┘
+
+┌─ Lunch ──────────────────────────────────────┐
+│  How many lunch periods?      [ – ] 3 [ + ]  │
+│  Default lunch length          [ 30 ] min    │
+│  ─────────────────────────────────────────── │
+│  #1   Grades [K] [1]   Start 11:00 → End 11:30 (auto) │
+│  ...                                         │
+└──────────────────────────────────────────────┘
+
+┌─ PM Recess (auto from lunch) ────────────────┐
+│  Follows each lunch group end + 0 min,       │
+│  15-minute blocks.                           │
+│  #1  Grades [K][1]   12:00 → 12:15           │
+│  #2  Grades [2][3]   12:30 → 12:45           │
+│  (read-only chips; tap row to override)      │
+└──────────────────────────────────────────────┘
+```
+
+### Behavior
+
+- **Mode toggle stays** (Whole School / Staggered by Grade) but defaults to Staggered when count > 1.
+- **AM Recess**: stepper for count. Each row asks only **grades + start time**; end = start + 15 min, shown as a muted hint, editable on click ("override").
+- **Lunch**: stepper for count + single "Default lunch length" input (defaults to 30, persisted to wizard data). Each row: grades + start; end auto = start + default length, editable on click.
+- **PM Recess**: auto-derived from Lunch rows — same grade groupings, start = that group's lunch end, end = start + 15. Rendered as read-only chip rows with a small "override" affordance per row that reveals the same compact start/end inputs. If user overrides, that row stops auto-tracking lunch.
+- **Grade-coverage warnings** (missing/duplicate) kept, moved to a single inline strip under each section.
+- **Early-release overrides** stays exactly as-is in its existing collapsible — out of scope.
+- Whole-School mode renders the same compact rows but with the grade chip set hidden and count locked to 1 per period.
+
+### Auto-fill rules (single helper)
+
+A small pure function `deriveRowTimes(startISO, durationMin)` shared by all three sections. PM-Recess auto-derivation reruns whenever lunch rows change unless that PM row's `overridden` flag is true.
+
+### Persisted shape
+
+No DB changes. Existing `recess_lunch_periods` rows still write `start`, `end`, `grades`, `bandKey`. New transient fields (`overridden`, default lunch length) live on wizard-data + are derived on save.
+
+---
 
 ## Out of scope
 
-- Editing the wizard's `PlusRotationMatrix` UI.
-- Backfilling `plus_auto_fit` on existing schools (defaults to false, matching today's behavior).
-- A separate "warn me before generating" preview step — the warning surfaces in the existing post-generation warnings list.
+- Generator logic, bell-schedule autopopulation from district calendar, "lunch clubs as make-up minutes" reporting (just a label/copy change here).
+- Visual restyle of unrelated wizard steps.
+- Migrations.
 
 ## Files touched
 
-- Migration: add 3 cols to `coordinator_prep` + 1 col to `schools`.
-- `src/pages/setup/CoordinatorPrep.tsx` — UI + persist mirror to `schools`.
-- `src/pdf/CoordinatorPrep.tsx` — no signature change (`PrepRow` reused).
-- `supabase/functions/generate-schedule/index.ts` — branch on `school.plus_auto_fit`, add candidate inflation + warning.
-- Tests: add one case to the generator test suite covering the `plus_auto_fit` true branch and the no-fit warning.
+- `src/pages/setup/steps/StepSchoolInfo.tsx` — rename + new Sequence selector.
+- `src/pages/setup/steps/StepRecessLunch.tsx` — new count-first layout, default-lunch-length input, PM auto-derivation.
+- `src/pages/setup/steps/recessLunch/PeriodCard.tsx` — slimmer row variant + read-only/override PM mode.
+- `src/pages/setup/setupData.ts` (or equivalent wizard-state file) — add `gradeSequence`, `defaultLunchMinutes`.
