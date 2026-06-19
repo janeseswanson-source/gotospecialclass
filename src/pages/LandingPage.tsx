@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/nsc-wordmark.png';
+import badge from '@/assets/logo.png';
 import { CalendarDays, Wand2, Users, Download, School, Shield, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -24,9 +25,8 @@ const LandingPage = () => {
       {/* Nav */}
       <nav className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-          <Link to="/" className="flex items-center gap-2">
-            <img src={logo} alt="GoToSpecialClass logo" className="h-9 w-9 rounded-lg object-cover" />
-            <span className="text-lg font-bold text-foreground">Specialist Ops!</span>
+          <Link to="/" className="flex items-center gap-3">
+            <img src={logo} alt="Next Specials Class" className="h-8 w-auto" />
           </Link>
           <div className="flex items-center gap-3">
             <Button variant="ghost" asChild><Link to="/login">Sign In</Link></Button>
@@ -39,6 +39,7 @@ const LandingPage = () => {
       <section className="relative overflow-hidden py-24 sm:py-32">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5" />
         <div className="relative mx-auto max-w-4xl px-6 text-center">
+          <img src={badge} alt="Specialist Ops! Class Scheduler badge" className="mx-auto mb-6 h-28 w-28 sm:h-32 sm:w-32 drop-shadow-lg" />
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-1.5 text-xs font-medium text-muted-foreground">
             <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
             Built for Grades K–6 Specials Coordinators

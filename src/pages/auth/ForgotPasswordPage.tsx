@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import logo from '@/assets/logo.png';
+import logo from '@/assets/nsc-wordmark.png';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,7 +29,7 @@ const ForgotPasswordPage = () => {
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-md animate-fade-in">
         <div className="mb-8 text-center">
-          <img src={logo} alt="GoToSpecialClass logo" className="mx-auto mb-4 h-14 w-14 rounded-2xl object-cover" />
+          <img src={logo} alt="Next Specials Class" className="mx-auto mb-4 h-12 w-auto" />
           <h1 className="text-2xl font-bold text-foreground">Reset your password</h1>
           <p className="mt-1 text-sm text-muted-foreground">We'll send you a reset link</p>
         </div>
