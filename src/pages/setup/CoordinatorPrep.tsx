@@ -21,6 +21,8 @@ interface PrepState {
   district_calendar_url: string;
   early_release_day: string;
   early_release_end_time: string;
+  teacher_union_url: string;
+  teacher_contract_url: string;
   grade_preference: string;
   day_preference: string[];
   am_pm_preference: string;
@@ -31,6 +33,8 @@ interface PrepState {
   custom_grade_prefs: string;
   mostly_monday_holidays: boolean | null;
   holiday_notes: string;
+  calendar_file_path: string;
+  calendar_file_name: string;
   has_special_rotation: boolean | null;
   special_rotation_notes: string;
 }
@@ -40,6 +44,8 @@ const empty: PrepState = {
   district_calendar_url: '',
   early_release_day: '',
   early_release_end_time: '',
+  teacher_union_url: '',
+  teacher_contract_url: '',
   grade_preference: '',
   day_preference: [],
   am_pm_preference: '',
@@ -50,17 +56,21 @@ const empty: PrepState = {
   custom_grade_prefs: '',
   mostly_monday_holidays: null,
   holiday_notes: '',
+  calendar_file_path: '',
+  calendar_file_name: '',
   has_special_rotation: null,
   special_rotation_notes: '',
 };
 
 const SECTIONS = [
   { id: 'school-info', label: 'School Info' },
+  { id: 'teacher-links', label: 'Teacher Links' },
   { id: 'schedule-prefs', label: 'Schedule Preferences' },
   { id: 'specialists', label: 'Specialist Specifics' },
-  { id: 'calendar', label: 'Calendar & Holidays' },
+  { id: 'calendar', label: 'Calendar' },
   { id: 'rotations', label: 'Special Rotations' },
 ];
+
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
