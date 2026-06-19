@@ -64,6 +64,13 @@ const SECTIONS = [
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
+function schedulingStyleLabel(v: string): string {
+  if (v === 'keep_together') return 'Keep grades together';
+  if (v === 'waterfall') return 'Waterfall (rolling rotation of mismatched lessons)';
+  if (v === 'fixed_sequence') return 'Fixed Daily Sequence (K → 5)';
+  return '';
+}
+
 function buildRows(p: PrepState, schoolName?: string): PrepRow[] {
   return [
     { question: 'School name', answer: schoolName },
@@ -71,9 +78,7 @@ function buildRows(p: PrepState, schoolName?: string): PrepRow[] {
     { question: 'District calendar URL', answer: p.district_calendar_url },
     { question: 'Weekly early-release day', answer: p.early_release_day || 'None' },
     { question: 'Early-release end time', answer: p.early_release_end_time },
-    { question: 'Specialist scheduling preference', answer: p.grade_preference === 'keep_together' ? 'Keep grades together' : p.grade_preference === 'waterfall' ? 'Waterfall (K → 5)' : '' },
-    { question: 'Day preference for specialists', answer: p.day_preference.join(', ') },
-    { question: 'AM / PM preference', answer: p.am_pm_preference },
+    { question: 'Specialist scheduling style', answer: schedulingStyleLabel(p.grade_preference) },
     { question: 'How many specialist teachers?', answer: p.specialist_count == null ? '' : String(p.specialist_count) },
     { question: 'Specialists using a teaching cart', answer: p.cart_users },
     { question: 'Specialists at two schools', answer: p.two_school_users },
