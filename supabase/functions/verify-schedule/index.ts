@@ -117,35 +117,60 @@ Deno.serve(async (req) => {
     const breakdownLines = Object.entries(scoreBreakdown).map(([k, v]) => `  ${k}: ${v}`).join("\n");
     const warningLines = warnings.map((w: any) => `  [${w.severity}] ${w.message}`).join("\n");
 
-    const prompt = `You are a K-6 elementary specials scheduling expert. Review this schedule for quality issues.
+    // ─── D: shared rubric ─────────────────────────────────────────────
+    // Quality score is derived from the generator's actual penalty breakdown
+    // (the same rubric the optimizer ran against) so verifier and generator
+    // agree on what "good" means. AI is asked only for qualitative narrative
+    // and concrete fixes — not to invent a score.
+    const bd = (scoreBreakdown ?? {}) as Record<string, number>;
+    // Penalty magnitudes that drag the score down. Tunable cap of 100 pts.
+    const penaltyMag =
+      Math.abs(bd.subject_gap ?? 0) +
+      Math.abs(bd.subject_day_clustering ?? 0) +
+      Math.abs(bd.class_repeats ?? 0) +
+      Math.abs(bd.k_grade_after_780 ?? 0) +
+      Math.abs(bd.cart_back_to_back ?? 0) +
+      Math.abs(bd.grade_cohesion ?? 0) +
+      Math.abs(bd.contract_min ?? 0) +
+      Math.abs(bd.warnings ?? 0) +
+      Math.abs(bd.errors ?? 0);
+    // Hard floor of 0; perfect schedule (no penalties) → 100.
+    const rubricScore = Math.max(0, Math.min(100, Math.round(100 - penaltyMag / 4)));
+
+    const prompt = `You are a K-6 elementary specials scheduling expert reviewing a generated schedule.
+
+The OPTIMIZER already scored this schedule using the same rubric you should use. Its breakdown is below.
+Your job: explain WHY the schedule scored where it did (qualitative narrative) and propose CONCRETE FIXES
+for the worst remaining issues. Do not invent a numeric score — use the rubric score we provide.
+
+RUBRIC SCORE (computed from generator breakdown): ${rubricScore}/100
 
 SCHEDULE SUMMARY (grade → day → sessions):
 ${summaryLines.join("\n\n")}
 
-SCORE BREAKDOWN:
+SCORE BREAKDOWN (negative = penalty):
 ${breakdownLines || "  (none)"}
 
 EXISTING WARNINGS:
 ${warningLines || "  (none)"}
 
-QUALITY CRITERIA TO CHECK:
-1. Every grade receives at least one session per week from each configured specialist (subject variety).
-2. No grade sees the same specialist more than twice in a week (unless it's the only specialist).
-3. Sessions are spread across the week — not all crammed into Monday/Tuesday.
-4. Specialist daily loads are balanced — no specialist has 4+ sessions on one day and 0 on another.
-5. Teachers with AM/PM preferences have those preferences honored where possible.
-6. K and TK sessions are not scheduled after 1:00 PM (780 minutes from midnight).
-7. No back-to-back sessions for a cart specialist (uses_cart=true) in different rooms.
+QUALITY CRITERIA (mirrors generator weights):
+1. subject_gap: every grade should see every specialist at least once per week.
+2. subject_day_clustering: no grade should have the same subject twice in one day.
+3. class_repeats: each grade should see distinct specialists across the week.
+4. k_grade_after_780: K/TK sessions should not start at or after 1:00 PM.
+5. cart_back_to_back: cart specialists should not be in different rooms back-to-back.
+6. spec_dayload_stdev: each specialist's load should be balanced across days.
+7. AM/PM and day preferences should be honored where possible.
 
-For any issues you find, propose the MINIMUM fix. Only suggest moves/swaps if they won't create new conflicts.
+For any issue, propose the MINIMUM fix. Only suggest moves/swaps that won't create new conflicts.
 Block IDs to reference: ${blocks.filter((b: any) => b.specialist_id).slice(0, 50).map((b: any) => b.id).join(", ")}
 
 Respond ONLY with valid JSON:
 {
-  "quality_score": <0-100 integer>,
   "issues_found": [
     {
-      "type": "subject_gap"|"day_clustering"|"load_imbalance"|"preference_violation"|"k_late"|"cart_conflict",
+      "type": "subject_gap"|"day_clustering"|"load_imbalance"|"preference_violation"|"k_late"|"cart_conflict"|"class_repeat",
       "description": "<plain English>",
       "affected_grade": "<grade or null>",
       "affected_specialist_id": "<id or null>",
@@ -159,7 +184,7 @@ Respond ONLY with valid JSON:
       }
     }
   ],
-  "summary": "<1-2 sentence overall assessment>"
+  "summary": "<1-2 sentence overall assessment tied to the score breakdown>"
 }`;
 
     const MAX_ATTEMPTS = 2;
