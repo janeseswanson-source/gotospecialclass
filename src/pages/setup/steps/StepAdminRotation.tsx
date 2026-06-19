@@ -75,7 +75,8 @@ const StepAdminRotation = () => {
   };
 
   const addEntry = () => {
-    const next = [...entries, { day: 'Tuesday', startTime: '08:00', endTime: '08:45', grades: [], autoSchedule: true, durationMinutes: 45 }];
+    const sameDay = entries.filter(e => e.day === 'Monday').length;
+    const next = [...entries, { day: 'Monday', startTime: '07:45', endTime: '08:05', grades: [], autoSchedule: false, durationMinutes: 30, rotationLabel: `${sameDay + 1}${sameDay === 0 ? 'st' : sameDay === 1 ? 'nd' : 'rd'}`, weekLabel: null } as any];
     updateData({ adminRotation: next });
     save(next);
   };
