@@ -151,6 +151,9 @@ const CoordinatorPrep = () => {
           calendar_file_path: (data as any).calendar_file_path ?? '',
           calendar_file_name: (data as any).calendar_file_name ?? '',
           has_special_rotation: data.has_special_rotation,
+          plus_mode: (data as any).plus_mode ?? '',
+          plus_days: (data as any).plus_days ?? [],
+          plus_rationale: (data as any).plus_rationale ?? '',
           special_rotation_notes: data.special_rotation_notes ?? '',
         });
       } else {
