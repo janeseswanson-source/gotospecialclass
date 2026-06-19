@@ -1,39 +1,52 @@
-# Coordinator Prep — Calendar simplification + Teacher Links section
+# Special Rotations (PLUS) — two modes + generator flag
 
-## 1. Add "Teacher Links" section after School Info
-**Feedback:** "ADD A SECTION ON TEACHER Union Link and Teacher CONTRACT OPTIONAL LINKs after school info."
+Make the PLUS section on Coordinator Prep customizable, with the choice mapping to a school-level flag the generator already (or will soon) respect.
 
-New collapsible section between **School Info** and **Schedule Preferences** in the left rail.
+## UX changes — `src/pages/setup/CoordinatorPrep.tsx`
 
-- Section id: `teacher-links`, label: **Teacher Links**.
-- Two optional URL inputs:
-  - **Teacher Union Link** (e.g. https://localunion.org)
-  - **Teacher Contract Link** (e.g. https://district.org/contract.pdf)
-- Both fields are optional and autosave like the rest of the page.
-- Surfaced as two rows in the printable Prep PDF.
+Replace the current Yes/No + free-text textarea with:
 
-## 2. Slim down the "Calendar & Holidays" section
-**Feedback:** "This should be just adding the calendar maybe."
+1. **Top question**: "Is there a special additional rotation beyond the normal routine?" — Yes / No (unchanged).
+2. **When Yes**, show a sub-radio: **How should we handle PLUS?**
+   - **I'll specify the day(s)** — admin owns it. Shows the existing structured fields: days (Mon–Fri checkboxes), time block, grades involved, "why this day?" rationale.
+   - **Let AI fit it in** — no extra day. Shows a short helper: "We'll absorb PLUS into the regular weekly rotation. If it can't fit, we'll warn you before generating."
+3. Save status / autosave behavior unchanged.
 
-The District Calendar URL already lives in School Info, so this section currently duplicates that intent with two text questions. Replace the noisy Q&A with one focused action: attach the calendar.
+PDF (`buildRows`) gets:
+- "PLUS rotation handling" → "Admin-specified" / "AI auto-fit" / "—"
+- (When admin-specified) days, time block, grades, rationale rows.
 
-- Rename section to **Calendar** (drop "& Holidays") with id `calendar`.
-- **Remove** the "Are most holidays on Mondays?" radio and the "Other notes about holidays / waiver / PD days" textarea from the UI and the PDF.
-- Add **Upload calendar (PDF or image)** — a single file picker that stores the file in the existing Lovable Cloud storage bucket used by Calendar Upload elsewhere in the wizard, plus shows the file name + a Remove button after upload.
-- Keep a small helper line: "We'll pull holidays from this calendar during setup." linking to the wizard's Calendar Upload step.
+## Data — `coordinator_prep`
 
-Existing DB columns `mostly_monday_holidays` and `holiday_notes` stay in the table (no migration to drop them) so old rows are preserved — the page just stops reading/writing them.
+Add three columns via migration:
+- `plus_mode text` — `'admin' | 'ai_auto_fit' | null`
+- `plus_days text[]` — selected weekday short codes
+- `plus_rationale text` — optional "why this day"
 
-## Technical notes
-- **DB migration** on `public.coordinator_prep`:
-  - Add `teacher_union_url text`
-  - Add `teacher_contract_url text`
-  - Add `calendar_file_path text` (storage object path)
-- **File upload**: reuse the existing storage bucket already used by `StepCalendarUpload` (will confirm bucket name when implementing — likely `school-calendars` or similar; will read `useCalendarUpload` to match).
-- **Files touched**: `src/pages/setup/CoordinatorPrep.tsx` only on the UI side (plus the migration). No changes to wizard, generator, or other pages.
-- **PDF**: `buildRows` gets two new rows for the teacher links; the two holiday rows are removed.
+(Existing `special_rotation_notes` keeps the time-block + grades free text, so no breakage.)
+
+## Generator flag — `schools.plus_auto_fit`
+
+Add `plus_auto_fit boolean default false` to `public.schools`. Whenever `plus_mode` is saved on `coordinator_prep` for that school, mirror it: `'ai_auto_fit'` → true, otherwise false. Persistence happens in the same `persist()` call (one extra `schools.update`).
+
+## Generator behavior — `supabase/functions/generate-schedule/index.ts`
+
+Read `school.plus_auto_fit` once at the top of generation:
+- **false (default)** — current behavior; PLUS sessions come from the wizard's `PlusRotationMatrix` step and slot into the matrix-specified day/time as today.
+- **true** — skip the dedicated PLUS day. Instead, when building candidates for each PLUS-eligible grade, add **one extra weekly visit** of the PLUS subject into the normal grid alongside the regular specials. If the canonical grid has no room after all other constraints, emit a non-blocking warning (`type: 'plus_no_fit', severity: 'warning'`) so the user knows to switch back to admin-specified.
+
+No changes to the wizard's `PlusRotationMatrix` step — admins who pick "I'll specify" still go there for the matrix; admins who pick "Let AI fit it in" can skip it.
 
 ## Out of scope
-- Auto-parsing the uploaded calendar (that already happens in the wizard's Calendar Upload step).
-- Migrating data out of the deprecated `mostly_monday_holidays` / `holiday_notes` columns.
-- Restyling the section cards.
+
+- Editing the wizard's `PlusRotationMatrix` UI.
+- Backfilling `plus_auto_fit` on existing schools (defaults to false, matching today's behavior).
+- A separate "warn me before generating" preview step — the warning surfaces in the existing post-generation warnings list.
+
+## Files touched
+
+- Migration: add 3 cols to `coordinator_prep` + 1 col to `schools`.
+- `src/pages/setup/CoordinatorPrep.tsx` — UI + persist mirror to `schools`.
+- `src/pdf/CoordinatorPrep.tsx` — no signature change (`PrepRow` reused).
+- `supabase/functions/generate-schedule/index.ts` — branch on `school.plus_auto_fit`, add candidate inflation + warning.
+- Tests: add one case to the generator test suite covering the `plus_auto_fit` true branch and the no-fit warning.

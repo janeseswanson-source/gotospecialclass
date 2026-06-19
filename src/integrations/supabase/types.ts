@@ -343,6 +343,9 @@ export type Database = {
           id: string
           mostly_monday_holidays: boolean | null
           part_time_users: string | null
+          plus_days: string[]
+          plus_mode: string | null
+          plus_rationale: string | null
           school_id: string | null
           school_site_url: string | null
           special_rotation_notes: string | null
@@ -371,6 +374,9 @@ export type Database = {
           id?: string
           mostly_monday_holidays?: boolean | null
           part_time_users?: string | null
+          plus_days?: string[]
+          plus_mode?: string | null
+          plus_rationale?: string | null
           school_id?: string | null
           school_site_url?: string | null
           special_rotation_notes?: string | null
@@ -399,6 +405,9 @@ export type Database = {
           id?: string
           mostly_monday_holidays?: boolean | null
           part_time_users?: string | null
+          plus_days?: string[]
+          plus_mode?: string | null
+          plus_rationale?: string | null
           school_id?: string | null
           school_site_url?: string | null
           special_rotation_notes?: string | null
@@ -1075,6 +1084,7 @@ export type Database = {
           planning_minutes: number | null
           planning_time_when: string
           plt_label: string
+          plus_auto_fit: boolean
           pm_recess_first_bell: string | null
           pm_recess_minutes: number | null
           recess_grade_bands: Json | null
@@ -1131,6 +1141,7 @@ export type Database = {
           planning_minutes?: number | null
           planning_time_when?: string
           plt_label?: string
+          plus_auto_fit?: boolean
           pm_recess_first_bell?: string | null
           pm_recess_minutes?: number | null
           recess_grade_bands?: Json | null
@@ -1187,6 +1198,7 @@ export type Database = {
           planning_minutes?: number | null
           planning_time_when?: string
           plt_label?: string
+          plus_auto_fit?: boolean
           pm_recess_first_bell?: string | null
           pm_recess_minutes?: number | null
           recess_grade_bands?: Json | null

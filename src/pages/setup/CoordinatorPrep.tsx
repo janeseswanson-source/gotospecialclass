@@ -36,6 +36,9 @@ interface PrepState {
   calendar_file_path: string;
   calendar_file_name: string;
   has_special_rotation: boolean | null;
+  plus_mode: string; // '' | 'admin' | 'ai_auto_fit'
+  plus_days: string[];
+  plus_rationale: string;
   special_rotation_notes: string;
 }
 
@@ -59,6 +62,9 @@ const empty: PrepState = {
   calendar_file_path: '',
   calendar_file_name: '',
   has_special_rotation: null,
+  plus_mode: '',
+  plus_days: [],
+  plus_rationale: '',
   special_rotation_notes: '',
 };
 
@@ -98,7 +104,10 @@ function buildRows(p: PrepState, schoolName?: string): PrepRow[] {
     { question: 'Specialists with custom grade preferences', answer: p.custom_grade_prefs },
     { question: 'Calendar attached', answer: p.calendar_file_name || 'Not uploaded' },
     { question: 'Special additional rotation (PLUS)?', answer: p.has_special_rotation == null ? '' : p.has_special_rotation ? 'Yes' : 'No' },
-    { question: 'PLUS rotation details (days, time, grades)', answer: p.special_rotation_notes },
+    { question: 'PLUS handling', answer: p.plus_mode === 'admin' ? 'Admin-specified' : p.plus_mode === 'ai_auto_fit' ? 'AI auto-fit (no extra day)' : '—' },
+    { question: 'PLUS day(s) selected', answer: p.plus_mode === 'admin' ? (p.plus_days.join(', ') || '—') : '—' },
+    { question: 'PLUS rationale (why this day?)', answer: p.plus_mode === 'admin' ? p.plus_rationale : '' },
+    { question: 'PLUS time block & grades', answer: p.plus_mode === 'admin' ? p.special_rotation_notes : '' },
   ];
 }
 
@@ -145,6 +154,9 @@ const CoordinatorPrep = () => {
           calendar_file_path: (data as any).calendar_file_path ?? '',
           calendar_file_name: (data as any).calendar_file_name ?? '',
           has_special_rotation: data.has_special_rotation,
+          plus_mode: (data as any).plus_mode ?? '',
+          plus_days: (data as any).plus_days ?? [],
+          plus_rationale: (data as any).plus_rationale ?? '',
           special_rotation_notes: data.special_rotation_notes ?? '',
         });
       } else {
@@ -185,8 +197,19 @@ const CoordinatorPrep = () => {
         calendar_file_path: s.calendar_file_path || null,
         calendar_file_name: s.calendar_file_name || null,
         has_special_rotation: s.has_special_rotation,
+        plus_mode: s.plus_mode || null,
+        plus_days: s.plus_days,
+        plus_rationale: s.plus_rationale || null,
         special_rotation_notes: s.special_rotation_notes || null,
       };
+
+      // Mirror plus_mode to schools.plus_auto_fit so the generator can branch on it.
+      if (selectedSchoolId) {
+        await supabase
+          .from('schools')
+          .update({ plus_auto_fit: s.plus_mode === 'ai_auto_fit' } as any)
+          .eq('id', selectedSchoolId);
+      }
 
       const { error } = existing
         ? await supabase.from('coordinator_prep').update(payload).eq('id', existing.id)
@@ -473,10 +496,70 @@ const CoordinatorPrep = () => {
             </div>
 
             {state.has_special_rotation && (
-              <div className="space-y-2">
-                <Label htmlFor="rot-notes">Days, time block, and grades involved</Label>
-                <Textarea id="rot-notes" rows={4} placeholder="e.g. Tuesdays 2:00–2:45, Grades 3–5"
-                  value={state.special_rotation_notes} onChange={(e) => set('special_rotation_notes', e.target.value)} />
+              <div className="space-y-4 border-t border-border pt-4">
+                <div className="space-y-2">
+                  <Label>How should we handle PLUS?</Label>
+                  <RadioGroup
+                    value={state.plus_mode}
+                    onValueChange={(v) => set('plus_mode', v)}
+                    className="gap-3"
+                  >
+                    <label className="flex items-start gap-2 text-sm cursor-pointer">
+                      <RadioGroupItem value="admin" className="mt-0.5" />
+                      <span>
+                        <strong>I'll specify the day(s)</strong> — pick the day, time block, and grades. Use this when the admin already knows why PLUS lands where it does.
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 text-sm cursor-pointer">
+                      <RadioGroupItem value="ai_auto_fit" className="mt-0.5" />
+                      <span>
+                        <strong>Let AI fit it in</strong> — no extra day. We'll absorb PLUS into the regular weekly rotation. If it can't fit, we'll warn you before generating.
+                      </span>
+                    </label>
+                  </RadioGroup>
+                </div>
+
+                {state.plus_mode === 'admin' && (
+                  <>
+                    <div className="space-y-2">
+                      <Label>PLUS day(s)</Label>
+                      <div className="flex flex-wrap gap-3">
+                        {DAYS.map(d => (
+                          <label key={d} className="flex items-center gap-2 text-sm cursor-pointer">
+                            <Checkbox
+                              checked={state.plus_days.includes(d)}
+                              onCheckedChange={() => setState(prev => ({
+                                ...prev,
+                                plus_days: prev.plus_days.includes(d)
+                                  ? prev.plus_days.filter(x => x !== d)
+                                  : [...prev.plus_days, d],
+                              }))}
+                            />
+                            {d}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="rot-notes">Time block & grades involved</Label>
+                      <Textarea id="rot-notes" rows={3} placeholder="e.g. 2:00–2:45, Grades 3–5"
+                        value={state.special_rotation_notes} onChange={(e) => set('special_rotation_notes', e.target.value)} />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="rot-why">Why this day? <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                      <Textarea id="rot-why" rows={2} placeholder="e.g. PE coach only available Tuesdays; assembly day for upper grades."
+                        value={state.plus_rationale} onChange={(e) => set('plus_rationale', e.target.value)} />
+                    </div>
+                  </>
+                )}
+
+                {state.plus_mode === 'ai_auto_fit' && (
+                  <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+                    Heads up: you can skip the PLUS Rotation Matrix in the Setup Wizard. We'll try to land PLUS inside the regular grid; you'll see a warning at generation time if it can't fit.
+                  </div>
+                )}
               </div>
             )}
           </section>
