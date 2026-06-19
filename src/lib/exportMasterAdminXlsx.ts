@@ -197,8 +197,35 @@ export async function exportMasterAdminXlsx(opts: {
   }
 
   const masterWs = sheetFromAOA(masterAoa, [22, 22, 22, 22, 22]);
-  // merge title row
-  (masterWs as any)['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+  // Title + meta rows merged across all 5 columns.
+  (masterWs as any)['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } },
+  ];
+  // Row heights: tall title rows, normal day header.
+  (masterWs as any)['!rows'] = [{ hpt: 26 }, { hpt: 16 }, { hpt: 22 }];
+
+  // Apply brand styling.
+  setCellStyle(masterWs, 'A1', titleStyle);
+  setCellStyle(masterWs, 'A2', subTitleStyle);
+  // Day header row (index 2 -> row 3).
+  applyHeaderRow(masterWs, 2, 5, dayHeaderStyle);
+
+  // Style band/data rows.
+  for (let r = 3; r < masterAoa.length; r++) {
+    const isBand =
+      typeof masterAoa[r][0] === 'string' &&
+      /^(Planning and Prep|RECESS|LUNCH|DISMISSAL|\d)/.test(masterAoa[r][0] ?? '');
+    for (let c = 0; c < 5; c++) {
+      const ref = XLSX.utils.encode_cell({ r, c });
+      if (!(masterWs as any)[ref]) (masterWs as any)[ref] = { t: 's', v: '' };
+      (masterWs as any)[ref].s = isBand && c === 0 ? bandStyle : cellStyle;
+    }
+  }
+
+  // Landscape + print area.
+  (masterWs as any)['!pageSetup'] = { orientation: 'landscape', fitToWidth: 1, fitToHeight: 0 };
+
   XLSX.utils.book_append_sheet(wb, masterWs, 'Master Admin View');
 
   // === Sheet 2: Schools ===
