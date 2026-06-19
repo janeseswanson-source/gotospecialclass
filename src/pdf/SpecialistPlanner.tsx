@@ -1,7 +1,15 @@
-import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
+import { Document, Page, Text, View, Image, StyleSheet } from '@react-pdf/renderer';
 import { addDays, formatWeekHeader, formatDayHeader } from './lib/weekDates';
 import { getDayLabelFor, type SchoolCalendarEvent } from './lib/holidays';
 import { pickQuoteForWeek } from './lib/quotes';
+import logoAsset from '@/assets/logo.png.asset.json';
+
+const LOGO_URL = (() => {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return new URL(logoAsset.url, window.location.origin).toString();
+  }
+  return logoAsset.url;
+})();
 
 export interface RecessRow {
   grade_band: string;
@@ -247,11 +255,14 @@ function PlannerPage({
     <Page size="LETTER" orientation="landscape" style={styles.page}>
       {/* Header band */}
       <View style={[styles.header, { borderBottomColor: accent }]}>
-        <View style={styles.headerLeft}>
-          <Text style={[styles.subject, { color: accent }]}>{(specialist.subject || specialist.name).toUpperCase()}{specialist.subject ? ' CLASS' : ''}</Text>
-          <Text style={styles.weekOf}>{formatWeekHeader(monday)}{schoolName ? ` · ${schoolName}` : ''}</Text>
-          {schoolYear && <Text style={[styles.weekOf, { marginTop: 1 }]}>{schoolYear}</Text>}
-          <Text style={[styles.weekOf, { marginTop: 2 }]}>{specialist.name}</Text>
+        <View style={[styles.headerLeft, { flexDirection: 'row', alignItems: 'flex-start' }]}>
+          <Image src={LOGO_URL} style={{ width: 28, height: 28, marginRight: 8 }} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.subject, { color: accent }]}>{(specialist.subject || specialist.name).toUpperCase()}{specialist.subject ? ' CLASS' : ''}</Text>
+            <Text style={styles.weekOf}>{formatWeekHeader(monday)}{schoolName ? ` · ${schoolName}` : ''}</Text>
+            {schoolYear && <Text style={[styles.weekOf, { marginTop: 1 }]}>{schoolYear}</Text>}
+            <Text style={[styles.weekOf, { marginTop: 2 }]}>{specialist.name}</Text>
+          </View>
         </View>
         <View style={styles.headerCenter}>
           <View style={styles.checkRow}>
@@ -403,7 +414,8 @@ function PlannerPage({
       {/* Footer */}
       <View style={styles.footer} fixed>
         <Text style={styles.footerQuote}>{quote}</Text>
-        {weekLabel && <Text style={styles.weekPill}>{weekLabel} WEEK</Text>}
+        {weekLabel && <Text style={[styles.weekPill, { marginRight: 8 }]}>{weekLabel} WEEK</Text>}
+        <Text style={{ fontSize: 7.5, color: C.mute }}>GoToSpecialClass.com · Specialist Ops!</Text>
       </View>
     </Page>
   );
