@@ -48,16 +48,16 @@ Deno.test("monteCarloRun: rejects iterations < 1", () => {
   assertThrows(() => monteCarloRun(fakeStrategy, fakeScore, { iterations: 0, seed: 1 }));
 });
 
-Deno.test("calibrateMonteCarlo: fast strategy → 50 iterations", () => {
+Deno.test("calibrateMonteCarlo: fast strategy → 200 iterations", () => {
   const cal = calibrateMonteCarlo(fakeStrategy, 123, "fake");
-  assertEquals(cal.iterations, 50);
+  assertEquals(cal.iterations, 200);
   assert(cal.calibrationMs >= 0);
 });
 
-Deno.test("calibrateMonteCarlo: throws budget-exceeded when projected > 30s", () => {
-  // Burn enough wall time to push calibrationMs * 10 > 30_000ms (>3s per run).
+Deno.test("calibrateMonteCarlo: throws budget-exceeded when projected > 60s", () => {
+  // Spin >1.3s per run → calibrationMs * 50 iters > 60_000ms triggers the gate.
   const slow = (_rng: Rng): FakeResult => {
-    const until = performance.now() + 3100;
+    const until = performance.now() + 1400;
     while (performance.now() < until) { /* spin */ }
     return { picks: [1] };
   };

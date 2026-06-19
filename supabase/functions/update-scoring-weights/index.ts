@@ -22,9 +22,13 @@ const DEFAULT_WEIGHTS: Record<string, number> = {
   day_pref_satisfied: 20,
   planning_target_met: 30,
   cart_back_to_back: -5,
-  k_grade_after_780: -3,
+  k_grade_after_780: -20,
   spec_dayload_stdev: -1,
-  class_repeats: -8,
+  class_repeats: -25,
+  grade_cohesion: -4,
+  contract_min: -0.05,
+  subject_gap: -40,
+  subject_day_clustering: -15,
 };
 
 // Clamp weight to ±50% of the original default value

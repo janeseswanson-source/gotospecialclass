@@ -1891,11 +1891,11 @@ function runSimulatedAnnealing(
   rng: Rng,
   weightOverrides?: Partial<Record<keyof ScoreBreakdown, number>>,
 ): { blocks: Block[]; preferenceViolations: PreferenceViolation[]; score: number; iterations: number; improvement: number } {
-  const SA_MAX_ITER = 200;
+  const SA_MAX_ITER = 500;
   const SA_T_START = 50;
-  const SA_COOLING = 0.95;
+  const SA_COOLING = 0.97;
   const SA_T_MIN = 1;
-  const SA_TIME_BUDGET_MS = 8000;
+  const SA_TIME_BUDGET_MS = 12000;
 
   let currentBlocks = initialResult.blocks.slice();
   let currentViolations = initialResult.preferenceViolations.slice();
@@ -1916,8 +1916,8 @@ function runSimulatedAnnealing(
     );
     if (teachingBlocks.length < 2) break;
 
-    // Choose mutation type: 0 = swap, 1 = move
-    const mutationType = Math.floor(rng() * 2);
+    // Choose mutation type: 0 = swap, 1 = move, 2 = anti-cluster shuffle
+    const mutationType = Math.floor(rng() * 3);
     let candidateBlocks: Block[] | null = null;
 
     if (mutationType === 0) {
@@ -1964,7 +1964,7 @@ function runSimulatedAnnealing(
       if (!occ.isGradeRangeFree(newB.day_of_week, newB.grade, bStart, bEnd)) { T *= SA_COOLING; continue; }
 
       candidateBlocks = currentBlocks.map(b => b === blockA ? newA : b === blockB ? newB : b);
-    } else {
+    } else if (mutationType === 1) {
       // MOVE: pick one block and relocate to a free slot for same (specialist, teacher)
       const blockToMove = teachingBlocks[Math.floor(rng() * teachingBlocks.length)];
       const spec = specialists.find(s => s.id === blockToMove.specialist_id);
@@ -2026,6 +2026,66 @@ function runSimulatedAnnealing(
       if (chosen.day === blockToMove.day_of_week &&
           chosen.start === timeToMinutes(blockToMove.start_time)) { T *= SA_COOLING; continue; }
 
+      const newBlock: Block = {
+        ...blockToMove,
+        day_of_week: chosen.day,
+        start_time: minutesToTime(chosen.start),
+        end_time: minutesToTime(chosen.end),
+      };
+      candidateBlocks = currentBlocks.map(b => b === blockToMove ? newBlock : b);
+    } else {
+      // ANTI-CLUSTER SHUFFLE: find a (grade, subject, day) duplicate and
+      // relocate one occurrence to a day that doesn't already have that
+      // subject for the grade. Directly attacks subject_day_clustering.
+      const subjDayMap = new Map<string, Block[]>();
+      const gradeSubjDays = new Map<string, Set<string>>();
+      for (const b of teachingBlocks) {
+        const k = `${b.grade}|${b.subject ?? ""}|${b.day_of_week}`;
+        (subjDayMap.get(k) ?? subjDayMap.set(k, []).get(k)!).push(b);
+        const gk = `${b.grade}|${b.subject ?? ""}`;
+        (gradeSubjDays.get(gk) ?? gradeSubjDays.set(gk, new Set()).get(gk)!).add(b.day_of_week);
+      }
+      const dupGroups: Block[][] = [];
+      for (const g of subjDayMap.values()) if (g.length >= 2) dupGroups.push(g);
+      if (dupGroups.length === 0) { T *= SA_COOLING; continue; }
+
+      const group = dupGroups[Math.floor(rng() * dupGroups.length)];
+      const blockToMove = group[Math.floor(rng() * group.length)];
+      const spec = specialists.find(s => s.id === blockToMove.specialist_id);
+      if (!spec) { T *= SA_COOLING; continue; }
+      const usedDays = gradeSubjDays.get(`${blockToMove.grade}|${blockToMove.subject ?? ""}`) ?? new Set();
+      const duration = timeToMinutes(blockToMove.end_time) - timeToMinutes(blockToMove.start_time);
+      const workDays = (spec.working_days ?? DAYS).filter(d => DAYS.includes(d) && !usedDays.has(d));
+      if (workDays.length === 0) { T *= SA_COOLING; continue; }
+
+      const testBlocks = currentBlocks.filter(b => b !== blockToMove);
+      const occ = buildOccupancyFromBlocks(baseOccupancy, testBlocks);
+      const saPassing = school.passing_time ?? 5;
+      const saCanonicalStep = schoolCanonicalStep(school);
+      const saSetup = school.setup_time ?? 15;
+      const saGradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
+      const freeSlots: Array<{ day: string; start: number; end: number }> = [];
+      for (const day of workDays) {
+        const endMin = getEndMinForDay(day, school);
+        const recessWindows = getRecessWindowsForDay(day, school, recessConfigs, blockToMove.grade);
+        const candidateStarts = new Set<number>(
+          buildTimeSlotsForGrade(blockToMove.grade, duration, classStartMin, endMin, saPassing, saSetup, saGradeTimeConfig, recessWindows, saCanonicalStep).map(sl => sl.start),
+        );
+        for (const b of currentBlocks) if (b.day_of_week === day) candidateStarts.add(timeToMinutes(b.start_time));
+        for (const s of [...candidateStarts].sort((x, y) => x - y)) {
+          const e = s + duration;
+          if (s < classStartMin || e > endMin) continue;
+          if (recessWindows.some(r => s < r.end && e > r.start)) continue;
+          if (!occ.isSpecialistFree(day, s, e, blockToMove.specialist_id!)) continue;
+          if (blockToMove.teacher_id && !occ.isTeacherFree(day, s, e, blockToMove.teacher_id)) continue;
+          if (!occ.isGradeRangeFree(day, blockToMove.grade, s, e)) continue;
+          freeSlots.push({ day, start: s, end: e });
+          if (freeSlots.length >= 10) break;
+        }
+        if (freeSlots.length >= 10) break;
+      }
+      if (freeSlots.length === 0) { T *= SA_COOLING; continue; }
+      const chosen = freeSlots[Math.floor(rng() * freeSlots.length)];
       const newBlock: Block = {
         ...blockToMove,
         day_of_week: chosen.day,
@@ -2127,6 +2187,26 @@ export function generateScheduleBlocks(
   lockedBlocks: Block[] = [],
   weightOverrides?: Partial<Record<keyof ScoreBreakdown, number>>,
 ): SchedulerResult {
+  // ─── E: Pre-flight feasibility ────────────────────────────────────
+  // Per-day capacity = Σ specialists working that day × max slots/day.
+  // Demand = grades × specialists (1 session per grade per specialist).
+  // If capacity < demand, no Monte-Carlo run can hit full coverage —
+  // surface an actionable error instead of producing a mediocre schedule.
+  const workingDays = new Set<string>();
+  for (const s of specialists) for (const d of (s.working_days ?? DAYS)) if (DAYS.includes(d)) workingDays.add(d);
+  const totalSpecDayCount = specialists.reduce(
+    (acc, s) => acc + ((s.working_days ?? DAYS).filter((d) => DAYS.includes(d)).length),
+    0,
+  );
+  const requiredPairs = grades.length * specialists.length;
+  if (specialists.length > 0 && grades.length > 0 && totalSpecDayCount < requiredPairs) {
+    throw new Error(
+      `Infeasible schedule: ${specialists.length} specialists × ${totalSpecDayCount} total working-days ` +
+      `cannot cover ${grades.length} grades × ${specialists.length} subjects = ${requiredPairs} required sessions. ` +
+      `Add specialists, expand working days, or enable A/B Week to halve weekly demand.`,
+    );
+  }
+
   // Never borrow planning_minutes (often 200+) as a class length — a null/zero
   // class_duration must fall back to 45, not to the specialist's weekly prep.
   const classDuration = (school.class_duration && school.class_duration > 0) ? school.class_duration : 45;
@@ -2774,6 +2854,13 @@ const __serveHandler = async (req: Request): Promise<Response> => {
           calibration_ms: err.calibrationMs,
           projected_ms: err.projectedMs,
         }),
+        { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    if (err instanceof Error && err.message.startsWith("Infeasible schedule:")) {
+      console.error("Generate schedule infeasible:", err.message);
+      return new Response(
+        JSON.stringify({ error: err.message, code: "infeasible_schedule" }),
         { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }

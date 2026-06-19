@@ -118,7 +118,7 @@ Deno.test("scoreSchedule: cart_back_to_back (−5 per violation)", () => {
   assertEquals(breakdown.cart_back_to_back, -10);
 });
 
-Deno.test("scoreSchedule: K-grade after 13:00 penalised −3 per block", () => {
+Deno.test("scoreSchedule: K-grade after 13:00 penalised −20 per block", () => {
   const result: ScoreableResult = {
     blocks: [
       block({ grade: "K", start_time: "13:00" }),
@@ -129,7 +129,7 @@ Deno.test("scoreSchedule: K-grade after 13:00 penalised −3 per block", () => {
     preferenceViolations: [],
   };
   const { breakdown } = scoreSchedule(result, baseInput);
-  assertEquals(breakdown.k_grade_after_780, -6);
+  assertEquals(breakdown.k_grade_after_780, -40);
 });
 
 Deno.test("scoreSchedule: planning_target_met defaults to +30 × specialist count when no shortfalls", () => {
@@ -158,7 +158,7 @@ Deno.test("scoreSchedule: full-week coverage uses real specialist working days",
 });
 
 Deno.test("scoreSchedule: class_repeats penalises a class seeing the same specialist twice", () => {
-  // One class (t1) visits specialist s1 three times → 2 repeats → −16.
+  // One class (t1) visits specialist s1 three times → 2 repeats × −25 = −50.
   const repeated: ScoreableResult = {
     blocks: [
       block({ teacher_id: "t1", specialist_id: "s1", day_of_week: "Mon" }),
@@ -168,7 +168,7 @@ Deno.test("scoreSchedule: class_repeats penalises a class seeing the same specia
     warnings: [],
     preferenceViolations: [],
   };
-  assertEquals(scoreSchedule(repeated, baseInput).breakdown.class_repeats, -16);
+  assertEquals(scoreSchedule(repeated, baseInput).breakdown.class_repeats, -50);
 
   // Distinct specialists → no penalty.
   const distinct: ScoreableResult = {
