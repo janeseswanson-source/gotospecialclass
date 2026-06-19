@@ -142,12 +142,30 @@ const StepSchoolInfo = () => {
           .single();
         if (!error && newSchool) setSchoolId(newSchool.id);
       }
+
+      // Mirror Daily sequence selection into coordinator_prep so the prep sheet stays in sync.
+      if (data.gradePreference && workspaceIdRef.current) {
+        const targetSchoolId = schoolId;
+        let q = supabase.from('coordinator_prep').select('id').eq('workspace_id', workspaceIdRef.current);
+        q = targetSchoolId ? q.eq('school_id', targetSchoolId) : q.is('school_id', null);
+        const { data: existingPrep } = await q.maybeSingle();
+        if (existingPrep?.id) {
+          await supabase.from('coordinator_prep').update({ grade_preference: data.gradePreference } as any).eq('id', existingPrep.id);
+        } else {
+          await supabase.from('coordinator_prep').insert({
+            workspace_id: workspaceIdRef.current,
+            school_id: targetSchoolId,
+            grade_preference: data.gradePreference,
+          } as any);
+        }
+      }
+
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
     } catch {
       setSaveStatus('idle');
     }
-  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, schoolId]);
+  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, data.gradePreference, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, schoolId]);
 
   useFlushOnUnmount(saveTimer, () => { if (isLoaded.current) autoSave(); });
 
