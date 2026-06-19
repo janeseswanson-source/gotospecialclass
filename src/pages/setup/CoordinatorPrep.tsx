@@ -496,10 +496,70 @@ const CoordinatorPrep = () => {
             </div>
 
             {state.has_special_rotation && (
-              <div className="space-y-2">
-                <Label htmlFor="rot-notes">Days, time block, and grades involved</Label>
-                <Textarea id="rot-notes" rows={4} placeholder="e.g. Tuesdays 2:00–2:45, Grades 3–5"
-                  value={state.special_rotation_notes} onChange={(e) => set('special_rotation_notes', e.target.value)} />
+              <div className="space-y-4 border-t border-border pt-4">
+                <div className="space-y-2">
+                  <Label>How should we handle PLUS?</Label>
+                  <RadioGroup
+                    value={state.plus_mode}
+                    onValueChange={(v) => set('plus_mode', v)}
+                    className="gap-3"
+                  >
+                    <label className="flex items-start gap-2 text-sm cursor-pointer">
+                      <RadioGroupItem value="admin" className="mt-0.5" />
+                      <span>
+                        <strong>I'll specify the day(s)</strong> — pick the day, time block, and grades. Use this when the admin already knows why PLUS lands where it does.
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 text-sm cursor-pointer">
+                      <RadioGroupItem value="ai_auto_fit" className="mt-0.5" />
+                      <span>
+                        <strong>Let AI fit it in</strong> — no extra day. We'll absorb PLUS into the regular weekly rotation. If it can't fit, we'll warn you before generating.
+                      </span>
+                    </label>
+                  </RadioGroup>
+                </div>
+
+                {state.plus_mode === 'admin' && (
+                  <>
+                    <div className="space-y-2">
+                      <Label>PLUS day(s)</Label>
+                      <div className="flex flex-wrap gap-3">
+                        {DAYS.map(d => (
+                          <label key={d} className="flex items-center gap-2 text-sm cursor-pointer">
+                            <Checkbox
+                              checked={state.plus_days.includes(d)}
+                              onCheckedChange={() => setState(prev => ({
+                                ...prev,
+                                plus_days: prev.plus_days.includes(d)
+                                  ? prev.plus_days.filter(x => x !== d)
+                                  : [...prev.plus_days, d],
+                              }))}
+                            />
+                            {d}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="rot-notes">Time block & grades involved</Label>
+                      <Textarea id="rot-notes" rows={3} placeholder="e.g. 2:00–2:45, Grades 3–5"
+                        value={state.special_rotation_notes} onChange={(e) => set('special_rotation_notes', e.target.value)} />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="rot-why">Why this day? <span className="text-muted-foreground font-normal">(optional)</span></Label>
+                      <Textarea id="rot-why" rows={2} placeholder="e.g. PE coach only available Tuesdays; assembly day for upper grades."
+                        value={state.plus_rationale} onChange={(e) => set('plus_rationale', e.target.value)} />
+                    </div>
+                  </>
+                )}
+
+                {state.plus_mode === 'ai_auto_fit' && (
+                  <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+                    Heads up: you can skip the PLUS Rotation Matrix in the Setup Wizard. We'll try to land PLUS inside the regular grid; you'll see a warning at generation time if it can't fit.
+                  </div>
+                )}
               </div>
             )}
           </section>
