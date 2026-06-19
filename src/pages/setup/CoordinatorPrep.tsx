@@ -12,7 +12,7 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SaveStatusIndicator, SaveStatus } from '@/components/setup/SaveStatusIndicator';
 import { useFlushOnUnmount } from '@/hooks/useFlushOnUnmount';
-import { Download, FileText, ClipboardList, Wand2 } from 'lucide-react';
+import { Download, FileText, ClipboardList, Wand2, Upload, Loader2, AlertTriangle, XCircle, Info } from 'lucide-react';
 import { pdf } from '@react-pdf/renderer';
 import CoordinatorPrepDoc, { PrepRow } from '@/pdf/CoordinatorPrep';
 
@@ -117,10 +117,75 @@ const CoordinatorPrep = () => {
   const [loading, setLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [downloading, setDownloading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [aiWarnings, setAiWarnings] = useState<Array<{ field: string; message: string; severity: string }>>([]);
+  const uploadRef = useRef<HTMLInputElement>(null);
   const [activeSection, setActiveSection] = useState<string>(SECTIONS[0].id);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    try {
+      setUploading(true);
+      setAiWarnings([]);
+      const buf = await f.arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      let binary = '';
+      const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
+      }
+      const file_base64 = btoa(binary);
+      const { data: fnData, error: fnError } = await supabase.functions.invoke('parse-coordinator-prep', {
+        body: { file_base64, mime_type: f.type, school_name: selectedSchool?.name },
+      });
+      if (fnError) { toast.error(fnError.message || 'AI processing failed'); return; }
+      if (fnData?.error) { toast.error(fnData.error); return; }
+      const r = fnData as any;
+      setState(prev => ({
+        ...prev,
+        school_site_url: r.school_site_url || prev.school_site_url,
+        district_calendar_url: r.district_calendar_url || prev.district_calendar_url,
+        early_release_day: r.early_release_day ?? prev.early_release_day,
+        early_release_end_time: r.early_release_end_time || prev.early_release_end_time,
+        teacher_union_url: r.teacher_union_url || prev.teacher_union_url,
+        teacher_contract_url: r.teacher_contract_url || prev.teacher_contract_url,
+        grade_preference: r.grade_preference || prev.grade_preference,
+        day_preference: r.day_preference?.length ? r.day_preference : prev.day_preference,
+        am_pm_preference: r.am_pm_preference || prev.am_pm_preference,
+        specialist_count: r.specialist_count ?? prev.specialist_count,
+        cart_users: r.cart_users || prev.cart_users,
+        two_school_users: r.two_school_users || prev.two_school_users,
+        part_time_users: r.part_time_users || prev.part_time_users,
+        custom_grade_prefs: r.custom_grade_prefs || prev.custom_grade_prefs,
+        mostly_monday_holidays: r.mostly_monday_holidays ?? prev.mostly_monday_holidays,
+        holiday_notes: r.holiday_notes || prev.holiday_notes,
+        has_special_rotation: r.has_special_rotation ?? prev.has_special_rotation,
+        plus_mode: r.plus_mode || prev.plus_mode,
+        plus_days: r.plus_days?.length ? r.plus_days : prev.plus_days,
+        plus_rationale: r.plus_rationale || prev.plus_rationale,
+        special_rotation_notes: r.special_rotation_notes || prev.special_rotation_notes,
+      }));
+      setAiWarnings(r.warnings || []);
+      const warnCount = (r.warnings || []).length;
+      toast.success(warnCount ? `Prep autofilled — ${warnCount} item(s) to review` : 'Prep autofilled from your sheet!');
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to process upload');
+    } finally {
+      setUploading(false);
+      if (uploadRef.current) uploadRef.current.value = '';
+    }
+  };
+
+  const severityIcon = (sev: string) => {
+    if (sev === 'error') return <XCircle className="h-3.5 w-3.5 text-destructive shrink-0" />;
+    if (sev === 'warning') return <AlertTriangle className="h-3.5 w-3.5 text-amber-500 shrink-0" />;
+    return <Info className="h-3.5 w-3.5 text-blue-500 shrink-0" />;
+  };
 
   // Initial load
   useEffect(() => {
@@ -295,12 +360,23 @@ const CoordinatorPrep = () => {
             Gather these answers before sitting down to the Setup Wizard. They'll prefill the wizard where they match, and you can print this as a worksheet to fill out at school.
           </p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <SaveStatusIndicator status={saveStatus} />
           <Button variant="outline" onClick={handleDownloadPdf} disabled={downloading}>
             <Download className="h-4 w-4 mr-2" />
             {downloading ? 'Preparing…' : 'Download Prep PDF'}
           </Button>
+          <Button variant="outline" onClick={() => uploadRef.current?.click()} disabled={uploading}>
+            {uploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
+            {uploading ? 'Reading…' : 'Upload Filled Prep (AI Autofill)'}
+          </Button>
+          <input
+            ref={uploadRef}
+            type="file"
+            accept="application/pdf,image/png,image/jpeg,image/webp"
+            className="hidden"
+            onChange={handleUpload}
+          />
           <Button asChild>
             <Link to="/app/setup">
               <Wand2 className="h-4 w-4 mr-2" />
@@ -309,6 +385,20 @@ const CoordinatorPrep = () => {
           </Button>
         </div>
       </div>
+
+      {aiWarnings.length > 0 && (
+        <div className="rounded-md border border-amber-200 bg-amber-50/50 dark:bg-amber-900/10 dark:border-amber-800 p-3 space-y-1.5">
+          <p className="text-xs font-medium text-card-foreground">Review these items from your upload:</p>
+          {aiWarnings.map((w, i) => (
+            <div key={i} className="flex items-start gap-1.5">
+              {severityIcon(w.severity)}
+              <span className="text-[11px] text-muted-foreground">
+                <strong className="text-card-foreground">{w.field}:</strong> {w.message}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-6">
         {/* Left rail */}
