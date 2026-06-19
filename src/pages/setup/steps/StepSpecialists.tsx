@@ -214,8 +214,23 @@ const StepSpecialists = () => {
     errors: { row: number; name: string; raw: string; reason: string }[];
   } | null>(null);
   const isLoaded = useRef(false);
+  const [plusAutoFit, setPlusAutoFit] = useState<boolean>(false);
 
   const gradesServed = data.gradesServed || [];
+
+  // Read schools.plus_auto_fit so we can hide the per-specialist PLUS matrix
+  // when the coordinator chose "Let AI fit it in" on the prep sheet.
+  useEffect(() => {
+    if (!schoolId) return;
+    (async () => {
+      const { data: school } = await supabase
+        .from('schools')
+        .select('plus_auto_fit')
+        .eq('id', schoolId)
+        .maybeSingle();
+      if (school) setPlusAutoFit(Boolean((school as any).plus_auto_fit));
+    })();
+  }, [schoolId]);
 
   useEffect(() => {
     if (!schoolId) return;
