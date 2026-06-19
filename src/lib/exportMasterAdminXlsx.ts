@@ -248,7 +248,9 @@ export async function exportMasterAdminXlsx(opts: {
         })()
       : [],
   ];
-  XLSX.utils.book_append_sheet(wb, sheetFromAOA(schoolsAoa, Array(18).fill(18)), 'Schools');
+  const schoolsWs = sheetFromAOA(schoolsAoa, Array(18).fill(18));
+  applyHeaderRow(schoolsWs, 0, 18);
+  XLSX.utils.book_append_sheet(wb, schoolsWs, 'Schools');
 
   // === Sheet 3: Specialists ===
   const specialistsAoa: any[][] = [[
@@ -270,7 +272,9 @@ export async function exportMasterAdminXlsx(opts: {
       s.notes ?? '',
     ]);
   }
-  XLSX.utils.book_append_sheet(wb, sheetFromAOA(specialistsAoa, Array(15).fill(18)), 'Specialists');
+  const specialistsWs = sheetFromAOA(specialistsAoa, Array(15).fill(18));
+  applyHeaderRow(specialistsWs, 0, 15);
+  XLSX.utils.book_append_sheet(wb, specialistsWs, 'Specialists');
 
   // === Sheet 4: Schedule Blocks ===
   const blocksAoa: any[][] = [[
@@ -283,7 +287,9 @@ export async function exportMasterAdminXlsx(opts: {
       classifyBlockType(b.subject), b.day_of_week ?? '', b.grade ?? '', b.notes ?? '',
     ]);
   }
-  XLSX.utils.book_append_sheet(wb, sheetFromAOA(blocksAoa, Array(9).fill(18)), 'Schedule Blocks');
+  const blocksWs = sheetFromAOA(blocksAoa, Array(9).fill(18));
+  applyHeaderRow(blocksWs, 0, 9);
+  XLSX.utils.book_append_sheet(wb, blocksWs, 'Schedule Blocks');
 
   // === Sheet 5: Rotations ===
   const rotationsAoa: any[][] = [[
@@ -297,7 +303,9 @@ export async function exportMasterAdminXlsx(opts: {
       '', r.week_label ?? '', '', '', r.notes ?? '',
     ]);
   }
-  XLSX.utils.book_append_sheet(wb, sheetFromAOA(rotationsAoa, Array(13).fill(16)), 'Rotations');
+  const rotationsWs = sheetFromAOA(rotationsAoa, Array(13).fill(16));
+  applyHeaderRow(rotationsWs, 0, 13);
+  XLSX.utils.book_append_sheet(wb, rotationsWs, 'Rotations');
 
   // === Sheet 6: Classrooms ===
   const classroomsAoa: any[][] = [[
@@ -311,7 +319,9 @@ export async function exportMasterAdminXlsx(opts: {
       t.team ?? '', '', '',
     ]);
   }
-  XLSX.utils.book_append_sheet(wb, sheetFromAOA(classroomsAoa, Array(10).fill(18)), 'Classrooms');
+  const classroomsWs = sheetFromAOA(classroomsAoa, Array(10).fill(18));
+  applyHeaderRow(classroomsWs, 0, 10);
+  XLSX.utils.book_append_sheet(wb, classroomsWs, 'Classrooms');
 
   // === Sheet 7: PLUS Rotations ===
   const plusAoa: any[][] = [[
@@ -333,7 +343,9 @@ export async function exportMasterAdminXlsx(opts: {
       c.specialist_id ?? '', c.notes ?? '',
     ]);
   }
-  XLSX.utils.book_append_sheet(wb, sheetFromAOA(plusAoa, Array(9).fill(16)), 'PLUS Rotations');
+  const plusWs = sheetFromAOA(plusAoa, Array(9).fill(16));
+  applyHeaderRow(plusWs, 0, 9);
+  XLSX.utils.book_append_sheet(wb, plusWs, 'PLUS Rotations');
 
   const safeName = (school?.name ?? 'school').replace(/[^a-z0-9]+/gi, '_');
   XLSX.writeFile(wb, `MasterAdminView_${safeName}.xlsx`);
