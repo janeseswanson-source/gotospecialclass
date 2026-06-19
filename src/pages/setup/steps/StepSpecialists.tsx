@@ -1092,7 +1092,7 @@ const StepSpecialists = () => {
           <AlertDialogFooter>
             <AlertDialogCancel>Close</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => downloadTemplate('specialists', '/templates/specialists_template.csv')}
+              onClick={() => downloadTemplate('specialists', '/templates/specialists_template.xlsx')}
             >
               Download Template
             </AlertDialogAction>
