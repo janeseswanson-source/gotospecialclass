@@ -352,6 +352,27 @@ const CoordinatorPrep = () => {
             </div>
           </section>
 
+          {/* Teacher Links */}
+          <section id="teacher-links" className="rounded-xl border border-border bg-card p-6 space-y-4">
+            <h2 className="font-semibold text-card-foreground">Teacher Links <span className="text-xs font-normal text-muted-foreground ml-1">(optional)</span></h2>
+            <p className="text-sm text-muted-foreground">
+              Handy references for contract-driven scheduling rules. We don't share these — they just live on your prep sheet.
+            </p>
+
+            <div className="space-y-2">
+              <Label htmlFor="union-url">Teacher union link</Label>
+              <Input id="union-url" placeholder="https://localunion.org"
+                value={state.teacher_union_url} onChange={(e) => set('teacher_union_url', e.target.value)} />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="contract-url">Teacher contract link</Label>
+              <Input id="contract-url" placeholder="https://district.org/contract.pdf"
+                value={state.teacher_contract_url} onChange={(e) => set('teacher_contract_url', e.target.value)} />
+            </div>
+          </section>
+
+
           {/* Schedule Preferences */}
           <section id="schedule-prefs" className="rounded-xl border border-border bg-card p-6 space-y-4">
             <h2 className="font-semibold text-card-foreground">Schedule Preferences</h2>
