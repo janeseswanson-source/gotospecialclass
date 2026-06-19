@@ -471,95 +471,190 @@ const StepSpecialists = () => {
     });
   };
 
-  const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [aiParsing, setAiParsing] = useState(false);
+
+  // Build header-detected rows from a 2D grid (CSV or XLSX). Returns
+  // { imported, errors, blankDayCount, headerFound }. headerFound=false means
+  // we couldn't locate a header row with a "name"/"subject" column, in which
+  // case the caller should fall back to AI extraction.
+  const buildSpecialistsFromGrid = (rows: string[][]) => {
+    const errors: { row: number; name: string; raw: string; reason: string }[] = [];
+    const imported: Specialist[] = [];
+    let blankDayCount = 0;
+
+    // Find the header row: first row containing a "name" cell AND a "subject" cell.
+    let headerIdx = -1;
+    for (let i = 0; i < Math.min(rows.length, 5); i++) {
+      const lower = rows[i].map(c => (c || '').toString().toLowerCase());
+      if (lower.some(c => c.includes('name')) && lower.some(c => c.includes('subject'))) {
+        headerIdx = i; break;
+      }
+    }
+    if (headerIdx === -1) return { imported, errors, blankDayCount, headerFound: false };
+
+    const header = rows[headerIdx].map(h => (h || '').toString().toLowerCase().replace(/\s+/g, ' ').trim());
+    const findIdx = (...keys: string[]) => header.findIndex(h => keys.some(k => h.includes(k)));
+
+    const nameIdx = findIdx('name');
+    const phoneIdx = findIdx('phone');
+    const emailIdx = findIdx('email');
+    const subjectIdx = findIdx('subject');
+    const locationIdx = header.findIndex(h => h === 'location' || h.includes('room') || h.startsWith('location'));
+    const daysIdx = findIdx('working day', 'days_working', 'working_days', 'days at school', 'working');
+    const twoSchoolsIdx = findIdx('two school', 'two_school', 'second site');
+    const secondSchoolIdx = findIdx('second site name', 'second_school_name', 'second school');
+    // Legacy CSV fields
+    const planIdx = findIdx('planning');
+    const lunchIdx = findIdx('lunch');
+    const cartIdx = findIdx('cart');
+    const secondLocIdx = findIdx('second_location', 'second loc');
+    const partTimeIdx = findIdx('part_time', 'part time');
+    const ptPlanIdx = findIdx('part_time_planning', 'pt_planning', 'pt planning');
+    const ptLunchIdx = findIdx('part_time_lunch', 'pt_lunch', 'pt lunch');
+
+    const yesValues = ['yes', 'true', '1', 'y', 'checked', '✓'];
+
+    rows.slice(headerIdx + 1).forEach((row, idx) => {
+      const rowNum = idx + headerIdx + 2;
+      const cell = (i: number) => (i >= 0 ? (row[i] ?? '').toString().trim() : '');
+      const name = cell(nameIdx);
+      const subject = cell(subjectIdx);
+      const location = cell(locationIdx);
+      // Skip footer/decorative rows: drop rows with no name AND no subject AND no location.
+      if (!name && !subject && !location) return;
+
+      const raw = cell(daysIdx);
+      const parsed = parseWorkingDays(raw);
+      if (!parsed.days) {
+        errors.push({
+          row: rowNum,
+          name: name || '(no name)',
+          raw,
+          reason: parsed.reason || 'Expected: Mon,Tue,Wed,Thu,Fri (or Mon-Fri, MWF, All, blank)',
+        });
+        return;
+      }
+      if (parsed.defaulted) blankDayCount++;
+
+      // Normalize subject to known list when possible.
+      const normalizedSubject = (() => {
+        const s = subject.toLowerCase();
+        if (!s) return 'Other';
+        const match = subjects.find(opt => opt.toLowerCase() === s);
+        if (match) return match;
+        if (s.includes('phys') || s === 'pe' || s.includes('gym')) return 'PE';
+        if (s.includes('comput') || s.includes('tech')) return 'Technology';
+        if (s.includes('library') || s.includes('media')) return 'Library';
+        if (s.includes('music')) return 'Music';
+        if (s.includes('art')) return 'Art';
+        if (s.includes('garden')) return 'Garden';
+        if (s.includes('steam') || s.includes('stem')) return 'STEAM';
+        if (s.includes('science') || s.includes('lab')) return 'Science Lab';
+        return subject; // keep raw if unrecognized
+      })();
+
+      imported.push({
+        ...defaultSpecialist(),
+        name,
+        phone: cell(phoneIdx),
+        email: cell(emailIdx),
+        subject: normalizedSubject,
+        workingDays: parsed.days,
+        planningMinutes: planIdx >= 0 ? Number(cell(planIdx)) || 45 : 45,
+        lunchMinutes: lunchIdx >= 0 ? Number(cell(lunchIdx)) || 30 : 30,
+        location,
+        usesCart: cartIdx >= 0 ? yesValues.includes(cell(cartIdx).toLowerCase()) : false,
+        twoSchools: twoSchoolsIdx >= 0 ? yesValues.includes(cell(twoSchoolsIdx).toLowerCase()) : false,
+        secondSchoolName: cell(secondSchoolIdx),
+        secondLocation: cell(secondLocIdx),
+        isPartTime: partTimeIdx >= 0 ? yesValues.includes(cell(partTimeIdx).toLowerCase()) : false,
+        partTimePlanningMinutes: ptPlanIdx >= 0 ? Number(cell(ptPlanIdx)) || 30 : 30,
+        partTimeLunchMinutes: ptLunchIdx >= 0 ? Number(cell(ptLunchIdx)) || 20 : 20,
+      });
+    });
+
+    return { imported, errors, blankDayCount, headerFound: true };
+  };
+
+  const runAiFallback = async (rows: string[][]) => {
+    setAiParsing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('parse-specialist-template', { body: { rows } });
+      if (error) throw error;
+      const aiSpecs: any[] = data?.specialists || [];
+      if (aiSpecs.length === 0) {
+        toast.error("AI couldn't find any specialists in that file.");
+        return;
+      }
+      const imported: Specialist[] = aiSpecs.map(s => ({
+        ...defaultSpecialist(),
+        name: s.name || '',
+        phone: s.phone || '',
+        email: s.email || '',
+        subject: s.subject || 'Other',
+        location: s.location || '',
+        workingDays: Array.isArray(s.working_days) && s.working_days.length > 0 ? s.working_days : [...days],
+        twoSchools: Boolean(s.two_schools),
+        secondSchoolName: s.second_school_name || '',
+      }));
+      setSpecialists(prev => [...prev, ...imported]);
+      toast.success(`AI auto-filled ${imported.length} specialist${imported.length === 1 ? '' : 's'} from your template.`);
+    } catch (err: any) {
+      console.error('AI parse error', err);
+      toast.error(err?.message || 'AI extraction failed.');
+    } finally {
+      setAiParsing(false);
+    }
+  };
+
+  const handleTemplateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (fileRef.current) fileRef.current.value = '';
     if (!f) return;
 
-    // Pre-checks
-    if (!f.name.toLowerCase().endsWith('.csv')) {
-      toast.error('Only .csv files are supported.');
+    const ext = f.name.toLowerCase().split('.').pop();
+    if (!['csv', 'xlsx', 'xls'].includes(ext || '')) {
+      toast.error('Upload a .xlsx, .xls, or .csv file.');
       return;
     }
-    if (f.size > 1_048_576) {
-      toast.error('Specialist roster is too large. Max 500 rows.');
+    if (f.size > 5_242_880) {
+      toast.error('File too large. Max 5 MB.');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onerror = () => setParseErrorOpen(true);
-    reader.onload = (ev) => {
-      try {
-        const text = ev.target?.result as string;
-        const rows = parseCSV(text);
-        if (rows.length < 2) { setParseErrorOpen(true); return; }
-
-        const header = rows[0].map(h => h.toLowerCase());
-        const nameIdx = header.findIndex(h => h.includes('name'));
-        const subjectIdx = header.findIndex(h => h.includes('subject'));
-        const daysIdx = header.findIndex(h => h.includes('days_working') || h.includes('working_days') || h.includes('days') || h.includes('working'));
-        const planIdx = header.findIndex(h => h.includes('planning'));
-        const lunchIdx = header.findIndex(h => h.includes('lunch'));
-        const locationIdx = header.findIndex(h => h === 'location' || h.includes('room'));
-        const cartIdx = header.findIndex(h => h.includes('cart'));
-        const twoSchoolsIdx = header.findIndex(h => h.includes('two_school') || h.includes('two school'));
-        const secondSchoolIdx = header.findIndex(h => h.includes('second_school_name') || h.includes('second school'));
-        const secondLocIdx = header.findIndex(h => h.includes('second_location') || h.includes('second loc'));
-        const partTimeIdx = header.findIndex(h => h.includes('part_time') || h.includes('part time'));
-        const ptPlanIdx = header.findIndex(h => h.includes('part_time_planning') || h.includes('pt_planning') || h.includes('pt planning'));
-        const ptLunchIdx = header.findIndex(h => h.includes('part_time_lunch') || h.includes('pt_lunch') || h.includes('pt lunch'));
-
-        const yesValues = ['yes', 'true', '1', 'y'];
-        const imported: Specialist[] = [];
-        const errors: { row: number; name: string; raw: string; reason: string }[] = [];
-        let blankDayCount = 0;
-
-        rows.slice(1).forEach((row, idx) => {
-          const rowNum = idx + 2; // header is row 1
-          const name = nameIdx >= 0 ? (row[nameIdx] || '').trim() : '';
-          const raw = daysIdx >= 0 ? (row[daysIdx] || '') : '';
-          const parsed = parseWorkingDays(raw);
-
-          if (!parsed.days) {
-            errors.push({
-              row: rowNum,
-              name: name || '(no name)',
-              raw,
-              reason: parsed.reason || 'Expected: Mon,Tue,Wed,Thu,Fri (or Mon-Fri, MWF, All, blank)',
-            });
-            return;
-          }
-          if (parsed.defaulted) blankDayCount++;
-
-          imported.push({
-            ...defaultSpecialist(),
-            name,
-            subject: subjectIdx >= 0 ? row[subjectIdx] || 'Other' : 'Other',
-            workingDays: parsed.days,
-            planningMinutes: planIdx >= 0 ? Number(row[planIdx]) || 45 : 45,
-            lunchMinutes: lunchIdx >= 0 ? Number(row[lunchIdx]) || 30 : 30,
-            location: locationIdx >= 0 ? row[locationIdx] || '' : '',
-            usesCart: cartIdx >= 0 ? yesValues.includes((row[cartIdx] || '').toLowerCase()) : false,
-            twoSchools: twoSchoolsIdx >= 0 ? yesValues.includes((row[twoSchoolsIdx] || '').toLowerCase()) : false,
-            secondSchoolName: secondSchoolIdx >= 0 ? row[secondSchoolIdx] || '' : '',
-            secondLocation: secondLocIdx >= 0 ? row[secondLocIdx] || '' : '',
-            isPartTime: partTimeIdx >= 0 ? yesValues.includes((row[partTimeIdx] || '').toLowerCase()) : false,
-            partTimePlanningMinutes: ptPlanIdx >= 0 ? Number(row[ptPlanIdx]) || 30 : 30,
-            partTimeLunchMinutes: ptLunchIdx >= 0 ? Number(row[ptLunchIdx]) || 20 : 20,
-          });
-        });
-
-        if (imported.length > 0) {
-          setSpecialists(prev => [...prev, ...imported]);
-        }
-        setImportSummary({ importedCount: imported.length, blankDayCount, errors });
-      } catch (err) {
-        console.error('CSV parse error', err);
-        setParseErrorOpen(true);
+    try {
+      let rows: string[][];
+      if (ext === 'csv') {
+        const text = await f.text();
+        rows = parseCSV(text);
+      } else {
+        const buf = await f.arrayBuffer();
+        const wb = XLSX.read(buf, { type: 'array' });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: '', blankrows: false }) as any;
       }
-    };
-    reader.readAsText(f);
+      if (rows.length < 2) { setParseErrorOpen(true); return; }
+
+      const { imported, errors, blankDayCount, headerFound } = buildSpecialistsFromGrid(rows);
+
+      if (!headerFound || (imported.length === 0 && errors.length === 0)) {
+        await runAiFallback(rows);
+        return;
+      }
+
+      if (imported.length > 0) setSpecialists(prev => [...prev, ...imported]);
+      setImportSummary({ importedCount: imported.length, blankDayCount, errors });
+
+      // If most rows failed, also try AI as a recovery path.
+      if (imported.length === 0 && errors.length > 0) {
+        await runAiFallback(rows);
+      }
+    } catch (err) {
+      console.error('Template parse error', err);
+      setParseErrorOpen(true);
+    }
   };
+
 
   return (
     <div className="rounded-xl border border-border bg-card p-6 space-y-5">
