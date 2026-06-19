@@ -197,14 +197,24 @@ const CoordinatorPrep = () => {
   const set = <K extends keyof PrepState>(k: K, v: PrepState[K]) =>
     setState(prev => ({ ...prev, [k]: v }));
 
-  const toggleDay = (day: string) => {
-    setState(prev => ({
-      ...prev,
-      day_preference: prev.day_preference.includes(day)
-        ? prev.day_preference.filter(d => d !== day)
-        : [...prev.day_preference, day],
-    }));
-  };
+  // Scroll-spy: highlight the section currently in view
+  useEffect(() => {
+    if (loading) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+        if (visible?.target.id) setActiveSection(visible.target.id);
+      },
+      { rootMargin: '-80px 0px -60% 0px', threshold: 0 }
+    );
+    SECTIONS.forEach((s) => {
+      const el = document.getElementById(s.id);
+      if (el) observer.observe(el);
+    });
+    return () => observer.disconnect();
+  }, [loading]);
 
   const handleDownloadPdf = async () => {
     setDownloading(true);
