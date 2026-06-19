@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useState, useMemo } from 'react';
+import { useEffect, useRef, useCallback, useState, useMemo, type ReactNode } from 'react';
 import { SaveStatusIndicator, type SaveStatus } from '@/components/setup/SaveStatusIndicator';
 import { SETUP_STEPS } from '../stepIndex';
 import { useFlushOnUnmount } from '@/hooks/useFlushOnUnmount';
