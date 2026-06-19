@@ -271,15 +271,23 @@ const CoordinatorPrep = () => {
       <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr] gap-6">
         {/* Left rail */}
         <aside className="lg:sticky lg:top-4 self-start space-y-1">
-          {SECTIONS.map(s => (
-            <button
-              key={s.id}
-              onClick={() => scrollTo(s.id)}
-              className="block w-full text-left text-sm px-3 py-2 rounded-md text-muted-foreground hover:bg-accent/10 hover:text-foreground transition-colors"
-            >
-              {s.label}
-            </button>
-          ))}
+          {SECTIONS.map(s => {
+            const isActive = activeSection === s.id;
+            return (
+              <button
+                key={s.id}
+                onClick={() => { setActiveSection(s.id); scrollTo(s.id); }}
+                aria-current={isActive ? 'true' : undefined}
+                className={`relative block w-full text-left text-sm px-3 py-2 rounded-md transition-colors ${
+                  isActive
+                    ? 'bg-accent/20 text-foreground font-medium after:content-[""] after:absolute after:right-[-6px] after:top-1/2 after:-translate-y-1/2 after:border-y-[6px] after:border-y-transparent after:border-l-[6px] after:border-l-accent'
+                    : 'text-muted-foreground hover:bg-accent/10 hover:text-foreground'
+                }`}
+              >
+                {s.label}
+              </button>
+            );
+          })}
           <div className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
             <FileText className="h-4 w-4 mb-1 text-primary" />
             Autosaves as you type. Safe to leave anytime.
