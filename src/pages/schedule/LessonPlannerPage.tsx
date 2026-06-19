@@ -13,6 +13,7 @@ import { BookOpen, NotebookPen, CheckCircle2, FileText } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { formatTime, cn } from "@/lib/utils";
 import { getSubjectBadgeClass } from "@/lib/subjectColors";
+import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -171,8 +172,16 @@ export default function LessonPlannerPage() {
     return <div className="p-6 text-sm text-muted-foreground">Select a school to start planning lessons.</div>;
   }
 
+  const activeSchool = useSchool().schools.find((s) => s.id === selectedSchoolId);
+
   return (
     <div className="space-y-5 p-4 sm:p-6">
+      <BrandedScheduleHeader
+        title="Lesson Planner"
+        subtitle="Specialist Ops! · Plan Weekly Sessions"
+        schoolName={activeSchool?.name}
+        schoolYear={(activeSchool as any)?.school_year ?? undefined}
+      />
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
