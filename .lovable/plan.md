@@ -1,47 +1,88 @@
-# Move Coordinator Prep upload to the Coordinator Prep page
+# Master Admin View fix + brand pass + schedule quality investigation
 
-## 1. Revert `StepWelcome.tsx`
-Remove the entire "📋 Quick Start — Coordinator Prep" block, the file input, all upload state (`aiResult`, `processing`, `fileRef`, `handleTemplateUpload`, `fileToRows`, `Warning`/`AIResult` types), and unused imports (`xlsx`, `supabase`, upload icons). Restore the simple Welcome screen: heading, blurb, School Name input, Get Started button.
+Three deliverables in one turn. Item 3 is **investigation + a proposed fix list** — no generator code change yet, because you asked to investigate first.
 
-## 2. Add upload + AI autofill to `CoordinatorPrep.tsx`
-In the header toolbar (next to "Download Prep PDF"), add a new **"Upload Filled Prep (AI Autofill)"** button:
-- Accepts `.pdf`, `.png`, `.jpg`, `.jpeg`, `.webp` (the user scans/photographs the printed sheet, or re-exports the edited PDF).
-- Reads file as base64, calls a new edge function `parse-coordinator-prep` with `{ file_base64, mime_type, school_name }`.
-- On success: merges returned fields into local `state` (triggers existing debounced autosave → `coordinator_prep` row). Shows toast with counts + any warnings inline below the toolbar.
-- Loading spinner while processing; disabled state.
-- Small helper text under header: "Upload your filled-in prep sheet — AI will read it and fill in the sections below."
+---
 
-No changes to wizard prefill logic. Data flows: PDF → AI → `coordinator_prep` table only. The wizard already pulls from this table separately (unchanged).
+## 1. Fix the Master Admin View (real data, not a mock)
 
-## 3. New edge function `supabase/functions/parse-coordinator-prep/index.ts`
-- `verify_jwt = false` pattern with manual auth (matches existing functions).
-- Accepts JSON body: `{ file_base64, mime_type, school_name? }`. Validate with size/type checks (PDF or common images).
-- Calls Lovable AI Gateway `google/gemini-2.5-flash` with multimodal input (image_url with data URI for images; PDFs supported by Gemini).
-- Tool-calling schema mirrors the `PrepState` shape in `CoordinatorPrep.tsx`:
-  - `school_site_url`, `district_calendar_url`, `early_release_day`, `early_release_end_time`, `teacher_union_url`, `teacher_contract_url`
-  - `grade_preference` (`keep_together` | `waterfall` | `fixed_sequence` | `""`)
-  - `day_preference` (string[]), `am_pm_preference`
-  - `specialist_count` (number|null), `cart_users`, `two_school_users`, `part_time_users`, `custom_grade_prefs`
-  - `mostly_monday_holidays` (bool|null), `holiday_notes`
-  - `has_special_rotation` (bool|null), `plus_mode` (`""|admin|ai_auto_fit`), `plus_days` (string[]), `plus_rationale`, `special_rotation_notes`
-  - `warnings: [{field, message, severity}]`
-- System prompt: "You are reading a filled-in Coordinator Prep intake sheet. Extract every answer you can read. Leave fields blank when illegible. Add a warning entry for ambiguous answers."
-- Returns parsed object directly. Logs to `ai_usage_log` (feature: `coordinator_prep_upload`).
-- Same 402/429 error handling pattern as `process-onboarding-template`.
+**Why it looks like "a PNG":** the Planning & Prep band currently hardcodes `specialists.slice(0, 4)` for every cell — same four names, every day. Even though rotation rows below are pulled from `schedule_blocks`, the static top band makes the whole page feel fake.
 
-## 4. Cleanup
-- Delete `supabase/functions/process-onboarding-template/index.ts` (no longer referenced after StepWelcome revert).
-- Delete `public/templates/onboarding_template.xlsx` if present (the xlsx intake template).
-- Keep `public/templates/coordinator_prep_template.pdf` — that's the file users print/fill.
+Changes to `src/pages/schedule/MasterAdminViewPage.tsx`:
+- **Planning & Prep band:** read live from `class_rotations` (which already has `slot_index`, `week_label`, `rotation_type`, and per-rotation specialist↔teacher pairings) instead of `specialists.slice(0,4)`. Show up to 3 sub-rotations per day with the rotation label, A/B badge, and the actual 4 specialist→teacher pairs from the data. If there are no rotations for a given day, show "—".
+- **Rotation slot rows:** keep the live read from `schedule_blocks`, but group by canonical time slots from the school (not just unique `start|end` pairs) so empty cells render as `·` instead of dropping the row. Sort grades K, 1, 2, 3, 4, 5 explicitly (not lexicographic — currently "K" sorts after digits).
+- **Chrome rows (Recess / Lunch / Dismissal):** pull from `recess_lunch_config` for the active school instead of inferring from `schedule_blocks` subject regex — that's where the source of truth lives. Falls back to schedule_blocks if config is empty.
+- **Header:** show school name, school year, and active session week (A or B if applicable). Wire `selectedSchool.school_year` for real.
+- **Empty state:** when no `schedule_generations` row exists, show a clear "Generate a schedule to populate this view" panel with a button to `/app/schedule` instead of a half-empty grid.
 
-## Out of scope
-- No changes to wizard step flow, SetupContext, or schema.
-- No new DB columns — `coordinator_prep` already has every field used.
-- No bulk re-parse, no version history, no diff UI for re-uploads (latest upload overwrites; existing autosave handles persistence).
+## 2. Brand pass — all PDFs, all XLSXs, on-screen schedule pages
+
+Brand tokens (already in CSS): navy `#1B2A4A`, gold `#C5A55A`, cream band `#FBF5E6`. Logo at `src/assets/logo.png` and wordmark at `src/assets/nsc-wordmark.png`.
+
+**Step 2a — Logo as Lovable asset:** upload `src/assets/logo.png` and `nsc-wordmark.png` via `lovable-assets create` so PDFs can embed them via URL (react-pdf needs a network-accessible URL for `<Image>`). Keep the existing imports for in-app use; only add `.asset.json` pointers for PDF embedding.
+
+**Step 2b — Shared PDF brand header:** new `src/pdf/lib/BrandHeader.tsx` exporting a reusable `<BrandHeader>` (logo + "Specialist Schedule Planner" title + school name/year + navy/gold rule) and `<BrandFooter>` (left: GoToSpecialClass.com, center: "Generated by Specialist Ops!" with gold heart, right: info@). Used across:
+- `src/pdf/CoordinatorPrep.tsx` — currently has no logo; add brand header + footer.
+- `src/pdf/SpecialistPlanner.tsx` — has gold accent, missing logo image; add it to header.
+- `src/pdf/AdminOverview.tsx` — same: add logo to header, add brand footer.
+
+**Step 2c — XLSX brand pass:** in `src/lib/exportMasterAdminXlsx.ts`, restyle the "Master Admin View" sheet to mirror the on-screen branded grid: navy header row with white text + gold underline, cream alternating rows, school name/year cells at top, footer row with `GoToSpecialClass.com`. Set print area + landscape orientation. Other sheets get the navy header row treatment only (data is the focus).
+
+**Step 2d — On-screen pages get the branded header band** (the one you have on Master Admin View — logo + title + school/year, navy/gold rule):
+- `src/pages/schedule/MasterSchedulePage.tsx` — add `<BrandedScheduleHeader>` above the toolbar.
+- `src/pages/schedule/LessonPlannerPage.tsx` — same.
+- `src/pages/schedule/SpecialistPlannerPage.tsx` — same.
+- New shared component: `src/components/schedule/BrandedScheduleHeader.tsx`.
+
+**Out of scope for branding:** any restyle of the actual schedule grid widgets, color tokens, or shadcn components. Header band + PDF/XLSX chrome only.
+
+## 3. Schedule quality — investigation findings (no code changes yet)
+
+You're seeing 50/100 because the AI verifier (in `supabase/functions/verify-schedule`) scores against **7 quality criteria** (subject variety, day clustering, load balance, AM/PM prefs, K late, cart back-to-back), but the **generator** (in `_scoring.ts`) only optimizes for a subset of those. The biggest gaps:
+
+### Root causes (ranked by impact)
+
+1. **No "every grade sees every specialist" penalty.** The generator rewards `full_week_coverage` (grade has at least one block per day, +100 per grade) but never penalizes "grade X never sees Music this week." This is exactly the verifier's complaint about Kindergarten missing sessions.
+2. **No day-spread penalty for subjects.** `spec_dayload_stdev: -1` only balances how busy a specialist is per day — it does not penalize a grade getting Art twice on Monday and zero on other days. Need a per-(grade, subject)-per-day variance penalty.
+3. **`class_repeats: -8` is too weak.** A repeat costs 8 points but a full-week coverage row earns 100 — the optimizer will gladly trade 12 repeats for one extra covered grade. Should be −25 or higher.
+4. **Monte Carlo iteration cap is 50 max** (calibration tier). For real schools the calibration usually picks 10–25 iterations. With ~6 grades × 5 specialists × 5 days the search space is huge — 25 random restarts is well under what's needed to find a good local optimum.
+5. **Simulated Annealing moves are too local.** It does single-block swaps. It cannot make multi-block restructures (e.g. swap an entire Monday rotation with Thursday) that would fix clustering.
+6. **K-late penalty is tiny (−3 per occurrence).** Verifier flags K after 1pm as a major issue; generator barely cares.
+7. **AI verifier and generator scoring disagree on what "good" means.** The verifier doesn't see the generator's weights, and the generator doesn't see the verifier's criteria. They should share the same rubric.
+
+### Proposed fixes (for your approval before I code them)
+
+A. **Add three new generator penalties** in `_scoring.ts`:
+   - `subject_gap` (−40 per missing grade↔specialist pair that week)
+   - `subject_day_clustering` (−15 per duplicate of same subject on same day for same grade)
+   - `late_k_block` (raise from −3 to −20)
+   - Raise `class_repeats` from −8 to −25.
+
+B. **Raise Monte Carlo ceiling** in `_monteCarlo.ts`: tier to 200 / 100 / 50 iterations (instead of 50 / 25 / 10). Calibration budget stays at 30s.
+
+C. **Add a "shuffle rotation" SA move** in `runSimulatedAnnealing`: in addition to single swaps, allow permuting all blocks for a given (grade, day) — that's the move that fixes day-clustering.
+
+D. **Share the rubric.** Refactor verifier prompt to read the score breakdown the generator returned (already passed in) and explicitly compare. Quality score = scaled generator score, AI only adds qualitative narrative on what's left.
+
+E. **Pre-flight check before scheduling:** if specialist count × working days < grade count × required subjects, surface a hard error pre-generation explaining the schedule is mathematically impossible — no point Monte-Carloing a no-win problem.
+
+If you approve A–E I'll implement them next turn, run the existing `_simulate.ts` harness to compare before/after, and report the score lift.
 
 ## Files
-- edit `src/pages/setup/steps/StepWelcome.tsx`
-- edit `src/pages/setup/CoordinatorPrep.tsx`
-- create `supabase/functions/parse-coordinator-prep/index.ts`
-- delete `supabase/functions/process-onboarding-template/index.ts`
-- delete `public/templates/onboarding_template.xlsx` (if exists)
+
+**Implement now:**
+- edit `src/pages/schedule/MasterAdminViewPage.tsx` (real data, sorted grades, empty state)
+- create `src/pdf/lib/BrandHeader.tsx`
+- create `src/components/schedule/BrandedScheduleHeader.tsx`
+- edit `src/pdf/CoordinatorPrep.tsx`, `src/pdf/SpecialistPlanner.tsx`, `src/pdf/AdminOverview.tsx`
+- edit `src/lib/exportMasterAdminXlsx.ts`
+- edit `src/pages/schedule/MasterSchedulePage.tsx`, `LessonPlannerPage.tsx`, `SpecialistPlannerPage.tsx`
+- create `src/assets/logo.png.asset.json`, `src/assets/nsc-wordmark.png.asset.json` (CDN pointers; binaries removed from repo)
+
+**Investigation deliverable:** the findings + proposed fixes A–E above. No generator changes this turn — awaiting your green light.
+
+## Out of scope
+- No DB migrations.
+- No changes to Coordinator Prep page, setup wizard, or auth.
+- No restyle of shadcn primitives, schedule grid cells, or sidebar.
+- No new tests for the schedule generator (will come with the actual fixes if you approve A–E).
