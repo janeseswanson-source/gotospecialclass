@@ -4,12 +4,29 @@ import { SETUP_STEPS } from '../stepIndex';
 import { useFlushOnUnmount } from '@/hooks/useFlushOnUnmount';
 import { useSetup } from '@/contexts/SetupContext';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ChevronDown, AlertCircle } from 'lucide-react';
+import { ChevronDown, AlertCircle, Plus, Minus, Trash2, Sun, Utensils, Cloud, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import PeriodCard, { PeriodKey, PeriodRow } from './recessLunch/PeriodCard';
+
+const PERIOD_META: Record<PeriodKey, { title: string; Icon: any; accent: string }> = {
+  amRecess: { title: 'AM Recess', Icon: Sun, accent: 'text-amber-600 dark:text-amber-300' },
+  lunch:    { title: 'Lunch',     Icon: Utensils, accent: 'text-amber-700 dark:text-amber-200' },
+  pmRecess: { title: 'PM Recess', Icon: Cloud, accent: 'text-sky-600 dark:text-sky-300' },
+};
+
+const addMinutes = (hhmm: string, minutes: number): string => {
+  if (!hhmm || !/^\d{2}:\d{2}$/.test(hhmm)) return '';
+  const [h, m] = hhmm.split(':').map(Number);
+  const total = h * 60 + m + minutes;
+  const nh = Math.floor((total % (24 * 60)) / 60);
+  const nm = total % 60;
+  return `${String(nh).padStart(2, '0')}:${String(nm).padStart(2, '0')}`;
+};
+
 
 type CardsState = Record<PeriodKey, PeriodRow[]>;
 
