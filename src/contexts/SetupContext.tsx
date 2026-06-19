@@ -42,7 +42,7 @@ export interface SchoolSetupData {
   conflictTiming: 'before' | 'after';
   earlyReleaseDay: string;
   earlyReleaseEndTime: string;
-  adminRotation: { day: string; startTime: string; endTime: string; grades: string[]; autoSchedule?: boolean; durationMinutes?: number }[];
+  adminRotation: { day: string; startTime: string; endTime: string; grades: string[]; autoSchedule?: boolean; durationMinutes?: number; rotationLabel?: string; weekLabel?: 'A' | 'B' | null }[];
   bigGroupConfig: Array<{ grade: string; teacherIds: string[] }>;
   defaultAmPmPreference: string;
   defaultDayPreference: string;
