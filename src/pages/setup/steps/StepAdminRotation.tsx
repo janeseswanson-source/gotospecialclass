@@ -75,7 +75,8 @@ const StepAdminRotation = () => {
   };
 
   const addEntry = () => {
-    const next = [...entries, { day: 'Tuesday', startTime: '08:00', endTime: '08:45', grades: [], autoSchedule: true, durationMinutes: 45 }];
+    const sameDay = entries.filter(e => e.day === 'Monday').length;
+    const next = [...entries, { day: 'Monday', startTime: '07:45', endTime: '08:05', grades: [], autoSchedule: false, durationMinutes: 30, rotationLabel: `${sameDay + 1}${sameDay === 0 ? 'st' : sameDay === 1 ? 'nd' : 'rd'}`, weekLabel: null } as any];
     updateData({ adminRotation: next });
     save(next);
   };
@@ -141,11 +142,30 @@ const StepAdminRotation = () => {
           return (
           <Card key={idx} className="border-l-4 border-l-primary bg-muted/30">
             <CardContent className="pt-4 space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3 flex-wrap">
                 <span className="text-sm font-medium text-foreground">Block {idx + 1}</span>
-                <Button variant="ghost" size="icon" onClick={() => removeEntry(idx)} className="h-8 w-8 text-destructive hover:text-destructive">
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Input
+                    placeholder="Label (e.g. 1st)"
+                    value={(entry as any).rotationLabel ?? ''}
+                    onChange={(e) => update(idx, { rotationLabel: e.target.value } as any)}
+                    className="h-8 w-28 text-xs"
+                  />
+                  <Select
+                    value={(entry as any).weekLabel ?? 'none'}
+                    onValueChange={(v) => update(idx, { weekLabel: v === 'none' ? null : v } as any)}
+                  >
+                    <SelectTrigger className="h-8 w-28 text-xs"><SelectValue placeholder="A/B week" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Every week</SelectItem>
+                      <SelectItem value="A">Week A only</SelectItem>
+                      <SelectItem value="B">Week B only</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Button variant="ghost" size="icon" onClick={() => removeEntry(idx)} className="h-8 w-8 text-destructive hover:text-destructive">
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
 
               <div className="flex items-center justify-between rounded-md border border-border bg-background/50 px-3 py-2">

@@ -2,7 +2,7 @@ import { useLocation, Link } from 'react-router-dom';
 import logo from '@/assets/logo.png';
 import {
   LayoutDashboard, Wand2, CalendarDays, Users, Download,
-  CreditCard, Settings, LogOut, School, HelpCircle, ClipboardList, NotebookPen
+  CreditCard, Settings, LogOut, School, HelpCircle, ClipboardList, NotebookPen, LayoutGrid
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSchool } from '@/contexts/SchoolContext';
@@ -17,6 +17,7 @@ const navItems = [
   { label: 'Coordinator Prep', icon: ClipboardList, path: '/app/coordinator-prep' },
   { label: 'Setup Wizard', icon: Wand2, path: '/app/setup' },
   { label: 'Master Schedule', icon: CalendarDays, path: '/app/schedule' },
+  { label: 'Master Admin View', icon: LayoutGrid, path: '/app/admin-view' },
   { label: 'Specialist Planner', icon: Users, path: '/app/planner' },
   { label: 'Lesson Planner', icon: NotebookPen, path: '/app/lesson-planner' },
   { label: 'Exports', icon: Download, path: '/app/exports' },

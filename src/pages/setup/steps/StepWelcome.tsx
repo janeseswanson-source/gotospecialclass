@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { FieldLabel } from '@/components/ui/field-label';
 import { Wand2, Download, Upload, CheckCircle2, FileText, AlertTriangle, XCircle, Info, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { downloadTemplate } from '@/lib/templateDownload';
+
 import { supabase } from '@/integrations/supabase/client';
 import * as XLSX from 'xlsx';
 
@@ -250,17 +250,14 @@ const StepWelcome = () => {
             <h3 className="text-sm font-semibold text-card-foreground">📋 Quick Start — Coordinator Prep</h3>
           </div>
           <p className="text-xs text-muted-foreground">
-            Download the Coordinator Prep intake sheet, fill in your school's answers, then upload it. AI will read every answer and auto-fill the wizard tabs for you.
+            Print the Coordinator Prep sheet, fill it in by hand or in any PDF editor, then upload the completed file. AI will read every answer and auto-fill the wizard tabs for you.
           </p>
 
           <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              className="gap-1.5 border-accent text-accent hover:bg-accent/10"
-              onClick={() => downloadTemplate('onboarding_template', '/templates/onboarding_template.xlsx')}
-            >
-              <Download className="h-3.5 w-3.5" /> Download Template (XLSX)
+            <Button asChild size="sm" variant="outline" className="gap-1.5 border-accent text-accent hover:bg-accent/10">
+              <a href="/templates/coordinator_prep_template.pdf" target="_blank" rel="noreferrer">
+                <Download className="h-3.5 w-3.5" /> Download Coordinator Prep (PDF)
+              </a>
             </Button>
             <Button
               size="sm"
@@ -276,14 +273,8 @@ const StepWelcome = () => {
             </Button>
             <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={handleTemplateUpload} />
           </div>
-          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-            <span>Prefer to print and hand-fill?</span>
-            <a href="/templates/coordinator_prep_template.pdf" target="_blank" rel="noreferrer" className="underline text-accent hover:text-accent/80">
-              Download printable PDF
-            </a>
-          </div>
           <p className="text-[11px] text-muted-foreground">
-            Supports XLSX or CSV. AI will parse your answers and auto-fill the wizard fields.
+            Upload accepts a scanned PDF transcribed into CSV/XLSX, or the typed XLSX intake sheet. AI parses your answers and auto-fills the wizard.
           </p>
 
           {/* AI Validation Report */}

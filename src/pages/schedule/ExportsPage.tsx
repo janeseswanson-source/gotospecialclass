@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { logActivity } from "@/lib/activityLogger";
 import { exportSchedulePDF } from "@/lib/exportPdf";
+import { exportMasterAdminXlsx } from "@/lib/exportMasterAdminXlsx";
 import { formatTime } from "@/lib/utils";
 
 export default function ExportsPage() {
@@ -63,6 +64,17 @@ export default function ExportsPage() {
     const html = `<html><head><style>body{font-family:Arial,sans-serif}table{border-collapse:collapse;width:100%}th{background:#f0f0f0;color:#000;padding:6px;font-size:11px;border:1px solid #000;font-weight:bold}</style></head><body><h2>Master Schedule</h2><table><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr>${rows.join("")}</table></body></html>`;
     downloadFile(html, "master-schedule.doc", "application/msword");
     await recordExport("master_word", "docx");
+  }
+
+  async function exportMasterAdminWorkbook() {
+    if (!selectedSchoolId) return;
+    try {
+      await exportMasterAdminXlsx({ schoolId: selectedSchoolId, generationId: genId });
+      toast({ title: "Master Admin XLSX downloaded" });
+      await recordExport("master_admin_xlsx", "csv");
+    } catch (e: any) {
+      toast({ title: e?.message ?? "Export failed", variant: "destructive" });
+    }
   }
 
   function downloadFile(content: string, filename: string, mimeType: string) {
@@ -127,6 +139,14 @@ export default function ExportsPage() {
               format="PDF"
               disabled={!hasSchedule}
               onExport={() => setPlannerOpen(true)}
+            />
+            <ExportCard
+              title="Master Admin Workbook (XLSX)"
+              description="7-sheet workbook: Master Admin View grid + Schools, Specialists, Schedule Blocks, Rotations, Classrooms, PLUS Rotations."
+              icon={CsvIcon}
+              format="XLSX"
+              disabled={false}
+              onExport={exportMasterAdminWorkbook}
             />
           </div>
         )}
