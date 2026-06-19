@@ -1,44 +1,68 @@
-# Remove sidebar "Prep" item + auto-skip PLUS Rotation when AI auto-fit is on
+## Goal
 
-Two small, surgical changes.
+Replace the current CSV specialist template with the user-provided `SpecialistOps_SpecialistTeacher_Template.xlsx`, serve it as the official download, and make the upload flow accept that filled-in `.xlsx` so AI auto-populates every specialist field without re-keying.
 
----
+## New template columns (locked to this layout)
 
-## 1. Remove "Prep" from the sidebar
+| Col | Field | Maps to |
+|---|---|---|
+| A | Specialist Teacher Name | `name` |
+| B | Phone (Optional) | `phone` *(new optional field, UI-only for now)* |
+| C | Email (Optional) | `email` *(new optional field, UI-only for now)* |
+| D | Specialist Subject | `subject` |
+| E | Location (Room # or other) | `location` |
+| F | Working Days at School | `workingDays` (parsed: `Mon,Tue,Wed,Thu,Fri`, `Mon-Fri`, `MWF`, `All`, blank → all five) |
+| G | Two School Sites? (Yes/No) | `twoSchools` |
+| H | Second Site Name | `secondSchoolName` |
 
-The page at `/app/prep` (`PrepPage`) is the pre-flight conflict-strategy + Generate Schedule launcher — useful, but its sidebar label "Prep" is confusing next to "Coordinator Prep". Drop the sidebar entry; keep the route reachable from its existing entry points (Coordinator Prep → Done, Master Schedule → "Re-generate", Onboarding Checklist → Generate Schedule).
+Fields absent from the new template (planning minutes, lunch minutes, cart, part-time, second-location) keep their existing defaults from `defaultSpecialist()`.
 
-**Edits**
-- `src/components/layouts/AppSidebar.tsx` — remove the `{ label: 'Prep', icon: BookOpen, path: '/app/prep' }` item.
-- `src/App.tsx` — keep the `/app/prep` route as-is (still reachable programmatically).
-- No changes to `PrepPage.tsx`, `OnboardingChecklist.tsx`, or `MasterSchedulePage.tsx` — their `navigate('/app/prep')` calls continue to work.
+## Changes
 
-**Out of scope**
-- Folding PrepPage's content into Coordinator Prep — annotation said "Maybe remove?" and the user chose Remove. Re-evaluate later if users can't find the Generate button.
+### 1. Ship the new template file
+- Add `public/templates/specialists_template.xlsx` (copy of the uploaded file).
+- Keep the old `specialists_template.csv` + README on disk for backward compatibility, but stop linking to them.
 
----
+### 2. Download buttons → new XLSX
+In `src/pages/setup/steps/StepSpecialists.tsx`:
+- Change both `downloadTemplate('specialists', '/templates/specialists_template.csv')` calls (lines 572, 996) to `downloadTemplate('specialists', '/templates/specialists_template.xlsx')`.
+- Remove the "Format help" link pointing to the old README; the new sheet has a header row that documents itself.
+- Update button labels: "Quick Update (CSV)" → "Upload Filled Template" and update `accept` to `.xlsx,.xls,.csv` so the existing CSV path still works.
 
-## 2. Auto-skip PLUS Rotation Matrix when the prep sheet says "AI auto-fit"
+### 3. Parse the uploaded `.xlsx`
+- Add `xlsx` (SheetJS) dependency.
+- In `handleCSVUpload` (rename to `handleTemplateUpload`):
+  - Detect extension; for `.xlsx`/`.xls`, read with `XLSX.read(arrayBuffer)`, take the first sheet, convert with `sheet_to_json({ header: 1, defval: '' })`.
+  - Skip the title row (A1) and instruction row (A2); treat row 3 as the header; data starts at row 4. Stop at the footer row (`A19` content begins with "Specialist Ops!").
+  - Reuse the existing column-detection logic (case-insensitive `includes` on header text, e.g. `name`, `subject`, `working days`, `two school`, `second site`, `location`, `phone`, `email`).
+  - Drop fully-empty rows (only the F/G defaults filled with no name + no subject).
+- CSV path stays as-is for the legacy template.
 
-The `PlusRotationMatrix` renders per-specialist inside `StepSpecialists`. When the school's `plus_auto_fit === true` (set by Coordinator Prep when `plus_mode === 'ai_auto_fit'`), the matrix is irrelevant — the generator absorbs PLUS into the regular grid.
+### 4. AI auto-fill fallback
+- After local parsing, if a row has any data but is missing required mappings (no detected `name`/`subject` headers, free-form working days like "Tuesdays and Thursdays", odd subject spellings), POST the raw 2-D array to a new edge function `parse-specialist-template`:
+  - Reuses the existing `process-onboarding-template` pattern (verify user, call Lovable AI Gateway with `google/gemini-2.5-flash`, single tool call).
+  - Tool schema returns `specialists: [{ name, phone, email, subject, location, working_days[], two_schools, second_school_name }]` plus `warnings[]`.
+  - System prompt: "Normalize subject names to one of: Art, Music, PE, Library, STEM, Spanish, Science Lab, Technology, Other. Convert working-days phrases to `Mon|Tue|Wed|Thu|Fri` arrays. Empty cells → omit."
+- Merge AI rows into `setSpecialists` the same way as parsed rows.
+- Show toast: "AI auto-filled N rows from your template."
 
-**Behavior**
-- In `StepSpecialists.tsx`, read `schools.plus_auto_fit` once on mount (alongside the existing school fetch) and stash on a ref/state.
-- When true: replace the per-specialist `<PlusRotationMatrix .../>` block with a compact info card:
-  > **PLUS handled automatically.** Per your Coordinator Prep setting, the scheduler will fit PLUS into the regular weekly rotation. No matrix needed here. *Change this on the Coordinator Prep sheet → Special Rotations.*
-- Persistence: don't clear `plus_rotation` data (preserve in case the coordinator flips back to "I'll specify").
-- When false / null: render the matrix exactly as today.
+### 5. New optional `phone` / `email` fields
+- Add `phone?: string` and `email?: string` to the local `Specialist` type and `defaultSpecialist()` so import doesn't drop them.
+- Display them as optional inputs inside the specialist card header (small two-column row under the name). No DB migration in this change — values persist in `specialists.notes` JSON or are ignored on save until a follow-up adds columns; flag this in the warnings list so we revisit.
 
-**Edits**
-- `src/pages/setup/steps/StepSpecialists.tsx` — fetch `plus_auto_fit`, conditionally render matrix vs. info banner.
+### 6. Admin template slot
+`AdminSettingsPage` already drives the `specialists` template key via `downloadTemplate`. No code change; admins can replace the bundled XLSX by uploading their own through Admin Settings (the new fallback path also points to the XLSX).
 
-**Out of scope**
-- Generator changes (already covered — `plus_auto_fit` flag persists; runtime branching is a separate task documented in the prior session).
-- Restyling `PlusRotationMatrix` itself.
-- "Defer until draft schedule exists" mode — single-mode change for now; if the user later wants a defer-friendly path for the `'admin'` mode too, that's a follow-up.
-
----
+## Out of scope
+- DB migration to persist `phone` / `email` on `specialists` (call out as follow-up).
+- Reworking the onboarding `process-onboarding-template` function.
+- Changes to the teachers template or the bulk onboarding template.
+- Visual redesign of the Specialists step beyond the small phone/email inputs.
 
 ## Files touched
-- `src/components/layouts/AppSidebar.tsx`
-- `src/pages/setup/steps/StepSpecialists.tsx`
+- `public/templates/specialists_template.xlsx` (new)
+- `src/pages/setup/steps/StepSpecialists.tsx` (download links, upload handler, optional inputs)
+- `src/lib/templateDownload.ts` (no change; just used)
+- `supabase/functions/parse-specialist-template/index.ts` (new edge function)
+- `supabase/config.toml` (register the new function with `verify_jwt = false` per existing pattern)
+- `package.json` (add `xlsx`)
