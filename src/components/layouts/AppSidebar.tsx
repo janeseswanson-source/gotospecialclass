@@ -1,7 +1,7 @@
 import { useLocation, Link } from 'react-router-dom';
 import logo from '@/assets/logo.png';
 import {
-  LayoutDashboard, Wand2, BookOpen, CalendarDays, Users, Download,
+  LayoutDashboard, Wand2, CalendarDays, Users, Download,
   CreditCard, Settings, LogOut, School, HelpCircle, ClipboardList, NotebookPen
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
@@ -16,7 +16,6 @@ const navItems = [
   { label: 'Schools', icon: School, path: '/app/schools' },
   { label: 'Coordinator Prep', icon: ClipboardList, path: '/app/coordinator-prep' },
   { label: 'Setup Wizard', icon: Wand2, path: '/app/setup' },
-  { label: 'Prep', icon: BookOpen, path: '/app/prep' },
   { label: 'Master Schedule', icon: CalendarDays, path: '/app/schedule' },
   { label: 'Specialist Planner', icon: Users, path: '/app/planner' },
   { label: 'Lesson Planner', icon: NotebookPen, path: '/app/lesson-planner' },

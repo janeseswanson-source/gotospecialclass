@@ -214,8 +214,23 @@ const StepSpecialists = () => {
     errors: { row: number; name: string; raw: string; reason: string }[];
   } | null>(null);
   const isLoaded = useRef(false);
+  const [plusAutoFit, setPlusAutoFit] = useState<boolean>(false);
 
   const gradesServed = data.gradesServed || [];
+
+  // Read schools.plus_auto_fit so we can hide the per-specialist PLUS matrix
+  // when the coordinator chose "Let AI fit it in" on the prep sheet.
+  useEffect(() => {
+    if (!schoolId) return;
+    (async () => {
+      const { data: school } = await supabase
+        .from('schools')
+        .select('plus_auto_fit')
+        .eq('id', schoolId)
+        .maybeSingle();
+      if (school) setPlusAutoFit(Boolean((school as any).plus_auto_fit));
+    })();
+  }, [schoolId]);
 
   useEffect(() => {
     if (!schoolId) return;
@@ -912,27 +927,36 @@ const StepSpecialists = () => {
 
             {/* PLUS Rotation (replaces legacy Grade Rotation) */}
             <div className="border-t border-border pt-3">
-              <PlusRotationMatrix
-                value={s.plusRotation}
-                workingDays={s.workingDays}
-                gradesServed={gradesServed}
-                defaultStartTime={data.rotationsStartTime || (data as any).startTime || ''}
-                defaultDuration={s.classDuration ?? (data as any).classDuration ?? 45}
-                passingTime={(data as any).passingTime ?? 5}
-                recessWindows={(() => {
-                  const out: { start: string; end: string; label: string }[] = [];
-                  const cfg = (data as any).n || {};
-                  for (const band of Object.keys(cfg)) {
-                    const c = cfg[band] || {};
-                    const label = band === 'all' ? '' : ` (${band})`;
-                    if (c.amRecessStart && c.amRecessEnd) out.push({ start: c.amRecessStart, end: c.amRecessEnd, label: `AM recess${label}` });
-                    if (c.lunchStart && c.lunchEnd) out.push({ start: c.lunchStart, end: c.lunchEnd, label: `lunch${label}` });
-                    if (c.pmRecessStart && c.pmRecessEnd) out.push({ start: c.pmRecessStart, end: c.pmRecessEnd, label: `PM recess${label}` });
-                  }
-                  return out;
-                })()}
-                onChange={(next) => update(s.id, 'plusRotation', next)}
-              />
+              {plusAutoFit ? (
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs space-y-1">
+                  <div className="font-semibold text-foreground">PLUS handled automatically</div>
+                  <p className="text-muted-foreground">
+                    Per your Coordinator Prep setting, the scheduler will fit PLUS into the regular weekly rotation — no matrix needed here. Change this on the Coordinator Prep sheet → Special Rotations.
+                  </p>
+                </div>
+              ) : (
+                <PlusRotationMatrix
+                  value={s.plusRotation}
+                  workingDays={s.workingDays}
+                  gradesServed={gradesServed}
+                  defaultStartTime={data.rotationsStartTime || (data as any).startTime || ''}
+                  defaultDuration={s.classDuration ?? (data as any).classDuration ?? 45}
+                  passingTime={(data as any).passingTime ?? 5}
+                  recessWindows={(() => {
+                    const out: { start: string; end: string; label: string }[] = [];
+                    const cfg = (data as any).n || {};
+                    for (const band of Object.keys(cfg)) {
+                      const c = cfg[band] || {};
+                      const label = band === 'all' ? '' : ` (${band})`;
+                      if (c.amRecessStart && c.amRecessEnd) out.push({ start: c.amRecessStart, end: c.amRecessEnd, label: `AM recess${label}` });
+                      if (c.lunchStart && c.lunchEnd) out.push({ start: c.lunchStart, end: c.lunchEnd, label: `lunch${label}` });
+                      if (c.pmRecessStart && c.pmRecessEnd) out.push({ start: c.pmRecessStart, end: c.pmRecessEnd, label: `PM recess${label}` });
+                    }
+                    return out;
+                  })()}
+                  onChange={(next) => update(s.id, 'plusRotation', next)}
+                />
+              )}
             </div>
           </div>
         </div>
