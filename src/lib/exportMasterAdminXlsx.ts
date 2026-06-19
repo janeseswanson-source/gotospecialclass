@@ -141,26 +141,16 @@ export async function exportMasterAdminXlsx(opts: {
       'regular_dismissal_time', 'early_dismissal_time', 'early_dismissal_day', 'notes',
     ],
     school
-      ? [
-          school.id,
-          school.name,
-          school.website ?? '',
-          school.district ?? '',
-          school.principal_name ?? '',
-          school.principal_email ?? '',
-          school.admin_contact ?? '',
-          school.admin_email ?? '',
-          school.phone ?? '',
-          school.address ?? '',
-          school.city ?? '',
-          school.state ?? '',
-          school.zip ?? '',
-          school.timezone ?? '',
-          school.end_time ?? '',
-          school.early_release_end_time ?? '',
-          school.early_release_day ?? '',
-          school.notes ?? '',
-        ]
+      ? (() => {
+          const s = school as any;
+          return [
+            s.id, s.name, s.website ?? '', s.district ?? '', s.principal_name ?? '',
+            s.principal_email ?? '', s.admin_contact ?? '', s.admin_email ?? '',
+            s.phone ?? '', s.address ?? '', s.city ?? '', s.state ?? '', s.zip ?? '',
+            s.timezone ?? '', s.end_time ?? '', s.early_release_end_time ?? '',
+            s.early_release_day ?? '', s.notes ?? '',
+          ];
+        })()
       : [],
   ];
   XLSX.utils.book_append_sheet(wb, sheetFromAOA(schoolsAoa, Array(18).fill(18)), 'Schools');
