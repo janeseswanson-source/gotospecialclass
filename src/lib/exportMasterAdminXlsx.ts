@@ -20,10 +20,78 @@ function classifyBlockType(subject: string | null | undefined): string {
   return 'rotation';
 }
 
+// Brand tokens (ARGB for xlsx).
+const BRAND_NAVY = 'FF1B2A4A';
+const BRAND_GOLD = 'FFC5A55A';
+const BRAND_CREAM = 'FFFBF5E6';
+const BRAND_WHITE = 'FFFFFFFF';
+
+const headerStyle = {
+  fill: { patternType: 'solid', fgColor: { rgb: BRAND_NAVY } },
+  font: { name: 'Arial', sz: 11, bold: true, color: { rgb: BRAND_WHITE } },
+  alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
+  border: {
+    bottom: { style: 'medium', color: { rgb: BRAND_GOLD } },
+  },
+};
+
+const titleStyle = {
+  font: { name: 'Arial', sz: 16, bold: true, color: { rgb: BRAND_NAVY } },
+  alignment: { vertical: 'center', horizontal: 'left' },
+};
+
+const subTitleStyle = {
+  font: { name: 'Arial', sz: 9, italic: true, color: { rgb: 'FF6B7280' } },
+  alignment: { vertical: 'center', horizontal: 'left' },
+};
+
+const dayHeaderStyle = {
+  fill: { patternType: 'solid', fgColor: { rgb: BRAND_NAVY } },
+  font: { name: 'Arial', sz: 10, bold: true, color: { rgb: BRAND_WHITE } },
+  alignment: { vertical: 'center', horizontal: 'center' },
+};
+
+const bandStyle = {
+  fill: { patternType: 'solid', fgColor: { rgb: BRAND_CREAM } },
+  font: { name: 'Arial', sz: 10, bold: true, color: { rgb: BRAND_NAVY } },
+  alignment: { vertical: 'center', horizontal: 'left', wrapText: true },
+};
+
+const cellStyle = {
+  font: { name: 'Arial', sz: 9, color: { rgb: BRAND_NAVY } },
+  alignment: { vertical: 'top', horizontal: 'left', wrapText: true },
+  border: {
+    top: { style: 'thin', color: { rgb: 'FFCFD3DC' } },
+    bottom: { style: 'thin', color: { rgb: 'FFCFD3DC' } },
+    left: { style: 'thin', color: { rgb: 'FFCFD3DC' } },
+    right: { style: 'thin', color: { rgb: 'FFCFD3DC' } },
+  },
+};
+
+const footerStyle = {
+  fill: { patternType: 'solid', fgColor: { rgb: BRAND_CREAM } },
+  font: { name: 'Arial', sz: 9, color: { rgb: BRAND_NAVY }, italic: true },
+  alignment: { vertical: 'center', horizontal: 'center' },
+  border: { top: { style: 'medium', color: { rgb: BRAND_GOLD } } },
+};
+
+function setCellStyle(ws: XLSX.WorkSheet, ref: string, style: any) {
+  const cell = (ws as any)[ref];
+  if (cell) cell.s = style;
+}
+
 function sheetFromAOA(aoa: any[][], colWidths?: number[]): XLSX.WorkSheet {
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   if (colWidths) (ws as any)['!cols'] = colWidths.map((w) => ({ wch: w }));
   return ws;
+}
+
+function applyHeaderRow(ws: XLSX.WorkSheet, rowIdx: number, cols: number, style: any = headerStyle) {
+  for (let c = 0; c < cols; c++) {
+    const ref = XLSX.utils.encode_cell({ r: rowIdx, c });
+    if (!(ws as any)[ref]) (ws as any)[ref] = { t: 's', v: '' };
+    (ws as any)[ref].s = style;
+  }
 }
 
 export async function exportMasterAdminXlsx(opts: {
