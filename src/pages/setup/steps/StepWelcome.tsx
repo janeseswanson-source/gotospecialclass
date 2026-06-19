@@ -247,10 +247,10 @@ const StepWelcome = () => {
         <div className="rounded-lg border border-border bg-secondary/30 p-5 space-y-3">
           <div className="flex items-center gap-2">
             <FileText className="h-4 w-4 text-primary" />
-            <h3 className="text-sm font-semibold text-card-foreground">📋 Quick Start with Template</h3>
+            <h3 className="text-sm font-semibold text-card-foreground">📋 Quick Start — Coordinator Prep</h3>
           </div>
           <p className="text-xs text-muted-foreground">
-            Download our onboarding template, fill it out with your school's information, then upload it. AI will extract and validate all answers automatically.
+            Download the Coordinator Prep intake sheet, fill in your school's answers, then upload it. AI will read every answer and auto-fill the wizard tabs for you.
           </p>
 
           <div className="flex flex-wrap gap-2">
@@ -260,7 +260,7 @@ const StepWelcome = () => {
               className="gap-1.5 border-accent text-accent hover:bg-accent/10"
               onClick={() => downloadTemplate('onboarding_template', '/templates/onboarding_template.xlsx')}
             >
-              <Download className="h-3.5 w-3.5" /> Download Template
+              <Download className="h-3.5 w-3.5" /> Download Template (XLSX)
             </Button>
             <Button
               size="sm"
@@ -275,6 +275,12 @@ const StepWelcome = () => {
               )}
             </Button>
             <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={handleTemplateUpload} />
+          </div>
+          <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+            <span>Prefer to print and hand-fill?</span>
+            <a href="/templates/coordinator_prep_template.pdf" target="_blank" rel="noreferrer" className="underline text-accent hover:text-accent/80">
+              Download printable PDF
+            </a>
           </div>
           <p className="text-[11px] text-muted-foreground">
             Supports XLSX or CSV. AI will parse your answers and auto-fill the wizard fields.
