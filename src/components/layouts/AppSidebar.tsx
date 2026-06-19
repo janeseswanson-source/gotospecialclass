@@ -1,7 +1,7 @@
 import { useLocation, Link } from 'react-router-dom';
 import logo from '@/assets/logo.png';
 import {
-  LayoutDashboard, Wand2, BookOpen, CalendarDays, Users, Download,
+  LayoutDashboard, Wand2, CalendarDays, Users, Download,
   CreditCard, Settings, LogOut, School, HelpCircle, ClipboardList, NotebookPen
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
