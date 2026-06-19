@@ -66,6 +66,17 @@ export default function ExportsPage() {
     await recordExport("master_word", "docx");
   }
 
+  async function exportMasterAdminWorkbook() {
+    if (!selectedSchoolId) return;
+    try {
+      await exportMasterAdminXlsx({ schoolId: selectedSchoolId, generationId: genId });
+      toast({ title: "Master Admin XLSX downloaded" });
+      await recordExport("master_admin_xlsx", "csv");
+    } catch (e: any) {
+      toast({ title: e?.message ?? "Export failed", variant: "destructive" });
+    }
+  }
+
   function downloadFile(content: string, filename: string, mimeType: string) {
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
