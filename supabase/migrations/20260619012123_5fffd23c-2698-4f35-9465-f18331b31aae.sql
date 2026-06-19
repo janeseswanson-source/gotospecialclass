@@ -1,0 +1,3 @@
+ALTER TABLE public.specialists
+  ADD COLUMN IF NOT EXISTS phone TEXT,
+  ADD COLUMN IF NOT EXISTS email TEXT;

@@ -1317,6 +1317,7 @@ export type Database = {
           created_at: string
           days_at_second_school: string[] | null
           days_at_third_school: string[] | null
+          email: string | null
           extra_minutes: number | null
           grade_rotation: Json | null
           id: string
@@ -1327,6 +1328,7 @@ export type Database = {
           notes: string | null
           part_time_lunch_minutes: number | null
           part_time_planning_minutes: number | null
+          phone: string | null
           planning_minutes: number | null
           planning_preferences: string | null
           planning_type: string | null
@@ -1350,6 +1352,7 @@ export type Database = {
           created_at?: string
           days_at_second_school?: string[] | null
           days_at_third_school?: string[] | null
+          email?: string | null
           extra_minutes?: number | null
           grade_rotation?: Json | null
           id?: string
@@ -1360,6 +1363,7 @@ export type Database = {
           notes?: string | null
           part_time_lunch_minutes?: number | null
           part_time_planning_minutes?: number | null
+          phone?: string | null
           planning_minutes?: number | null
           planning_preferences?: string | null
           planning_type?: string | null
@@ -1383,6 +1387,7 @@ export type Database = {
           created_at?: string
           days_at_second_school?: string[] | null
           days_at_third_school?: string[] | null
+          email?: string | null
           extra_minutes?: number | null
           grade_rotation?: Json | null
           id?: string
@@ -1393,6 +1398,7 @@ export type Database = {
           notes?: string | null
           part_time_lunch_minutes?: number | null
           part_time_planning_minutes?: number | null
+          phone?: string | null
           planning_minutes?: number | null
           planning_preferences?: string | null
           planning_type?: string | null
