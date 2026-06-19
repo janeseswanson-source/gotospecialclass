@@ -16,7 +16,6 @@ const navItems = [
   { label: 'Schools', icon: School, path: '/app/schools' },
   { label: 'Coordinator Prep', icon: ClipboardList, path: '/app/coordinator-prep' },
   { label: 'Setup Wizard', icon: Wand2, path: '/app/setup' },
-  { label: 'Prep', icon: BookOpen, path: '/app/prep' },
   { label: 'Master Schedule', icon: CalendarDays, path: '/app/schedule' },
   { label: 'Specialist Planner', icon: Users, path: '/app/planner' },
   { label: 'Lesson Planner', icon: NotebookPen, path: '/app/lesson-planner' },
