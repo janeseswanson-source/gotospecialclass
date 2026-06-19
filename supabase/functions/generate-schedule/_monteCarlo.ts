@@ -123,9 +123,9 @@ export function calibrateMonteCarlo<T>(
   const calibrationMs = performance.now() - t0;
 
   let iterations: number;
-  if (calibrationMs <= 200) iterations = 50;
-  else if (calibrationMs <= 500) iterations = 25;
-  else iterations = 10;
+  if (calibrationMs <= 200) iterations = 200;
+  else if (calibrationMs <= 500) iterations = 100;
+  else iterations = 50;
 
   const projectedMs = calibrationMs * iterations;
   if (projectedMs > 30_000) {

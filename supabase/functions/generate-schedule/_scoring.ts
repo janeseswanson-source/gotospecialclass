@@ -33,6 +33,8 @@ export interface ScoreBreakdown {
   class_repeats: number;
   grade_cohesion: number;
   contract_min: number;
+  subject_gap: number;
+  subject_day_clustering: number;
 }
 
 export interface ScoreResult {
@@ -92,12 +94,15 @@ export const DEFAULT_WEIGHTS: Record<keyof ScoreBreakdown, number> = {
   day_pref_satisfied: 20,
   planning_target_met: 30,
   cart_back_to_back: -5,
-  k_grade_after_780: -3,
+  k_grade_after_780: -20,
   spec_dayload_stdev: -1,
-  class_repeats: -8,
+  class_repeats: -25,
   // Soft nudges: keep < cart penalty so they never dominate hard constraints.
   grade_cohesion: -4,    // per extra day a grade spans beyond its cohesion target
   contract_min: -0.05,   // per minute short on contractual subject/teacher minimums
+  // Phase 4: verifier-aligned penalties.
+  subject_gap: -40,            // per (grade, specialist) pair with zero sessions
+  subject_day_clustering: -15, // per duplicate of same subject on same day for same grade
 };
 
 export function scoreSchedule(
@@ -270,6 +275,33 @@ export function scoreSchedule(
     }
   }
 
+  // 11. Subject gap: penalise each (grade × specialist) pair with zero
+  //     sessions this week — directly targets "grade X never sees Music".
+  let subjectGapPairs = 0;
+  const pairKey = (g: string, sid: string) => `${g}|||${sid}`;
+  const pairsSeen = new Set<string>();
+  for (const b of blocks) {
+    if (!b.specialist_id) continue;
+    if (b.grade === "Lunch" || b.grade === "Planning" || b.grade === "Makeup") continue;
+    pairsSeen.add(pairKey(b.grade, b.specialist_id));
+  }
+  for (const grade of input.grades) {
+    for (const spec of input.specialists) {
+      if (!pairsSeen.has(pairKey(grade, spec.id))) subjectGapPairs++;
+    }
+  }
+
+  // 12. Same (grade, subject) twice on the same day = clustering dupe.
+  let dayClusterDupes = 0;
+  const subjDayCount = new Map<string, number>();
+  for (const b of blocks) {
+    if (!b.specialist_id) continue;
+    if (b.grade === "Lunch" || b.grade === "Planning" || b.grade === "Makeup") continue;
+    const k = `${b.grade}|${b.subject ?? ""}|${b.day_of_week}`;
+    subjDayCount.set(k, (subjDayCount.get(k) ?? 0) + 1);
+  }
+  for (const n of subjDayCount.values()) if (n > 1) dayClusterDupes += n - 1;
+
   const breakdown: ScoreBreakdown = {
     errors: errorCount * w.errors,
     warnings: warningCount * w.warnings,
@@ -283,6 +315,8 @@ export function scoreSchedule(
     class_repeats: classRepeats * w.class_repeats,
     grade_cohesion: cohesionExtraDays * w.grade_cohesion,
     contract_min: contractShortfallMin * w.contract_min,
+    subject_gap: subjectGapPairs * w.subject_gap,
+    subject_day_clustering: dayClusterDupes * w.subject_day_clustering,
   };
 
   const total = Object.values(breakdown).reduce((a, b) => a + b, 0);
