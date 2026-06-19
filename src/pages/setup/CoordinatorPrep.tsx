@@ -104,7 +104,10 @@ function buildRows(p: PrepState, schoolName?: string): PrepRow[] {
     { question: 'Specialists with custom grade preferences', answer: p.custom_grade_prefs },
     { question: 'Calendar attached', answer: p.calendar_file_name || 'Not uploaded' },
     { question: 'Special additional rotation (PLUS)?', answer: p.has_special_rotation == null ? '' : p.has_special_rotation ? 'Yes' : 'No' },
-    { question: 'PLUS rotation details (days, time, grades)', answer: p.special_rotation_notes },
+    { question: 'PLUS handling', answer: p.plus_mode === 'admin' ? 'Admin-specified' : p.plus_mode === 'ai_auto_fit' ? 'AI auto-fit (no extra day)' : '—' },
+    { question: 'PLUS day(s) selected', answer: p.plus_mode === 'admin' ? (p.plus_days.join(', ') || '—') : '—' },
+    { question: 'PLUS rationale (why this day?)', answer: p.plus_mode === 'admin' ? p.plus_rationale : '' },
+    { question: 'PLUS time block & grades', answer: p.plus_mode === 'admin' ? p.special_rotation_notes : '' },
   ];
 }
 
