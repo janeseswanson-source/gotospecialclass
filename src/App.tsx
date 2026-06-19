@@ -33,6 +33,7 @@ import SetupPage from "@/pages/setup/SetupPage";
 import CoordinatorPrep from "@/pages/setup/CoordinatorPrep";
 import PrepPage from "@/pages/schedule/PrepPage";
 import MasterSchedulePage from "@/pages/schedule/MasterSchedulePage";
+import MasterAdminViewPage from "@/pages/schedule/MasterAdminViewPage";
 import SpecialistPlannerPage from "@/pages/schedule/SpecialistPlannerPage";
 import LessonPlannerPage from "@/pages/schedule/LessonPlannerPage";
 import ExportsPage from "@/pages/schedule/ExportsPage";
