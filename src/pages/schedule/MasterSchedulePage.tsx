@@ -23,6 +23,7 @@ import SpecialistExportModal from "./exports/SpecialistExportModal";
 import AdminExportModal from "./exports/AdminExportModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds, computeAutoFit } from "@/lib/scheduleGrid";
+import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -709,6 +710,14 @@ export default function MasterSchedulePage() {
 
   return (
     <div className="space-y-5 animate-fade-in">
+      <div className="no-print">
+        <BrandedScheduleHeader
+          title="Master Schedule"
+          subtitle="Specialist Ops! · Weekly Planner"
+          schoolName={selectedSchool?.name}
+          schoolYear={selectedSchool?.school_year ?? undefined}
+        />
+      </div>
       {/* ─── Toolbar ─── */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>

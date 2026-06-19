@@ -20,10 +20,78 @@ function classifyBlockType(subject: string | null | undefined): string {
   return 'rotation';
 }
 
+// Brand tokens (ARGB for xlsx).
+const BRAND_NAVY = 'FF1B2A4A';
+const BRAND_GOLD = 'FFC5A55A';
+const BRAND_CREAM = 'FFFBF5E6';
+const BRAND_WHITE = 'FFFFFFFF';
+
+const headerStyle = {
+  fill: { patternType: 'solid', fgColor: { rgb: BRAND_NAVY } },
+  font: { name: 'Arial', sz: 11, bold: true, color: { rgb: BRAND_WHITE } },
+  alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
+  border: {
+    bottom: { style: 'medium', color: { rgb: BRAND_GOLD } },
+  },
+};
+
+const titleStyle = {
+  font: { name: 'Arial', sz: 16, bold: true, color: { rgb: BRAND_NAVY } },
+  alignment: { vertical: 'center', horizontal: 'left' },
+};
+
+const subTitleStyle = {
+  font: { name: 'Arial', sz: 9, italic: true, color: { rgb: 'FF6B7280' } },
+  alignment: { vertical: 'center', horizontal: 'left' },
+};
+
+const dayHeaderStyle = {
+  fill: { patternType: 'solid', fgColor: { rgb: BRAND_NAVY } },
+  font: { name: 'Arial', sz: 10, bold: true, color: { rgb: BRAND_WHITE } },
+  alignment: { vertical: 'center', horizontal: 'center' },
+};
+
+const bandStyle = {
+  fill: { patternType: 'solid', fgColor: { rgb: BRAND_CREAM } },
+  font: { name: 'Arial', sz: 10, bold: true, color: { rgb: BRAND_NAVY } },
+  alignment: { vertical: 'center', horizontal: 'left', wrapText: true },
+};
+
+const cellStyle = {
+  font: { name: 'Arial', sz: 9, color: { rgb: BRAND_NAVY } },
+  alignment: { vertical: 'top', horizontal: 'left', wrapText: true },
+  border: {
+    top: { style: 'thin', color: { rgb: 'FFCFD3DC' } },
+    bottom: { style: 'thin', color: { rgb: 'FFCFD3DC' } },
+    left: { style: 'thin', color: { rgb: 'FFCFD3DC' } },
+    right: { style: 'thin', color: { rgb: 'FFCFD3DC' } },
+  },
+};
+
+const footerStyle = {
+  fill: { patternType: 'solid', fgColor: { rgb: BRAND_CREAM } },
+  font: { name: 'Arial', sz: 9, color: { rgb: BRAND_NAVY }, italic: true },
+  alignment: { vertical: 'center', horizontal: 'center' },
+  border: { top: { style: 'medium', color: { rgb: BRAND_GOLD } } },
+};
+
+function setCellStyle(ws: XLSX.WorkSheet, ref: string, style: any) {
+  const cell = (ws as any)[ref];
+  if (cell) cell.s = style;
+}
+
 function sheetFromAOA(aoa: any[][], colWidths?: number[]): XLSX.WorkSheet {
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   if (colWidths) (ws as any)['!cols'] = colWidths.map((w) => ({ wch: w }));
   return ws;
+}
+
+function applyHeaderRow(ws: XLSX.WorkSheet, rowIdx: number, cols: number, style: any = headerStyle) {
+  for (let c = 0; c < cols; c++) {
+    const ref = XLSX.utils.encode_cell({ r: rowIdx, c });
+    if (!(ws as any)[ref]) (ws as any)[ref] = { t: 's', v: '' };
+    (ws as any)[ref].s = style;
+  }
 }
 
 export async function exportMasterAdminXlsx(opts: {
@@ -129,8 +197,35 @@ export async function exportMasterAdminXlsx(opts: {
   }
 
   const masterWs = sheetFromAOA(masterAoa, [22, 22, 22, 22, 22]);
-  // merge title row
-  (masterWs as any)['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 4 } }];
+  // Title + meta rows merged across all 5 columns.
+  (masterWs as any)['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } },
+  ];
+  // Row heights: tall title rows, normal day header.
+  (masterWs as any)['!rows'] = [{ hpt: 26 }, { hpt: 16 }, { hpt: 22 }];
+
+  // Apply brand styling.
+  setCellStyle(masterWs, 'A1', titleStyle);
+  setCellStyle(masterWs, 'A2', subTitleStyle);
+  // Day header row (index 2 -> row 3).
+  applyHeaderRow(masterWs, 2, 5, dayHeaderStyle);
+
+  // Style band/data rows.
+  for (let r = 3; r < masterAoa.length; r++) {
+    const isBand =
+      typeof masterAoa[r][0] === 'string' &&
+      /^(Planning and Prep|RECESS|LUNCH|DISMISSAL|\d)/.test(masterAoa[r][0] ?? '');
+    for (let c = 0; c < 5; c++) {
+      const ref = XLSX.utils.encode_cell({ r, c });
+      if (!(masterWs as any)[ref]) (masterWs as any)[ref] = { t: 's', v: '' };
+      (masterWs as any)[ref].s = isBand && c === 0 ? bandStyle : cellStyle;
+    }
+  }
+
+  // Landscape + print area.
+  (masterWs as any)['!pageSetup'] = { orientation: 'landscape', fitToWidth: 1, fitToHeight: 0 };
+
   XLSX.utils.book_append_sheet(wb, masterWs, 'Master Admin View');
 
   // === Sheet 2: Schools ===
@@ -153,7 +248,9 @@ export async function exportMasterAdminXlsx(opts: {
         })()
       : [],
   ];
-  XLSX.utils.book_append_sheet(wb, sheetFromAOA(schoolsAoa, Array(18).fill(18)), 'Schools');
+  const schoolsWs = sheetFromAOA(schoolsAoa, Array(18).fill(18));
+  applyHeaderRow(schoolsWs, 0, 18);
+  XLSX.utils.book_append_sheet(wb, schoolsWs, 'Schools');
 
   // === Sheet 3: Specialists ===
   const specialistsAoa: any[][] = [[
@@ -175,7 +272,9 @@ export async function exportMasterAdminXlsx(opts: {
       s.notes ?? '',
     ]);
   }
-  XLSX.utils.book_append_sheet(wb, sheetFromAOA(specialistsAoa, Array(15).fill(18)), 'Specialists');
+  const specialistsWs = sheetFromAOA(specialistsAoa, Array(15).fill(18));
+  applyHeaderRow(specialistsWs, 0, 15);
+  XLSX.utils.book_append_sheet(wb, specialistsWs, 'Specialists');
 
   // === Sheet 4: Schedule Blocks ===
   const blocksAoa: any[][] = [[
@@ -188,7 +287,9 @@ export async function exportMasterAdminXlsx(opts: {
       classifyBlockType(b.subject), b.day_of_week ?? '', b.grade ?? '', b.notes ?? '',
     ]);
   }
-  XLSX.utils.book_append_sheet(wb, sheetFromAOA(blocksAoa, Array(9).fill(18)), 'Schedule Blocks');
+  const blocksWs = sheetFromAOA(blocksAoa, Array(9).fill(18));
+  applyHeaderRow(blocksWs, 0, 9);
+  XLSX.utils.book_append_sheet(wb, blocksWs, 'Schedule Blocks');
 
   // === Sheet 5: Rotations ===
   const rotationsAoa: any[][] = [[
@@ -202,7 +303,9 @@ export async function exportMasterAdminXlsx(opts: {
       '', r.week_label ?? '', '', '', r.notes ?? '',
     ]);
   }
-  XLSX.utils.book_append_sheet(wb, sheetFromAOA(rotationsAoa, Array(13).fill(16)), 'Rotations');
+  const rotationsWs = sheetFromAOA(rotationsAoa, Array(13).fill(16));
+  applyHeaderRow(rotationsWs, 0, 13);
+  XLSX.utils.book_append_sheet(wb, rotationsWs, 'Rotations');
 
   // === Sheet 6: Classrooms ===
   const classroomsAoa: any[][] = [[
@@ -216,7 +319,9 @@ export async function exportMasterAdminXlsx(opts: {
       t.team ?? '', '', '',
     ]);
   }
-  XLSX.utils.book_append_sheet(wb, sheetFromAOA(classroomsAoa, Array(10).fill(18)), 'Classrooms');
+  const classroomsWs = sheetFromAOA(classroomsAoa, Array(10).fill(18));
+  applyHeaderRow(classroomsWs, 0, 10);
+  XLSX.utils.book_append_sheet(wb, classroomsWs, 'Classrooms');
 
   // === Sheet 7: PLUS Rotations ===
   const plusAoa: any[][] = [[
@@ -238,7 +343,9 @@ export async function exportMasterAdminXlsx(opts: {
       c.specialist_id ?? '', c.notes ?? '',
     ]);
   }
-  XLSX.utils.book_append_sheet(wb, sheetFromAOA(plusAoa, Array(9).fill(16)), 'PLUS Rotations');
+  const plusWs = sheetFromAOA(plusAoa, Array(9).fill(16));
+  applyHeaderRow(plusWs, 0, 9);
+  XLSX.utils.book_append_sheet(wb, plusWs, 'PLUS Rotations');
 
   const safeName = (school?.name ?? 'school').replace(/[^a-z0-9]+/gi, '_');
   XLSX.writeFile(wb, `MasterAdminView_${safeName}.xlsx`);

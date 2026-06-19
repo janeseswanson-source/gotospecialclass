@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import ScheduleGrid, { type BlockData, type RecessBand } from "@/components/schedule/ScheduleGrid";
 import { getSubjectBadgeClass } from "@/lib/subjectColors";
 import { cn } from "@/lib/utils";
+import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -248,10 +249,19 @@ export default function SpecialistPlannerPage() {
   const selectedBlocks = selectedSpec ? blocks.filter((b) => b.specialist_name === selectedSpec.name) : [];
   const selectedBands = selectedSpec ? bandsForSpecialist(selectedSpec.gradesServed, recessRows) : [];
 
+  const { schools } = useSchool();
+  const activeSchool = schools.find((x) => x.id === selectedSchoolId);
+
   return (
     <div className="space-y-5 animate-fade-in">
+      <BrandedScheduleHeader
+        title="Specialist Planner"
+        subtitle="Specialist Ops! · Workload & Assignments"
+        schoolName={activeSchool?.name}
+        schoolYear={(activeSchool as any)?.school_year ?? undefined}
+      />
       <div>
-        <h1 className="text-2xl font-bold text-foreground">Specialist Planner</h1>
+        <h1 className="text-2xl font-bold text-foreground sr-only">Specialist Planner</h1>
         <p className="text-sm text-muted-foreground">Review workload and weekly assignments per specialist.</p>
       </div>
 
