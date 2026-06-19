@@ -273,7 +273,11 @@ export const AdminOverview = ({
     <Document>
       <Page size="LETTER" orientation="landscape" style={styles.page}>
         <View style={styles.headerRow} fixed>
-          <Text style={styles.headerTitle}>{headerTitle}</Text>
+          <Image src={LOGO_URL} style={styles.headerLogo} />
+          <View style={styles.headerTitleBlock}>
+            <Text style={styles.headerTitle}>{headerTitle}</Text>
+            <Text style={styles.headerSubtitle}>Master Admin Overview · Specialist Ops!</Text>
+          </View>
           <Text
             style={styles.headerPage}
             render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`}
