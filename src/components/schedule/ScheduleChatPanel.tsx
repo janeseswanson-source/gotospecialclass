@@ -148,6 +148,14 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
     id: generationId ?? "no-gen",
     messages: hydratedMessages,
     transport,
+    onError: (err) => {
+      console.error("[schedule-chat] useChat error", err);
+      toast({
+        title: "AI editor error",
+        description: err?.message ?? "The chat request failed. Check your connection and try again.",
+        variant: "destructive",
+      });
+    },
     onFinish: () => {
       onScheduleChanged();
     },
