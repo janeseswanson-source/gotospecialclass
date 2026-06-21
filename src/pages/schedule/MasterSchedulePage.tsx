@@ -183,9 +183,22 @@ export default function MasterSchedulePage() {
     else setLoading(false);
   }, [user, selectedSchoolId, schoolLoading]);
 
+  // Load blocks ONLY when the selected generation changes. We intentionally
+  // omit specialists/teachers from the deps: those arrays sometimes get a new
+  // reference from upstream contexts after an optimistic swap, and reloading
+  // here would clobber `setBlocks(candidate)` before the DB write commits.
   useEffect(() => {
     if (selectedGen && specialists.length > 0) loadBlocks(selectedGen);
-  }, [selectedGen, specialists, teachers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGen]);
+
+  // When specialists/teachers arrive AFTER the first block load, re-map the
+  // existing blocks in place so names/grades fill in — without re-fetching.
+  useEffect(() => {
+    if (!blocks.length) return;
+    setBlocks((prev) => mapBlocks(prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [specialists, teachers]);
 
   async function loadGenerations() {
     setLoading(true);
@@ -430,6 +443,8 @@ export default function MasterSchedulePage() {
         loadBlocks(selectedGen);
       } else {
         toast({ title: "Swapped ✓", description: `${block.subject ?? "Block"} ⇄ ${targetBlock.subject ?? "block"}` });
+        // Make the swap visible in the grid: both blocks glow + scroll into view.
+        flagChangedBlocks([block.id, targetBlock.id]);
         const spec = specialists.find(s => s.id === block.specialist_id);
         if (spec) setReplanSuggestion({ specialistId: spec.id, specialistName: spec.name });
       }
@@ -457,6 +472,7 @@ export default function MasterSchedulePage() {
       loadBlocks(selectedGen);
     } else {
       toast({ title: "Moved ✓", description: fit.shortened ? `Shortened to ${fit.duration} min to fit.` : undefined });
+      flagChangedBlocks([blockId]);
       const spec = specialists.find(s => s.id === block.specialist_id || s.name === block.specialist_name);
       if (spec) setReplanSuggestion({ specialistId: spec.id, specialistName: spec.name });
     }

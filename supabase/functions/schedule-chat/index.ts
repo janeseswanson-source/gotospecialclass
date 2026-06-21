@@ -393,11 +393,23 @@ RULES
       messages: await convertToModelMessages(messages),
       tools: { listBlocks, moveBlock, swapBlocks, deleteBlock, insertBlock, bulkReplan },
       stopWhen: stepCountIs(50),
+      // Anthropic requires an explicit token cap; the AI SDK provider does
+      // not default it, so omitting this makes the stream close immediately
+      // with no tokens written to the UI.
+      maxOutputTokens: 4096,
+      temperature: 0.2,
     });
 
     return result.toUIMessageStreamResponse({
       originalMessages: messages,
       headers: corsHeaders,
+      // Surface provider/tool errors as readable text so the chat panel can
+      // show them instead of silently dropping to an empty bubble.
+      onError: (err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[schedule-chat] stream onError", msg);
+        return msg || "Chat failed";
+      },
       onFinish: async ({ messages: finalMessages }) => {
         try {
           await supabase
