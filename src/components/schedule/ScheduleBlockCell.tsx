@@ -92,6 +92,7 @@ export default function ScheduleBlockCell({
       onClick={onClick}
       draggable={draggable && !isLocked}
       onDragStart={onDragStart}
+      data-block-id={blockId}
       style={{ minHeight: `${minHeightPx}px` }}
       aria-label={`${subject ?? "Block"}${grade ? `, grade ${grade}` : ""}${teacherName ? `, ${teacherName}` : ""}, ${formatTime(startTime)} to ${formatTime(endTime)}${isLocked ? ", locked" : ""}${hasConflict ? ", has a conflict" : ""}`}
       className={cn(
