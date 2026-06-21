@@ -2759,13 +2759,12 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       return Math.max(0, Math.min(100, Math.round(100 - mag / 4)));
     };
     const TARGET_QUALITY = 99;
-    // CPU is the binding constraint on Edge Functions (~5s total before
-    // the runtime kills the request). Each attempt costs ~700ms of CPU,
-    // so 4 attempts is the safe ceiling — beyond that we risk losing
-    // everything mid-save. The user-visible best-of-N still picks the
-    // highest-quality candidate.
-    const MAX_ATTEMPTS = 4;
-    const CPU_BUDGET_MS = 3500; // Total budget spent inside generation attempts.
+    // CPU is the binding constraint on Edge Functions (~2s before the
+    // runtime kills the request). Each attempt costs ~700ms of CPU, so
+    // 2 attempts is the safe ceiling for the synchronous path. Background
+    // refinement (best-of-N) runs after we return.
+    const MAX_ATTEMPTS = 2;
+    const CPU_BUDGET_MS = 1200; // Reserve >800ms for save + return.
     const tStartOuter = performance.now();
 
     let schedulerResult: ReturnType<typeof generateScheduleBlocks> | null = null;
