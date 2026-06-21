@@ -122,13 +122,18 @@ export function calibrateMonteCarlo<T>(
   const result = strategyFn(rng);
   const calibrationMs = performance.now() - t0;
 
+  // Push harder on the search by default: previously 200/100/50 inside a
+  // 60s budget. Bumping the ceiling lets the optimizer try roughly 2× more
+  // candidates per strategy without exceeding the same time budget for
+  // typical school sizes — directly improving the winning score.
   let iterations: number;
-  if (calibrationMs <= 200) iterations = 200;
-  else if (calibrationMs <= 500) iterations = 100;
-  else iterations = 50;
+  if (calibrationMs <= 150) iterations = 400;
+  else if (calibrationMs <= 300) iterations = 200;
+  else if (calibrationMs <= 600) iterations = 100;
+  else iterations = 60;
 
   const projectedMs = calibrationMs * iterations;
-  if (projectedMs > 60_000) {
+  if (projectedMs > 90_000) {
     throw new MonteCarloBudgetExceededError(calibrationMs, projectedMs);
   }
 

@@ -25,6 +25,7 @@ import AdminExportModal from "./exports/AdminExportModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds, computeConflictPairs, computeAutoFit, parseTime, swapPlacements } from "@/lib/scheduleGrid";
 import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
+import { scoreToPercent } from "@/lib/optimizerScore";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -1301,11 +1302,33 @@ export default function MasterSchedulePage() {
                   Strategy: <span className="font-medium text-foreground">{humanizeStrategy(activeGen.chosen_strategy)}</span>
                 </p>
               )}
-              {activeGen?.winning_score != null && (
-                <p className="text-xs text-muted-foreground">
-                  Optimizer score: <span className="font-medium text-foreground">{Math.round(activeGen.winning_score)}</span>
-                </p>
-              )}
+              {activeGen?.winning_score != null && (() => {
+                const SPECIAL = new Set(["Lunch", "Planning", "Makeup", "Admin", "PLC"]);
+                const gradeCount = new Set(
+                  blocks.map((b) => b.grade).filter((g): g is string => !!g && !SPECIAL.has(g)),
+                ).size;
+                const pct = scoreToPercent(activeGen.winning_score, {
+                  gradeCount,
+                  teacherCount: teachers.length,
+                  specialistCount: specialists.length,
+                });
+                const color = pct == null
+                  ? "text-foreground"
+                  : pct >= 90 ? "text-success"
+                  : pct >= 70 ? "text-amber-600 dark:text-amber-400"
+                  : "text-destructive";
+                return (
+                  <p className="text-xs text-muted-foreground">
+                    Optimizer score:{" "}
+                    <span className={cn("font-bold", color)}>
+                      {pct != null ? `${pct}%` : Math.round(activeGen.winning_score)}
+                    </span>
+                    {pct != null && (
+                      <span className="text-muted-foreground/70"> · raw {Math.round(activeGen.winning_score)}</span>
+                    )}
+                  </p>
+                );
+              })()}
               {!activeGen && (
                 <p className="text-xs text-muted-foreground">Select a generation to see insights.</p>
               )}

@@ -148,6 +148,14 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
     id: generationId ?? "no-gen",
     messages: hydratedMessages,
     transport,
+    onError: (err) => {
+      console.error("[schedule-chat] useChat error", err);
+      toast({
+        title: "AI editor error",
+        description: err?.message ?? "The chat request failed. Check your connection and try again.",
+        variant: "destructive",
+      });
+    },
     onFinish: () => {
       onScheduleChanged();
     },
@@ -386,9 +394,9 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
           />
           <PromptInputFooter className="justify-end">
             <PromptInputSubmit
-              status={isLoading ? "streaming" : "ready"}
+              status={status}
               disabled={isLoading ? false : !canSend}
-              onClick={isLoading ? () => stop() : undefined}
+              onStop={() => stop()}
             />
           </PromptInputFooter>
         </PromptInput>

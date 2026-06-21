@@ -3,7 +3,8 @@ import { useSetup } from '@/contexts/SetupContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { FieldLabel } from '@/components/ui/field-label';
-import { Wand2 } from 'lucide-react';
+import { Wand2, ClipboardList } from 'lucide-react';
+import { Link } from 'react-router-dom';
 
 const StepWelcome = () => {
   const { data, updateData, setStep } = useSetup();
@@ -34,6 +35,24 @@ const StepWelcome = () => {
         <Button onClick={() => setStep(SETUP_STEPS.SCHOOL_INFO)} disabled={!data.schoolName.trim()} className="w-full">
           Get Started
         </Button>
+
+        {/* Single home for the AI take-in template — used to be its own sidebar
+         *  page that duplicated the wizard. Linking from here keeps the
+         *  wizard as the one canonical setup path. */}
+        <div className="rounded-lg border border-dashed border-border bg-muted/30 p-4 text-left">
+          <div className="flex items-start gap-3">
+            <ClipboardList className="h-5 w-5 text-primary mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-foreground">Have a filled-in take-in template?</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Upload the coordinator prep sheet and AI will pre-fill the wizard for you.
+              </p>
+              <Button asChild variant="link" size="sm" className="h-auto p-0 mt-1 text-xs">
+                <Link to="/app/coordinator-prep">Upload take-in template →</Link>
+              </Button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
