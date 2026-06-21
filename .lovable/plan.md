@@ -1,39 +1,45 @@
 ## Plan
 
-### 1) Make “Edit with AI” visibly respond again
-- Fix the chat submit wiring so the AI SDK receives the actual typed text from the controlled textarea.
-- Add client-side diagnostics for the request lifecycle: clear inline error if the function returns an error, and a fallback assistant message if the stream ends empty.
-- Pass the real `status` and `onStop={stop}` to the chat submit button, and update the vendored submit button so it shows a stop icon during both “submitted” and “streaming” states instead of hiding cancel behind a spinner.
-- Deploy and test the `schedule-chat` edge function after code changes.
+### 1) Fix “Edit with AI” so every send shows activity
+- Make the chat input submit path impossible to silently no-op:
+  - pass the actual typed text from `PromptInput` into `sendMessage`
+  - show the user message immediately
+  - show a visible “Thinking…” state as soon as the request starts
+- Add explicit request diagnostics in the panel:
+  - if the backend is not called, show a readable inline error
+  - if the stream returns empty, add a fallback assistant message explaining what failed
+  - if the backend returns JSON/non-stream errors, parse and display the message instead of leaving the chat blank
+- Confirm the deployed `schedule-chat` endpoint is actually receiving calls; current logs show no recent `schedule-chat` requests, so the client submit/request path is the first target.
 
-### 2) Keep optimizer score high and show it as a meaningful percentage
-- Add a normalized optimizer quality calculation that converts the raw `winning_score` / `score_breakdown` into a 0–100% “Optimizer score”.
-- Update Schedule Insights to display the percentage prominently, with the raw score available as secondary detail.
-- Strengthen generation quality by increasing the optimizer search budget:
-  - more Monte Carlo attempts per strategy,
-  - a longer simulated annealing pass,
-  - stronger penalties for subject gaps, repeated same-subject same-day clustering, K/TK late-day blocks, and class repeats.
-- Keep hard constraints dominant so the optimizer never chases a high score by creating double-bookings or invalid placements.
+### 2) Make `schedule-chat` more reliable
+- Keep the existing AI editor tools, but harden the streaming response:
+  - return AI-SDK-compatible stream errors
+  - persist chat history only after a valid finished stream
+  - surface missing key/provider/function errors as visible assistant text
+- Redeploy `schedule-chat` and test it directly after changes.
 
-### 3) Clean up the master grid UI
-- Redesign schedule blocks to be denser and easier to scan:
-  - bigger subject text,
-  - grade/time as compact chips,
-  - hide secondary details like teacher/specialist/room behind hover/title or a subtle second line,
-  - reduce block min-height and row padding.
-- Tighten the table spacing and dividers so the grid reads like an operations board instead of oversized cards.
-- Preserve drag/drop, lock, notes, conflict rings, A/B labels, and “AI changed” glow behavior.
-- Keep the visual direction aligned with the existing navy/gold binder-tab brand, using semantic theme tokens instead of hardcoded component colors where practical.
+### 3) Add “highest quality” generation mode targeting 99–100%
+- Change generation from “run once and take best” to “keep searching for a target quality”:
+  - target quality: 99%
+  - max effort: much longer than current limits, since you said waiting longer is acceptable
+  - stop early only when the schedule reaches target quality and has no hard errors
+  - otherwise save the best schedule found and clearly label if it could not reach 99% because of impossible constraints
+- Increase optimizer effort beyond the current settings:
+  - larger Monte Carlo candidate pool
+  - longer simulated annealing pass
+  - multiple deterministic retry waves with different seeds
+  - compare all candidate strategies by final quality, not just first error-free strategy
 
-### 4) Merge the take-in template into the setup wizard
-- Keep the template upload capability, but remove it as a competing standalone path.
-- Add/keep the upload entry point inside the setup wizard flow so users have one canonical setup path.
-- Update navigation/copy/buttons that point to the old take-in route so they direct users into the wizard step instead.
-- Do not delete the parsing backend unless it becomes unused; the wizard should reuse it.
+### 4) Make the score meaningful and aligned
+- Replace the current misleading optimizer percent calculation that can show 49% even when AI Quality is 89/100.
+- Use one shared quality calculation based on the score breakdown penalties, matching the verifier’s rubric.
+- Show:
+  - `AI Quality: 99/100` when verification is available
+  - `Optimizer target: 99%` / `Best found: X%`
+  - raw score only as secondary detail
 
-### 5) Verify
-- Check that typing a message in Edit with AI shows the user message, calls `schedule-chat`, and renders an assistant response or readable error.
-- Confirm proposed AI edits still produce the Apply bar and changed blocks glow in the grid after apply.
-- Generate/inspect a schedule and confirm Schedule Insights shows a percentage score and raw score detail.
-- Check the master grid at the current viewport for compact, readable block layout with no overlap.
-- Confirm setup has one clear template-upload path inside the wizard.
+### 5) Verification
+- Test chat from the UI: type a message, confirm user bubble, thinking state, backend request, assistant response/tool proposal.
+- Test direct backend chat call if UI still fails.
+- Generate a schedule and confirm the generation takes longer, records more attempts, and targets 99–100%.
+- Confirm Schedule Insights no longer shows contradictory quality percentages.
