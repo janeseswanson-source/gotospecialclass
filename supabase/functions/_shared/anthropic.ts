@@ -10,7 +10,9 @@
 // default for genuinely-smart schedule editing and review.
 import Anthropic from "npm:@anthropic-ai/sdk@0.105.0";
 
-export const CLAUDE_MODEL = "claude-opus-4-8";
+// Claude Opus 4.5 — Anthropic's latest mainstream Opus model.
+// (There is no "opus-4-8" public id; 4-5 is the current top Opus release.)
+export const CLAUDE_MODEL = "claude-opus-4-5";
 
 export function anthropicApiKey(): string | null {
   return Deno.env.get("ANTHROPIC_API_KEY") ?? null;
