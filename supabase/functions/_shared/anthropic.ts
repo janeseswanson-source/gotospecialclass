@@ -49,3 +49,32 @@ export function firstToolUse(content: any[], name?: string): { id: string; input
 export function joinText(content: any[]): string {
   return (content ?? []).filter((b) => b?.type === "text").map((b) => b.text).join("").trim();
 }
+
+/**
+ * Extract structured data from an uploaded PDF or image using Claude vision +
+ * a forced tool call. Claude reads PDFs and handwriting natively, so this
+ * powers the take-in template / calendar / roster parsers. Returns the tool
+ * input object (or {} if the model returned nothing usable).
+ */
+export async function extractFromFile(opts: {
+  fileBase64: string;
+  mimeType: string;
+  system: string;
+  userText: string;
+  tool: { name: string; description: string; input_schema: any };
+  maxTokens?: number;
+}): Promise<Record<string, any>> {
+  const isPdf = opts.mimeType === "application/pdf";
+  const fileBlock = isPdf
+    ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: opts.fileBase64 } }
+    : { type: "image", source: { type: "base64", media_type: opts.mimeType, data: opts.fileBase64 } };
+  const resp = await anthropicClient().messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: opts.maxTokens ?? 4000,
+    system: opts.system,
+    tools: [opts.tool as any],
+    tool_choice: { type: "tool", name: opts.tool.name },
+    messages: [{ role: "user", content: [{ type: "text", text: opts.userText }, fileBlock as any] }],
+  });
+  return (firstToolUse(resp.content as any[], opts.tool.name)?.input ?? {}) as Record<string, any>;
+}

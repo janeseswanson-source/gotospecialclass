@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { anthropicApiKey, anthropicClient, CLAUDE_MODEL, firstToolUse, describeAnthropicError } from "../_shared/anthropic.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -11,8 +12,11 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    if (!anthropicApiKey()) {
+      return new Response(JSON.stringify({ error: "Claude isn't set up yet — add the ANTHROPIC_API_KEY secret." }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const supabaseUser = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY")!, {
@@ -50,101 +54,66 @@ Mapping rules:
 
 Add a warning for anything ambiguous or unmapped.`;
 
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: `Specialist sheet:\n\n${tsv}` },
-        ],
-        tools: [
-          {
-            type: "function",
-            function: {
-              name: "extract_specialists",
-              description: "Return one entry per real specialist teacher row.",
-              parameters: {
-                type: "object",
-                properties: {
-                  specialists: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        name: { type: "string" },
-                        phone: { type: "string" },
-                        email: { type: "string" },
-                        subject: { type: "string", enum: ["Art", "Music", "PE", "Library", "STEAM", "Technology", "Science Lab", "Garden", "Other"] },
-                        location: { type: "string" },
-                        working_days: { type: "array", items: { type: "string", enum: ["Mon", "Tue", "Wed", "Thu", "Fri"] } },
-                        two_schools: { type: "boolean" },
-                        second_school_name: { type: "string" },
-                      },
-                      required: ["name", "subject", "working_days"],
-                      additionalProperties: false,
-                    },
-                  },
-                  warnings: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        row: { type: "number" },
-                        message: { type: "string" },
-                      },
-                      required: ["message"],
-                      additionalProperties: false,
-                    },
-                  },
-                },
-                required: ["specialists", "warnings"],
-                additionalProperties: false,
+    const EXTRACT_TOOL = {
+      name: "extract_specialists",
+      description: "Return one entry per real specialist teacher row.",
+      input_schema: {
+        type: "object",
+        properties: {
+          specialists: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                phone: { type: "string" },
+                email: { type: "string" },
+                subject: { type: "string", enum: ["Art", "Music", "PE", "Library", "STEAM", "Technology", "Science Lab", "Garden", "Other"] },
+                location: { type: "string" },
+                working_days: { type: "array", items: { type: "string", enum: ["Mon", "Tue", "Wed", "Thu", "Fri"] } },
+                two_schools: { type: "boolean" },
+                second_school_name: { type: "string" },
               },
+              required: ["name", "subject", "working_days"],
             },
           },
-        ],
-        tool_choice: { type: "function", function: { name: "extract_specialists" } },
-      }),
-    });
+          warnings: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { row: { type: "number" }, message: { type: "string" } },
+              required: ["message"],
+            },
+          },
+        },
+        required: ["specialists", "warnings"],
+      },
+    };
 
-    if (!aiResponse.ok) {
-      const errText = await aiResponse.text();
-      console.error("AI Gateway error:", aiResponse.status, errText);
-      if (aiResponse.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (aiResponse.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted. Please contact support." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({ error: "AI processing failed" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    let extracted: any = { specialists: [], warnings: [] };
+    try {
+      const resp = await anthropicClient().messages.create({
+        model: CLAUDE_MODEL,
+        max_tokens: 4000,
+        system: systemPrompt,
+        tools: [EXTRACT_TOOL as any],
+        tool_choice: { type: "tool", name: "extract_specialists" },
+        messages: [{ role: "user", content: `Specialist sheet:\n\n${tsv}` }],
+      });
+      extracted = firstToolUse(resp.content as any[], "extract_specialists")?.input ?? extracted;
+    } catch (err) {
+      const { status, message } = describeAnthropicError(err);
+      return new Response(JSON.stringify({ error: message }), {
+        status, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const aiResult = await aiResponse.json();
-    const toolCall = aiResult.choices?.[0]?.message?.tool_calls?.[0];
-    let extracted: any = { specialists: [], warnings: [] };
-    if (toolCall?.function?.arguments) {
-      try {
-        extracted = JSON.parse(toolCall.function.arguments);
-      } catch (e) {
-        console.error("Parse error:", e);
-      }
-    }
-
-    const tokensUsed = aiResult.usage?.total_tokens || 0;
     const supabaseAdmin = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     await supabaseAdmin.from("ai_usage_log").insert({
       workspace_id: null,
       feature: "parse_specialist_template",
-      tokens_used: tokensUsed,
-      cost_estimate: tokensUsed * 0.000001,
+      tokens_used: 0,
+      cost_estimate: 0,
     });
 
     return new Response(JSON.stringify(extracted), {

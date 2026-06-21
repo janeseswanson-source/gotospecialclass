@@ -1,4 +1,5 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
+import { anthropicApiKey, anthropicClient, CLAUDE_MODEL, firstToolUse } from '../_shared/anthropic.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -45,61 +46,48 @@ Deno.serve(async (req) => {
       );
     }
 
-    const apiKey = Deno.env.get('LOVABLE_API_KEY');
-    if (!apiKey) {
+    if (!anthropicApiKey()) {
       return new Response(
         JSON.stringify({ url: null, message: 'Auto-search not configured yet' }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
-
     try {
-      const aiRes = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Lovable-API-Key': apiKey,
+      // Let Claude actually search the web for the district's calendar, then
+      // report a structured result. tool_choice can't force a custom tool
+      // while a server tool is present, so we use "any" (must use *some* tool)
+      // and read the report_calendar call from the final turn.
+      const REPORT_TOOL = {
+        name: 'report_calendar',
+        description: 'Report the official academic calendar URL you found.',
+        input_schema: {
+          type: 'object',
+          properties: {
+            url: { type: ['string', 'null'], description: 'Direct URL to the official academic calendar (PDF preferred), or null if not found.' },
+            confidence: { type: 'number', description: '0 to 1' },
+            reason: { type: 'string' },
+          },
+          required: ['url', 'confidence'],
         },
-        signal: controller.signal,
-        body: JSON.stringify({
-          model: 'google/gemini-3-flash-preview',
-          messages: [
-            {
-              role: 'system',
-              content:
-                'You help locate official school district academic calendars. Given a school website and a school year, return your best guess for the URL of the official academic calendar (PDF preferred). Respond ONLY with strict JSON: {"url": string|null, "confidence": number between 0 and 1, "reason": string}.',
-            },
-            {
-              role: 'user',
-              content: `School website: ${schoolWebsite}\nSchool year: ${schoolYear}\n\nReturn the most likely calendar URL. If you cannot identify one with reasonable confidence, set url to null.`,
-            },
-          ],
-          response_format: { type: 'json_object' },
-        }),
+      };
+
+      const resp = await anthropicClient().messages.create({
+        model: CLAUDE_MODEL,
+        max_tokens: 1500,
+        system:
+          'You locate official school/district academic calendars. Use web search to find the real calendar page or PDF for the given school and year, then call report_calendar with the best direct URL. Prefer an official district domain and a PDF. If you cannot find a credible one, report url=null.',
+        tools: [
+          { type: 'web_search_20260209', name: 'web_search', max_uses: 4 } as any,
+          REPORT_TOOL as any,
+        ],
+        tool_choice: { type: 'any' } as any,
+        messages: [
+          { role: 'user', content: `School website: ${schoolWebsite}\nSchool year: ${schoolYear}\n\nFind the official academic calendar URL.` },
+        ],
       });
 
-      clearTimeout(timeout);
-
-      if (!aiRes.ok) {
-        console.error('[CalendarSearch] gateway error', aiRes.status, await aiRes.text());
-        return new Response(
-          JSON.stringify({ url: null, message: 'Auto-search unavailable, try another method' }),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
-        );
-      }
-
-      const json = await aiRes.json();
-      const content: string = json?.choices?.[0]?.message?.content ?? '{}';
-      let parsed: { url?: string | null; confidence?: number; reason?: string } = {};
-      try {
-        parsed = JSON.parse(content);
-      } catch {
-        parsed = {};
-      }
-
+      const parsed = (firstToolUse(resp.content as any[], 'report_calendar')?.input ?? {}) as { url?: string | null; confidence?: number; reason?: string };
       const url = typeof parsed.url === 'string' && parsed.url.startsWith('http') ? parsed.url : null;
       const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0;
 
@@ -115,8 +103,7 @@ Deno.serve(async (req) => {
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     } catch (err) {
-      clearTimeout(timeout);
-      console.error('[CalendarSearch] timeout/error', err);
+      console.error('[CalendarSearch] error', err);
       return new Response(
         JSON.stringify({ url: null, message: 'No calendar found, try another method' }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },

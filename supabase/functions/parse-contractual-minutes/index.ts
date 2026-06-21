@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { anthropicApiKey, anthropicClient, CLAUDE_MODEL, firstToolUse, describeAnthropicError } from "../_shared/anthropic.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -20,8 +21,11 @@ If something is not explicit, omit it. Do not invent values.`;
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY not configured");
+    if (!anthropicApiKey()) {
+      return new Response(JSON.stringify({ error: "Claude isn't set up yet — add the ANTHROPIC_API_KEY secret." }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
@@ -88,7 +92,7 @@ serve(async (req) => {
       }
       const base64 = btoa(binary);
       contentForAI = [
-        { type: "image_url", image_url: { url: `data:application/pdf;base64,${base64}` } },
+        { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
         { type: "text", text: "Extract contractual minute requirements from this contract." },
       ];
     } else if (school.contractual_minutes_url) {
@@ -108,7 +112,7 @@ serve(async (req) => {
         }
         const base64 = btoa(binary);
         contentForAI = [
-          { type: "image_url", image_url: { url: `data:application/pdf;base64,${base64}` } },
+          { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
           { type: "text", text: "Extract contractual minute requirements from this contract PDF." },
         ];
       } else {
@@ -126,82 +130,61 @@ serve(async (req) => {
       });
     }
 
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: contentForAI },
-        ],
-        tools: [{
-          type: "function",
-          function: {
-            name: "extract_contractual_minutes",
-            description: "Extract contractual minute requirements",
-            parameters: {
+    const EXTRACT_TOOL = {
+      name: "extract_contractual_minutes",
+      description: "Extract contractual minute requirements",
+      input_schema: {
+        type: "object",
+        properties: {
+          subjects: {
+            type: "array",
+            description: "Required weekly instructional minutes by subject and grade",
+            items: {
               type: "object",
               properties: {
-                subjects: {
-                  type: "array",
-                  description: "Required weekly instructional minutes by subject and grade",
-                  items: {
-                    type: "object",
-                    properties: {
-                      grade: { type: "string", description: "Grade level e.g. K, 1, 2…6" },
-                      subject: { type: "string", description: "Subject e.g. PE, Music, Art, Library" },
-                      weekly_minutes: { type: "number", description: "Required minutes per week" },
-                    },
-                    required: ["grade", "subject", "weekly_minutes"],
-                    additionalProperties: false,
-                  },
-                },
-                teachers: {
-                  type: "array",
-                  description: "Contractual minute requirements per teacher role",
-                  items: {
-                    type: "object",
-                    properties: {
-                      role: { type: "string", description: "Role e.g. Classroom Teacher, Specialist, K-2 Teacher" },
-                      planning_minutes: { type: "number", description: "Required planning minutes per week" },
-                      duty_free_minutes: { type: "number", description: "Required duty-free lunch minutes per week" },
-                      notes: { type: "string" },
-                    },
-                    required: ["role", "planning_minutes"],
-                    additionalProperties: false,
-                  },
-                },
-                source_summary: { type: "string", description: "One-sentence summary of where these numbers came from" },
+                grade: { type: "string", description: "Grade level e.g. K, 1, 2…6" },
+                subject: { type: "string", description: "Subject e.g. PE, Music, Art, Library" },
+                weekly_minutes: { type: "number", description: "Required minutes per week" },
               },
-              required: ["subjects", "teachers"],
-              additionalProperties: false,
+              required: ["grade", "subject", "weekly_minutes"],
             },
           },
-        }],
-        tool_choice: { type: "function", function: { name: "extract_contractual_minutes" } },
-      }),
-    });
+          teachers: {
+            type: "array",
+            description: "Contractual minute requirements per teacher role",
+            items: {
+              type: "object",
+              properties: {
+                role: { type: "string", description: "Role e.g. Classroom Teacher, Specialist, K-2 Teacher" },
+                planning_minutes: { type: "number", description: "Required planning minutes per week" },
+                duty_free_minutes: { type: "number", description: "Required duty-free lunch minutes per week" },
+                notes: { type: "string" },
+              },
+              required: ["role", "planning_minutes"],
+            },
+          },
+          source_summary: { type: "string", description: "One-sentence summary of where these numbers came from" },
+        },
+        required: ["subjects", "teachers"],
+      },
+    };
 
-    if (!aiResponse.ok) {
-      const errText = await aiResponse.text();
-      console.error("AI Gateway error", aiResponse.status, errText);
-      const status = aiResponse.status === 429 ? 429 : aiResponse.status === 402 ? 402 : 500;
-      const msg = aiResponse.status === 429
-        ? "Rate limit — try again shortly."
-        : aiResponse.status === 402
-        ? "AI credits exhausted. Add credits in Settings → Workspace → Usage."
-        : "AI parsing failed";
-      return new Response(JSON.stringify({ error: msg }), {
+    let extracted: unknown = null;
+    try {
+      const resp = await anthropicClient().messages.create({
+        model: CLAUDE_MODEL,
+        max_tokens: 4000,
+        system: SYSTEM_PROMPT,
+        tools: [EXTRACT_TOOL as any],
+        tool_choice: { type: "tool", name: "extract_contractual_minutes" },
+        messages: [{ role: "user", content: contentForAI as any }],
+      });
+      extracted = firstToolUse(resp.content as any[], "extract_contractual_minutes")?.input ?? null;
+    } catch (err) {
+      const { status, message } = describeAnthropicError(err);
+      return new Response(JSON.stringify({ error: message }), {
         status, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
-    }
-
-    const aiJson = await aiResponse.json();
-    const call = aiJson.choices?.[0]?.message?.tool_calls?.[0];
-    let extracted: unknown = null;
-    if (call?.function?.arguments) {
-      try { extracted = JSON.parse(call.function.arguments); } catch { /* ignore */ }
     }
     if (!extracted) {
       return new Response(JSON.stringify({ error: "AI returned no structured data" }), {

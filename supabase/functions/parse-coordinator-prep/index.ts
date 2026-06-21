@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { anthropicApiKey, extractFromFile, describeAnthropicError } from "../_shared/anthropic.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -18,8 +19,11 @@ serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    if (!anthropicApiKey()) {
+      return new Response(JSON.stringify({ error: "Claude isn't set up yet — add the ANTHROPIC_API_KEY secret." }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const authHeader = req.headers.get("Authorization") ?? "";
@@ -46,9 +50,6 @@ serve(async (req) => {
       });
     }
 
-    const dataUri = `data:${mime_type};base64,${file_base64}`;
-    const isPdf = mime_type === "application/pdf";
-
     const systemPrompt = `You are reading a filled-in "Coordinator Prep" intake sheet for an elementary school scheduling tool. Extract every answer the coordinator wrote. Be tolerant of handwriting and free-form responses.
 
 Mapping rules:
@@ -65,117 +66,72 @@ Mapping rules:
 - "PLUS day(s) selected" -> plus_days (array). "PLUS rationale" -> plus_rationale. "PLUS time block & grades" / notes -> special_rotation_notes.
 - Leave any field blank/null when illegible. Add a warning entry for ambiguous answers.`;
 
-    const userContent: any[] = [
-      { type: "text", text: `Extract the coordinator prep data from this filled sheet${school_name ? ` for ${school_name}` : ""}.` },
-    ];
-    if (isPdf) {
-      userContent.push({ type: "file", file: { filename: "coordinator_prep.pdf", file_data: dataUri } });
-    } else {
-      userContent.push({ type: "image_url", image_url: { url: dataUri } });
-    }
-
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userContent },
-        ],
-        tools: [{
-          type: "function",
-          function: {
-            name: "extract_coordinator_prep",
-            description: "Extract structured coordinator prep data",
-            parameters: {
+    const EXTRACT_TOOL = {
+      name: "extract_coordinator_prep",
+      description: "Extract structured coordinator prep data from the filled intake sheet.",
+      input_schema: {
+        type: "object",
+        properties: {
+          school_site_url: { type: "string" },
+          district_calendar_url: { type: "string" },
+          early_release_day: { type: "string" },
+          early_release_end_time: { type: "string" },
+          teacher_union_url: { type: "string" },
+          teacher_contract_url: { type: "string" },
+          grade_preference: { type: "string", enum: ["keep_together", "waterfall", "fixed_sequence", ""] },
+          day_preference: { type: "array", items: { type: "string" } },
+          am_pm_preference: { type: "string" },
+          specialist_count: { type: ["number", "null"] },
+          cart_users: { type: "string" },
+          two_school_users: { type: "string" },
+          part_time_users: { type: "string" },
+          custom_grade_prefs: { type: "string" },
+          mostly_monday_holidays: { type: ["boolean", "null"] },
+          holiday_notes: { type: "string" },
+          has_special_rotation: { type: ["boolean", "null"] },
+          plus_mode: { type: "string", enum: ["", "admin", "ai_auto_fit"] },
+          plus_days: { type: "array", items: { type: "string" } },
+          plus_rationale: { type: "string" },
+          special_rotation_notes: { type: "string" },
+          warnings: {
+            type: "array",
+            items: {
               type: "object",
               properties: {
-                school_site_url: { type: "string" },
-                district_calendar_url: { type: "string" },
-                early_release_day: { type: "string" },
-                early_release_end_time: { type: "string" },
-                teacher_union_url: { type: "string" },
-                teacher_contract_url: { type: "string" },
-                grade_preference: { type: "string", enum: ["keep_together", "waterfall", "fixed_sequence", ""] },
-                day_preference: { type: "array", items: { type: "string" } },
-                am_pm_preference: { type: "string" },
-                specialist_count: { type: ["number", "null"] },
-                cart_users: { type: "string" },
-                two_school_users: { type: "string" },
-                part_time_users: { type: "string" },
-                custom_grade_prefs: { type: "string" },
-                mostly_monday_holidays: { type: ["boolean", "null"] },
-                holiday_notes: { type: "string" },
-                has_special_rotation: { type: ["boolean", "null"] },
-                plus_mode: { type: "string", enum: ["", "admin", "ai_auto_fit"] },
-                plus_days: { type: "array", items: { type: "string" } },
-                plus_rationale: { type: "string" },
-                special_rotation_notes: { type: "string" },
-                warnings: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      field: { type: "string" },
-                      message: { type: "string" },
-                      severity: { type: "string", enum: ["error", "warning", "info"] },
-                    },
-                    required: ["field", "message", "severity"],
-                    additionalProperties: false,
-                  },
-                },
+                field: { type: "string" },
+                message: { type: "string" },
+                severity: { type: "string", enum: ["error", "warning", "info"] },
               },
-              required: ["warnings"],
-              additionalProperties: false,
+              required: ["field", "message", "severity"],
             },
           },
-        }],
-        tool_choice: { type: "function", function: { name: "extract_coordinator_prep" } },
-      }),
-    });
+        },
+        required: ["warnings"],
+      },
+    };
 
-    if (!aiResponse.ok) {
-      const errText = await aiResponse.text();
-      console.error("AI Gateway error:", aiResponse.status, errText);
-      if (aiResponse.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }), {
-          status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (aiResponse.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted. Please add credits to your workspace." }), {
-          status: 402, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({ error: "AI processing failed" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    let extracted: Record<string, any> = {};
+    try {
+      extracted = await extractFromFile({
+        fileBase64: file_base64,
+        mimeType: mime_type,
+        system: systemPrompt,
+        userText: `Extract the coordinator prep data from this filled sheet${school_name ? ` for ${school_name}` : ""}.`,
+        tool: EXTRACT_TOOL,
+      });
+    } catch (err) {
+      const { status, message } = describeAnthropicError(err);
+      return new Response(JSON.stringify({ error: message }), {
+        status, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const aiResult = await aiResponse.json();
-    const toolCall = aiResult.choices?.[0]?.message?.tool_calls?.[0];
-    let extracted: any = {};
-    if (toolCall?.function?.arguments) {
-      try { extracted = JSON.parse(toolCall.function.arguments); }
-      catch (e) {
-        console.error("Parse error", e);
-        return new Response(JSON.stringify({ error: "Failed to parse AI response" }), {
-          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-    }
-
-    const tokensUsed = aiResult.usage?.total_tokens || 0;
     const supabaseAdmin = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
     await supabaseAdmin.from("ai_usage_log").insert({
       workspace_id: null,
       feature: "coordinator_prep_upload",
-      tokens_used: tokensUsed,
-      cost_estimate: tokensUsed * 0.000001,
+      tokens_used: 0,
+      cost_estimate: 0,
     });
 
     return new Response(JSON.stringify(extracted), {

@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { anthropicApiKey, anthropicClient, CLAUDE_MODEL, firstToolUse, describeAnthropicError } from "../_shared/anthropic.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -13,8 +14,11 @@ serve(async (req) => {
   }
 
   try {
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    if (!anthropicApiKey()) {
+      return new Response(JSON.stringify({ error: "Claude isn't set up yet — add the ANTHROPIC_API_KEY secret." }), {
+        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
     const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -95,116 +99,69 @@ serve(async (req) => {
       const base64 = btoa(binary);
 
       contentForAI = [
-        {
-          type: "image_url",
-          image_url: { url: `data:application/pdf;base64,${base64}` },
-        },
-        {
-          type: "text",
-          text: "Extract all calendar events from this school calendar PDF.",
-        },
+        { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
+        { type: "text", text: "Extract all calendar events from this school calendar PDF." },
       ];
     }
 
     const systemPrompt = `You are a school calendar parser. Extract ALL important dates from the school calendar provided. Return structured data using the extract_calendar_events tool. Include: holidays, teacher workdays, no-school days, early release days, closures, first/last day of school, and any other significant events. For multi-day events, include both start and end dates. Be thorough — extract every date mentioned.`;
 
-    const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: contentForAI },
-        ],
-        tools: [
-          {
-            type: "function",
-            function: {
-              name: "extract_calendar_events",
-              description: "Extract structured calendar events from the school calendar",
-              parameters: {
-                type: "object",
-                properties: {
-                  events: {
-                    type: "array",
-                    items: {
-                      type: "object",
-                      properties: {
-                        title: { type: "string", description: "Name of the event" },
-                        event_type: {
-                          type: "string",
-                          enum: ["holiday", "teacher_workday", "no_school", "early_release", "closure", "event", "first_day", "last_day"],
-                          description: "Category of the event",
-                        },
-                        event_date: { type: "string", description: "Start date in YYYY-MM-DD format" },
-                        end_date: { type: "string", description: "End date in YYYY-MM-DD format (same as event_date if single day)" },
-                      },
-                      required: ["title", "event_type", "event_date"],
-                      additionalProperties: false,
-                    },
-                  },
+    const EXTRACT_TOOL = {
+      name: "extract_calendar_events",
+      description: "Extract structured calendar events from the school calendar",
+      input_schema: {
+        type: "object",
+        properties: {
+          events: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string", description: "Name of the event" },
+                event_type: {
+                  type: "string",
+                  enum: ["holiday", "teacher_workday", "no_school", "early_release", "closure", "event", "first_day", "last_day"],
+                  description: "Category of the event",
                 },
-                required: ["events"],
-                additionalProperties: false,
+                event_date: { type: "string", description: "Start date in YYYY-MM-DD format" },
+                end_date: { type: "string", description: "End date in YYYY-MM-DD format (same as event_date if single day)" },
               },
+              required: ["title", "event_type", "event_date"],
             },
           },
-        ],
-        tool_choice: { type: "function", function: { name: "extract_calendar_events" } },
-      }),
-    });
+        },
+        required: ["events"],
+      },
+    };
 
-    if (!aiResponse.ok) {
-      const errText = await aiResponse.text();
-      console.error("AI Gateway error:", aiResponse.status, errText);
-
-      if (aiResponse.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limit exceeded. Please try again in a moment." }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (aiResponse.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted. Please add credits in Settings → Workspace → Usage." }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      return new Response(JSON.stringify({ error: "AI parsing failed" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+    let extractedEvents: Array<{ title: string; event_type: string; event_date: string; end_date?: string }> = [];
+    try {
+      const resp = await anthropicClient().messages.create({
+        model: CLAUDE_MODEL,
+        max_tokens: 8000,
+        system: systemPrompt,
+        tools: [EXTRACT_TOOL as any],
+        tool_choice: { type: "tool", name: "extract_calendar_events" },
+        messages: [{ role: "user", content: contentForAI as any }],
+      });
+      const input = firstToolUse(resp.content as any[], "extract_calendar_events")?.input;
+      extractedEvents = (input?.events as any[]) || [];
+    } catch (err) {
+      const { status, message } = describeAnthropicError(err);
+      return new Response(JSON.stringify({ error: message }), {
+        status, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const aiResult = await aiResponse.json();
-    const toolCall = aiResult.choices?.[0]?.message?.tool_calls?.[0];
-
-    let extractedEvents: Array<{ title: string; event_type: string; event_date: string; end_date?: string }> = [];
-
-    if (toolCall?.function?.arguments) {
-      try {
-        const parsed = JSON.parse(toolCall.function.arguments);
-        extractedEvents = parsed.events || [];
-      } catch (e) {
-        console.error("Failed to parse AI tool call arguments:", e);
-      }
-    }
-
     // Log AI usage
-    const tokensUsed = aiResult.usage?.total_tokens || 0;
     const { data: school } = await supabase.from("schools").select("workspace_id").eq("id", school_id).single();
 
     if (school?.workspace_id) {
       await supabase.from("ai_usage_log").insert({
         workspace_id: school.workspace_id,
         feature: "calendar_parsing",
-        tokens_used: tokensUsed,
-        cost_estimate: tokensUsed * 0.000001,
+        tokens_used: 0,
+        cost_estimate: 0,
       });
     }
 
@@ -235,7 +192,7 @@ serve(async (req) => {
       .update({ parsed: true, parsed_at: new Date().toISOString() })
       .eq("id", upload_id);
 
-    return new Response(JSON.stringify({ events: extractedEvents, tokens_used: tokensUsed }), {
+    return new Response(JSON.stringify({ events: extractedEvents }), {
       status: 200,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
