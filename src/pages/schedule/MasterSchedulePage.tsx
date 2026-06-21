@@ -23,7 +23,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import SpecialistExportModal from "./exports/SpecialistExportModal";
 import AdminExportModal from "./exports/AdminExportModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds, computeConflictPairs, computeAutoFit, parseTime } from "@/lib/scheduleGrid";
+import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds, computeConflictPairs, computeAutoFit, parseTime, swapPlacements } from "@/lib/scheduleGrid";
 import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
@@ -344,11 +344,6 @@ export default function MasterSchedulePage() {
   );
   const trayIds = useMemo(() => new Set(trayBlocks.map((b) => b.id)), [trayBlocks]);
 
-  /** Minutes -> "HH:MM:SS" for DB writes. */
-  function minToHMS(min: number): string {
-    return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}:00`;
-  }
-
   /**
    * After a proposed move/swap, check whether any of the moved blocks ended up
    * in a bad spot, and return a plain-language reason (or null if it's fine).
@@ -391,8 +386,6 @@ export default function MasterSchedulePage() {
     if (!block) return;
     if (block.day_of_week === newDay && block.start_time === newTime) return;
 
-    const dur = (b: BlockData) => parseTime(b.end_time) - parseTime(b.start_time);
-
     // Is the target slot occupied? (interval-contains so compact rows still
     // match a block that starts a few minutes earlier in that cell.)
     const newTimeMin = parseTime(newTime);
@@ -408,10 +401,9 @@ export default function MasterSchedulePage() {
         toast({ title: "That block is locked", description: "Unlock it to swap.", variant: "destructive" });
         return;
       }
-      const aStart = parseTime(targetBlock.start_time);          // block → target's start
-      const bStart = parseTime(block.start_time);                // target → block's start
-      const aNew = { day_of_week: targetBlock.day_of_week, start_time: minToHMS(aStart), end_time: minToHMS(aStart + dur(block)), is_override: true };
-      const bNew = { day_of_week: block.day_of_week, start_time: minToHMS(bStart), end_time: minToHMS(bStart + dur(targetBlock)), is_override: true };
+      const swapped = swapPlacements(block, targetBlock);
+      const aNew = { ...swapped.a, is_override: true }; // block → target's slot, keeps block's length
+      const bNew = { ...swapped.b, is_override: true }; // target → block's slot, keeps target's length
 
       const candidate = blocks.map((b) =>
         b.id === block.id ? { ...b, ...aNew } : b.id === targetBlock.id ? { ...b, ...bNew } : b,

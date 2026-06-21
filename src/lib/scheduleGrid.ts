@@ -16,6 +16,37 @@ export function formatTimeHM(mins: number): string {
   return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}`;
 }
 
+/** Minutes → "HH:MM:SS" for DB writes. */
+export function minToHMS(mins: number): string {
+  return `${formatTimeHM(mins)}:00`;
+}
+
+export interface Placement {
+  day_of_week: string;
+  start_time: string;
+  end_time: string;
+}
+
+/**
+ * Compute the two new placements when swapping block `a` onto block `b`'s slot.
+ * Each block keeps its OWN duration — `a` takes `b`'s day+start (with a's
+ * length) and `b` takes `a`'s day+start (with b's length). This is the rule the
+ * master-schedule drag/drop swap relies on; kept pure so it's unit-testable.
+ */
+export function swapPlacements(
+  a: { day_of_week: string; start_time: string; end_time: string },
+  b: { day_of_week: string; start_time: string; end_time: string },
+): { a: Placement; b: Placement } {
+  const aDur = parseTime(a.end_time) - parseTime(a.start_time);
+  const bDur = parseTime(b.end_time) - parseTime(b.start_time);
+  const aStart = parseTime(b.start_time); // a moves to b's slot
+  const bStart = parseTime(a.start_time); // b moves to a's slot
+  return {
+    a: { day_of_week: b.day_of_week, start_time: minToHMS(aStart), end_time: minToHMS(aStart + aDur) },
+    b: { day_of_week: a.day_of_week, start_time: minToHMS(bStart), end_time: minToHMS(bStart + bDur) },
+  };
+}
+
 /**
  * Build the left-rail time slots from the school's start/end time.
  * Always returns a complete grid stepped by GRID_STEP_MIN so off-grid blocks
