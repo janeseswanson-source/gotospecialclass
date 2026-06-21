@@ -105,7 +105,13 @@ export default function MasterSchedulePage() {
     if (!ids.length) return;
     setRecentChangedIds(new Set(ids));
     if (changedClearTimer.current) window.clearTimeout(changedClearTimer.current);
-    changedClearTimer.current = window.setTimeout(() => setRecentChangedIds(new Set()), 12_000);
+    changedClearTimer.current = window.setTimeout(() => setRecentChangedIds(new Set()), 8_000);
+    // Scroll the first changed block into view so the user sees the glow.
+    requestAnimationFrame(() => {
+      const first = ids[0];
+      const el = document.querySelector(`[data-block-id="${first}"]`) as HTMLElement | null;
+      el?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    });
   }, []);
   const [density, setDensity] = useState<"compact" | "fine">("compact");
 
