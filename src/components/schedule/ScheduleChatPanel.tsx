@@ -394,9 +394,9 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
           />
           <PromptInputFooter className="justify-end">
             <PromptInputSubmit
-              status={isLoading ? "streaming" : "ready"}
+              status={status}
               disabled={isLoading ? false : !canSend}
-              onClick={isLoading ? () => stop() : undefined}
+              onStop={() => stop()}
             />
           </PromptInputFooter>
         </PromptInput>
