@@ -2759,41 +2759,77 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       return Math.max(0, Math.min(100, Math.round(100 - mag / 4)));
     };
     const TARGET_QUALITY = 99;
-    const MAX_ATTEMPTS = 8;
-    const TOTAL_BUDGET_MS = 240_000; // 4 minutes total upper bound
+    const MAX_ATTEMPTS = 20;
+    // Wall-clock soft budget for the HQ loop. We must leave headroom for
+    // DB inserts + metadata updates that run AFTER the loop, otherwise we
+    // get "CPU Time exceeded" mid-save and the user loses everything.
+    const HQ_SOFT_BUDGET_MS = 120_000;
+    const POST_RESERVE_MS = 30_000;
+    const HQ_HARD_BUDGET_MS = HQ_SOFT_BUDGET_MS + POST_RESERVE_MS;
     const tStartOuter = performance.now();
 
-    let schedulerResult = generateScheduleBlocks(
-      generation.id, specialists, teachers, grades, school, recessConfigs,
-      clubs, specialEvents, calendarEvents, adminBlocks, lockedBlocks,
-      weightOverrides, 0,
-    );
-    let bestQuality = qualityPct(schedulerResult.scoreBreakdown as any);
-    console.log(`[HQ] attempt 0 → quality ${bestQuality}%`);
+    let schedulerResult: ReturnType<typeof generateScheduleBlocks> | null = null;
+    let bestQuality = -1;
+    let bestAttempt = -1;
+    let attemptsRun = 0;
+    let maxAttemptMs = 0;
 
-    for (let attempt = 1; attempt < MAX_ATTEMPTS && bestQuality < TARGET_QUALITY; attempt++) {
-      if (performance.now() - tStartOuter > TOTAL_BUDGET_MS) {
-        console.log(`[HQ] outer budget exhausted after ${attempt} attempts`);
-        break;
+    const runAttempt = (attempt: number) => {
+      const t0 = performance.now();
+      const candidate = generateScheduleBlocks(
+        generation.id, specialists, teachers, grades, school, recessConfigs,
+        clubs, specialEvents, calendarEvents, adminBlocks, lockedBlocks,
+        weightOverrides, attempt,
+      );
+      const dt = performance.now() - t0;
+      if (dt > maxAttemptMs) maxAttemptMs = dt;
+      const q = qualityPct(candidate.scoreBreakdown as any);
+      console.log(`[HQ] attempt ${attempt} → quality ${q}% (${Math.round(dt)}ms)`);
+      attemptsRun++;
+      if (q > bestQuality) {
+        bestQuality = q;
+        bestAttempt = attempt;
+        schedulerResult = candidate;
       }
+    };
+
+    try {
+      // Attempt 0 — must succeed at least once to have any result to save.
       try {
-        const candidate = generateScheduleBlocks(
-          generation.id, specialists, teachers, grades, school, recessConfigs,
-          clubs, specialEvents, calendarEvents, adminBlocks, lockedBlocks,
-          weightOverrides, attempt,
-        );
-        const q = qualityPct(candidate.scoreBreakdown as any);
-        console.log(`[HQ] attempt ${attempt} → quality ${q}%`);
-        if (q > bestQuality) {
-          bestQuality = q;
-          schedulerResult = candidate;
-        }
+        runAttempt(0);
       } catch (err) {
-        // Don't let one bad seed bring down the whole generation — keep best so far.
-        console.error(`[HQ] attempt ${attempt} threw:`, err);
+        console.error(`[HQ] attempt 0 threw, retrying once:`, err);
+        runAttempt(0);
       }
+
+      for (let attempt = 1; attempt < MAX_ATTEMPTS && bestQuality < TARGET_QUALITY; attempt++) {
+        const elapsed = performance.now() - tStartOuter;
+        if (elapsed > HQ_SOFT_BUDGET_MS) {
+          console.log(`[HQ] soft budget hit after ${attemptsRun} attempts (${Math.round(elapsed)}ms)`);
+          break;
+        }
+        // Don't start another attempt if we don't have time to finish it
+        // AND keep reserve for the save phase.
+        const projectedEnd = elapsed + maxAttemptMs * 1.3;
+        if (projectedEnd > HQ_SOFT_BUDGET_MS) {
+          console.log(`[HQ] skipping attempt ${attempt} — projected ${Math.round(projectedEnd)}ms would exceed soft budget`);
+          break;
+        }
+        try {
+          runAttempt(attempt);
+        } catch (err) {
+          console.error(`[HQ] attempt ${attempt} threw:`, err);
+        }
+      }
+    } catch (loopErr) {
+      // CPU exceeded or unexpected fatal — bail out and save best so far.
+      console.error(`[HQ] loop aborted, saving best so far:`, loopErr);
     }
-    console.log(`[HQ] final quality ${bestQuality}% after ${schedulerResult.monteCarloAttempts} MC attempts`);
+
+    if (!schedulerResult) {
+      throw new Error("Schedule generation produced no candidates");
+    }
+    console.log(`[HQ] best ${bestQuality}% from attempt ${bestAttempt} of ${attemptsRun} (${Math.round(performance.now() - tStartOuter)}ms), saving...`);
     const generatedBlocks = schedulerResult.blocks;
 
     // Lunch reservations already created inside generateScheduleBlocks for occupancy tracking
