@@ -92,6 +92,7 @@ export default function ScheduleBlockCell({
       onClick={onClick}
       draggable={draggable && !isLocked}
       onDragStart={onDragStart}
+      data-block-id={blockId}
       style={{ minHeight: `${minHeightPx}px` }}
       aria-label={`${subject ?? "Block"}${grade ? `, grade ${grade}` : ""}${teacherName ? `, ${teacherName}` : ""}, ${formatTime(startTime)} to ${formatTime(endTime)}${isLocked ? ", locked" : ""}${hasConflict ? ", has a conflict" : ""}`}
       className={cn(
@@ -102,12 +103,12 @@ export default function ScheduleBlockCell({
         hasConflict && "ring-2 ring-destructive/60 border-destructive/50",
         isLocked && "ring-2 ring-primary/40 opacity-90",
         isSelected && "ring-2 ring-primary shadow-[0_0_0_3px_hsl(var(--primary)/0.25)] animate-pulse",
-        isHighlighted && "ring-2 ring-sky-500/70 shadow-[0_0_0_3px_rgba(14,165,233,0.15)] animate-pulse-once",
+        isHighlighted && "ring-4 ring-sky-400 ring-offset-1 ring-offset-background animate-ai-changed z-10",
       )}
     >
       {isHighlighted && (
-        <span className="absolute -top-2 left-2 z-10 rounded bg-sky-500 px-1 py-px text-[8px] font-bold uppercase tracking-wide text-white shadow">
-          Changed
+        <span className="absolute -top-2 left-2 z-10 rounded bg-sky-500 px-1.5 py-px text-[8px] font-bold uppercase tracking-wide text-white shadow-lg shadow-sky-500/50 animate-pulse">
+          ✨ Changed
         </span>
       )}
       {/* Pick-up handle: works for touch + keyboard (mouse can still drag the block). */}
