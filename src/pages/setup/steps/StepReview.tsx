@@ -10,6 +10,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { logActivity } from '@/lib/activityLogger';
 import { track } from '@/lib/observability';
+import { generateBestSchedule } from '@/lib/generateBestSchedule';
 import { getStrategyTitle } from '@/lib/conflictStrategies';
 import { cn } from '@/lib/utils';
 import { SafeSection } from '@/components/SafeSection';
@@ -33,6 +34,7 @@ const StepReview = () => {
   const [teacherCount, setTeacherCount] = useState(0);
   const [specialistRows, setSpecialistRows] = useState<any[]>([]);
   const [progressMsg, setProgressMsg] = useState(BUILD_MESSAGES[0]);
+  const [genProgress, setGenProgress] = useState('');
   const msgIdxRef = useRef(0);
 
   useEffect(() => {
@@ -83,7 +85,7 @@ const StepReview = () => {
 
   const complexity = teacherCount * specialistCount;
   const complexityLabel = complexity === 0 ? 'No data yet' : complexity < 20 ? 'Simple' : complexity < 50 ? 'Moderate' : 'Complex';
-  const complexityDesc = complexity === 0 ? 'Add specialists and teachers first' : complexity < 20 ? 'Quick to generate (~5 sec)' : complexity < 50 ? 'May take 10–20 seconds' : 'May take up to 30 seconds';
+  const complexityDesc = complexity === 0 ? 'Add specialists and teachers first' : 'We keep trying for the best possible schedule (up to a few minutes), then AI polishes it.';
   const complexityColor = complexity === 0 ? 'text-muted-foreground' : complexity < 20 ? 'text-emerald-600 dark:text-emerald-400' : complexity < 50 ? 'text-amber-600 dark:text-amber-400' : 'text-destructive';
 
   const handleBuild = async () => {
@@ -92,6 +94,7 @@ const StepReview = () => {
       return;
     }
     setBuilding(true);
+    setGenProgress('');
     try {
       await supabase.from('schools').update({
         grades_served: data.gradesServed,
@@ -116,18 +119,25 @@ const StepReview = () => {
         }, { onConflict: 'school_id,grade_band' });
       }
 
-      const { data: genData, error: genError } = await supabase.functions.invoke('generate-schedule', {
-        body: { school_id: schoolId },
-      });
-      if (genError) {
-        console.error('Generate error:', genError);
-        toast.error('Schedule generation had an issue, but your data is saved.');
-      } else if ((genData as any)?.generation_id) {
-        // Fire-and-forget AI quality verification for the new schedule.
-        supabase.functions.invoke('verify-schedule', {
-          body: { generation_id: (genData as any).generation_id },
-        }).catch(() => {});
-        track('schedule_generated', { via: 'setup_wizard' });
+      // Keep generating independent schedules until we hit 99%+, then let Claude
+      // polish the winner. Many short calls (each well under the Edge CPU limit)
+      // instead of one long server run — so no CPU errors even over a few minutes.
+      try {
+        const result = await generateBestSchedule({
+          schoolId,
+          targetQuality: 99,
+          onProgress: (p) => {
+            setGenProgress(
+              p.phase === 'search'
+                ? `Trying schedules… best ${p.bestQuality}% (attempt ${p.attempt})`
+                : `Polishing with AI… ${p.currentQuality}%`,
+            );
+          },
+        });
+        track('schedule_generated', { via: 'setup_wizard', quality: result.quality, attempts: result.attemptsRun, reached_target: result.reachedTarget });
+      } catch (genErr: any) {
+        console.error('Generate error:', genErr);
+        toast.error(genErr?.message || 'Schedule generation had an issue, but your data is saved.');
       }
       logActivity('setup_completed', { school_name: data.schoolName });
       track('setup_completed');
@@ -137,6 +147,7 @@ const StepReview = () => {
       toast.error('Something went wrong. Please try again.');
     } finally {
       setBuilding(false);
+      setGenProgress('');
     }
   };
 
@@ -283,7 +294,7 @@ const StepReview = () => {
               ) : (
                 <Button onClick={handleBuild} className="w-full gap-2" disabled={building}>
                   {building ? <Loader2 className="h-4 w-4 animate-spin" /> : <Rocket className="h-4 w-4" />}
-                  {building ? progressMsg : 'Save & Build Schedule'}
+                  {building ? (genProgress || progressMsg) : 'Save & Build Schedule'}
                 </Button>
               )}
             </div>

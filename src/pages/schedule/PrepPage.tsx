@@ -13,6 +13,7 @@ import { formatTime } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { getStrategyNote, getRecommendedStrategies, type StrategyContext } from "@/lib/strategyFeasibility";
 import { analyzeContractFeasibility, type FeasibilityNote } from "@/lib/contractFeasibility";
+import { generateBestSchedule } from "@/lib/generateBestSchedule";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -361,23 +362,22 @@ export default function PrepPage() {
       if (saveErr) throw saveErr;
 
       setGenProgress('Analyzing conflicts & placing blocks…');
-      const { data, error } = await supabase.functions.invoke("generate-schedule", {
-        body: { school_id: selectedSchoolId },
+      // Best-of-N: keep generating until 99%+ (or the time budget), then polish
+      // the winner with Claude. Many short Edge calls avoid the CPU limit.
+      const result = await generateBestSchedule({
+        schoolId: selectedSchoolId,
+        targetQuality: 99,
+        onProgress: (p) => setGenProgress(
+          p.phase === 'search'
+            ? `Trying schedules… best ${p.bestQuality}% (attempt ${p.attempt})`
+            : `Polishing with AI… ${p.currentQuality}%`,
+        ),
       });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-      setGeneratedQuote(data.quote);
       setGenProgress('');
-      toast({ title: "Schedule generated!", description: `${data.blocks_count} blocks created. View it on the Master Schedule page.` });
+      toast({ title: "Schedule generated!", description: `Best quality ${result.quality}%. View it on the Master Schedule page.` });
 
-      const newGenId: string | undefined = data.generation_id;
+      const newGenId = result.generationId;
       if (newGenId) {
-        // Fire-and-forget AI quality verification — populates the quality
-        // score / "AI verified" badges on the Master Schedule and Dashboard.
-        supabase.functions.invoke('verify-schedule', {
-          body: { generation_id: newGenId },
-        }).catch(() => {});
-
         // In-app notification (self) so the bell reflects real events.
         const { data: { user: me } } = await supabase.auth.getUser();
         if (me) {
@@ -385,7 +385,7 @@ export default function PrepPage() {
             user_id: me.id,
             type: 'schedule_generated',
             title: 'Schedule generated',
-            message: `${data.blocks_count} blocks created — open the Master Schedule to review.`,
+            message: `New schedule ready (${result.quality}%) — open the Master Schedule to review.`,
           }).then(() => {});
         }
       }
