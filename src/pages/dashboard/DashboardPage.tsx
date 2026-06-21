@@ -15,6 +15,7 @@ import {
 import { toast } from 'sonner';
 import { seedDemoSchool, wipeDemoSchools } from '@/lib/seedDemoSchool';
 import SeedDemoDialog from '@/components/dashboard/SeedDemoDialog';
+import SampleSchedulePreview from '@/components/schedule/SampleSchedulePreview';
 
 const MetricCard = ({ label, value, icon: Icon, color }: { label: string; value: string; icon: any; color: string }) => (
   <div className="rounded-xl border border-border bg-card p-5 animate-hover-lift">
@@ -309,6 +310,12 @@ const DashboardPage = () => {
               <span className="text-[11px] font-normal text-muted-foreground">Print, fill by hand, upload — AI does the rest</span>
             </Link>
           </div>
+          <p className="mt-4 text-xs text-muted-foreground">
+            Not sure what you'll get?{" "}
+            <SampleSchedulePreview
+              trigger={<button className="text-primary underline underline-offset-2 hover:opacity-80">See a sample schedule first</button>}
+            />
+          </p>
         </div>
       )}
 
