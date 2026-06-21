@@ -81,7 +81,7 @@ BLOCKS:
 ${compact.map((c) => `${c.id}: ${c.line}`).join("\n")}`;
 
   try {
-    const { text } = await generateText({ model, prompt });
+    const { text } = await generateText({ model, prompt, maxOutputTokens: 4096 });
     // Be defensive: model may add fences.
     const cleaned = text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim();
     let parsed: { explanations?: Record<string, string> } = {};
