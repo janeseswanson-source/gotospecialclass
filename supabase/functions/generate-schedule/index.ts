@@ -2738,11 +2738,62 @@ const __serveHandler = async (req: Request): Promise<Response> => {
 
     // Generate schedule with all constraints (Prompt 2: returns orchestration result).
     // lockedBlocks are pre-seeded into occupancy so generation routes around them.
-    const schedulerResult = generateScheduleBlocks(
+    //
+    // HIGH-QUALITY MODE: run the full pipeline up to MAX_ATTEMPTS times with
+    // independent random seeds and keep the best result by the verifier rubric
+    // (100 - sum(|soft penalties|)/4). Stop early when we reach TARGET_QUALITY,
+    // or when the wall-clock budget is exhausted. Users said they're happy to
+    // wait longer for a near-perfect schedule.
+    const PENALTY_KEYS = [
+      "subject_gap", "subject_day_clustering", "class_repeats", "k_grade_after_780",
+      "cart_back_to_back", "grade_cohesion", "contract_min", "spec_dayload_stdev",
+      "warnings", "errors",
+    ];
+    const qualityPct = (breakdown: Record<string, number> | null | undefined): number => {
+      if (!breakdown) return 0;
+      let mag = 0;
+      for (const k of PENALTY_KEYS) {
+        const v = breakdown[k];
+        if (typeof v === "number" && Number.isFinite(v)) mag += Math.abs(v);
+      }
+      return Math.max(0, Math.min(100, Math.round(100 - mag / 4)));
+    };
+    const TARGET_QUALITY = 99;
+    const MAX_ATTEMPTS = 8;
+    const TOTAL_BUDGET_MS = 240_000; // 4 minutes total upper bound
+    const tStartOuter = performance.now();
+
+    let schedulerResult = generateScheduleBlocks(
       generation.id, specialists, teachers, grades, school, recessConfigs,
       clubs, specialEvents, calendarEvents, adminBlocks, lockedBlocks,
-      weightOverrides,
+      weightOverrides, 0,
     );
+    let bestQuality = qualityPct(schedulerResult.scoreBreakdown as any);
+    console.log(`[HQ] attempt 0 → quality ${bestQuality}%`);
+
+    for (let attempt = 1; attempt < MAX_ATTEMPTS && bestQuality < TARGET_QUALITY; attempt++) {
+      if (performance.now() - tStartOuter > TOTAL_BUDGET_MS) {
+        console.log(`[HQ] outer budget exhausted after ${attempt} attempts`);
+        break;
+      }
+      try {
+        const candidate = generateScheduleBlocks(
+          generation.id, specialists, teachers, grades, school, recessConfigs,
+          clubs, specialEvents, calendarEvents, adminBlocks, lockedBlocks,
+          weightOverrides, attempt,
+        );
+        const q = qualityPct(candidate.scoreBreakdown as any);
+        console.log(`[HQ] attempt ${attempt} → quality ${q}%`);
+        if (q > bestQuality) {
+          bestQuality = q;
+          schedulerResult = candidate;
+        }
+      } catch (err) {
+        // Don't let one bad seed bring down the whole generation — keep best so far.
+        console.error(`[HQ] attempt ${attempt} threw:`, err);
+      }
+    }
+    console.log(`[HQ] final quality ${bestQuality}% after ${schedulerResult.monteCarloAttempts} MC attempts`);
     const generatedBlocks = schedulerResult.blocks;
 
     // Lunch reservations already created inside generateScheduleBlocks for occupancy tracking
