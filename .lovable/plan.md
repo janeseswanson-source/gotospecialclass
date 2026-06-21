@@ -1,45 +1,42 @@
-## Plan
+## Goal
+Stop the "CPU Time exceeded" error from killing a generation run, push toward 20 attempts, and always persist the highest-scoring schedule seen so far.
 
-### 1) Fix “Edit with AI” so every send shows activity
-- Make the chat input submit path impossible to silently no-op:
-  - pass the actual typed text from `PromptInput` into `sendMessage`
-  - show the user message immediately
-  - show a visible “Thinking…” state as soon as the request starts
-- Add explicit request diagnostics in the panel:
-  - if the backend is not called, show a readable inline error
-  - if the stream returns empty, add a fallback assistant message explaining what failed
-  - if the backend returns JSON/non-stream errors, parse and display the message instead of leaving the chat blank
-- Confirm the deployed `schedule-chat` endpoint is actually receiving calls; current logs show no recent `schedule-chat` requests, so the client submit/request path is the first target.
+## Root cause
+Logs show 8 HQ attempts completed (~5s elapsed) and then `CPU Time exceeded` hit during the post-generation phase (DB writes + verify-schedule call) before anything was saved. The outer HQ loop currently:
+- caps at `MAX_ATTEMPTS = 8` and `TOTAL_BUDGET_MS = 240_000`
+- uses *wall clock* only, but Supabase edge functions have a separate CPU-time ceiling — so the loop happily keeps burning CPU and leaves no headroom for the save/verify phase that runs afterwards.
+- has no top-level try/catch, so when CPU is exhausted mid-save the partial best is lost.
 
-### 2) Make `schedule-chat` more reliable
-- Keep the existing AI editor tools, but harden the streaming response:
-  - return AI-SDK-compatible stream errors
-  - persist chat history only after a valid finished stream
-  - surface missing key/provider/function errors as visible assistant text
-- Redeploy `schedule-chat` and test it directly after changes.
+## Plan (edits in `supabase/functions/generate-schedule/index.ts`)
 
-### 3) Add “highest quality” generation mode targeting 99–100%
-- Change generation from “run once and take best” to “keep searching for a target quality”:
-  - target quality: 99%
-  - max effort: much longer than current limits, since you said waiting longer is acceptable
-  - stop early only when the schedule reaches target quality and has no hard errors
-  - otherwise save the best schedule found and clearly label if it could not reach 99% because of impossible constraints
-- Increase optimizer effort beyond the current settings:
-  - larger Monte Carlo candidate pool
-  - longer simulated annealing pass
-  - multiple deterministic retry waves with different seeds
-  - compare all candidate strategies by final quality, not just first error-free strategy
+1. **Raise attempt ceiling, but gate by remaining budget**
+   - `MAX_ATTEMPTS = 20`
+   - Track `tStartHQ = performance.now()`. Before each attempt, estimate per-attempt cost from the slowest attempt so far (`maxAttemptMs`) and only start the next attempt if `elapsed + maxAttemptMs * 1.3 < HQ_SOFT_BUDGET_MS`.
+   - `HQ_SOFT_BUDGET_MS ≈ 120_000` so we always leave a hard reserve (`POST_RESERVE_MS ≈ 60_000`) for DB inserts + verify-schedule.
+   - Early-exit as soon as `bestQuality >= TARGET_QUALITY (99)`.
 
-### 4) Make the score meaningful and aligned
-- Replace the current misleading optimizer percent calculation that can show 49% even when AI Quality is 89/100.
-- Use one shared quality calculation based on the score breakdown penalties, matching the verifier’s rubric.
-- Show:
-  - `AI Quality: 99/100` when verification is available
-  - `Optimizer target: 99%` / `Best found: X%`
-  - raw score only as secondary detail
+2. **Always keep the best result across all attempts**
+   - Current code already replaces `schedulerResult` only when `q > bestQuality` — keep that.
+   - Also track `bestQuality`, `bestAttemptIndex`, and `attemptsRun` to log/report and to include in the success payload (so the UI can show "best of N attempts").
 
-### 5) Verification
-- Test chat from the UI: type a message, confirm user bubble, thinking state, backend request, assistant response/tool proposal.
-- Test direct backend chat call if UI still fails.
-- Generate a schedule and confirm the generation takes longer, records more attempts, and targets 99–100%.
-- Confirm Schedule Insights no longer shows contradictory quality percentages.
+3. **Survive a per-attempt failure**
+   - Already wraps each attempt in try/catch. Add the same protection around the initial attempt 0 — if it throws, fall back to a single deterministic attempt with `attempt=0` and `monteCarlo` disabled-style minimal seed so we always have *some* schedulerResult.
+
+4. **Survive CPU/time exhaustion during the loop**
+   - Wrap the entire HQ loop body in try/catch. If a `CPU Time exceeded`–style error bubbles up, log it and break out keeping `schedulerResult = best so far`, then continue to the save/verify path.
+   - Before each iteration also check a hard wall-clock cap (`HQ_HARD_BUDGET_MS`) and break instead of starting another attempt.
+
+5. **Reserve headroom for save + verify**
+   - After the loop, log remaining budget. If `< POST_RESERVE_MS` remaining, skip the optional `verify-schedule` HTTP call and just persist the best blocks + breakdown so the user still gets the schedule rather than a thrown error.
+
+6. **Keep the score rubric unchanged**
+   - `qualityPct()` (100 − Σ|soft penalties|/4) already matches the verifier and `optimizerScore.ts`. No score-math changes — just more attempts and safer best-tracking.
+
+## Acceptance
+- Generation no longer surfaces "Schedule generation had an issue" toast when the CPU ceiling is approached; the best schedule of N attempts is saved.
+- Logs show `[HQ] attempt k → quality X%` up to 20 times (or until 99% reached) and `[HQ] best Y% after k attempts, saving...`.
+- Schedule Insights displays the highest score achieved across the run.
+
+## Out of scope
+- Per-strategy generator tuning (Monte Carlo / SA budgets stay as currently configured).
+- Chat panel work — already in progress in a previous turn.
