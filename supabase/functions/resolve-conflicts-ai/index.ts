@@ -397,44 +397,33 @@ Respond with ONLY a JSON object matching:
     // Effective in-memory view of the schedule that we mutate as we accept
     // edits, so every subsequent edit is validated against the real
     // post-edit layout (interval overlap), not the stale original.
-    type EffBlock = { id: string; day: string; start: number; end: number; spec: string | null; teacher: string | null };
+    type EffBlock = { id: string; day: string; start: number; end: number; spec: string | null; teacher: string | null; grade: string | null; week: string | null };
     const effective: EffBlock[] = blocks
       .map((b: any) => {
         const s = toMin(b.start_time);
         const e = toMin(b.end_time);
         return s === null || e === null
           ? null
-          : { id: b.id, day: b.day_of_week, start: s, end: e, spec: b.specialist_id ?? null, teacher: b.teacher_id ?? null };
+          : { id: b.id, day: b.day_of_week, start: s, end: e, spec: b.specialist_id ?? null, teacher: b.teacher_id ?? null, grade: b.grade ?? null, week: b.week_label ?? null };
       })
       .filter((x): x is EffBlock => x !== null);
 
-    // Would a block occupying [start,end) on `day` for this specialist/teacher
-    // collide with any effective block other than `ignoreId`?
-    const collides = (day: string, start: number, end: number, spec: string | null, teacher: string | null, ignoreId?: string): boolean => {
-      for (const e of effective) {
-        if (e.id === ignoreId || e.day !== day) continue;
-        if (!(start < e.end && e.start < end)) continue;
-        if ((spec && e.spec === spec) || (teacher && e.teacher === teacher)) return true;
-      }
-      return false;
-    };
-
-    // Edit-time constraint context (school hours, recess/lunch, PLC/Admin
-    // grade-range locks) mirroring the generator. Built from the ORIGINAL
-    // blocks — PLC/Admin locks are never moved during resolution, so the lock
-    // set is stable. Specialist/teacher overlap is still enforced by
-    // `collides` against the running effective view, so here we only surface
-    // the block-intrinsic + grade-lock violations (empty allBlocks).
+    // ONE shared, big-group-aware validation against the running post-edit
+    // layout: catches specialist/teacher double-booking, recess/lunch, PLC
+    // locks, and school hours together — identical to the generator and the
+    // verify/chat paths (no separate hand-rolled overlap check).
     const constraintCtx = buildConstraintContext(school, recessRes.data ?? [], blocks);
     const blockById: Record<string, any> = Object.fromEntries(blocks.map((b: any) => [b.id, b]));
-    const ruleViolations = (day: string | null, startTime?: string | null, endTime?: string | null, grade?: string | null, week?: string | null): string[] => {
-      if (!day || !startTime || !endTime) return [];
-      return constraintViolations(
-        { day_of_week: day, start_time: startTime, end_time: endTime, grade: grade ?? null, week_label: week ?? null },
-        [],
-        constraintCtx,
+    const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:00`;
+    const asConstraintBlocks = () => effective.map((e) => ({
+      id: e.id, day_of_week: e.day, start_time: hhmm(e.start), end_time: hhmm(e.end),
+      specialist_id: e.spec, teacher_id: e.teacher, grade: e.grade, week_label: e.week,
+    }));
+    const validate = (cand: { id?: string; day: string; start: number; end: number; grade: string | null; week: string | null; spec: string | null; teacher: string | null }): string[] =>
+      constraintViolations(
+        { id: cand.id, day_of_week: cand.day, start_time: hhmm(cand.start), end_time: hhmm(cand.end), grade: cand.grade, week_label: cand.week, specialist_id: cand.spec, teacher_id: cand.teacher },
+        asConstraintBlocks(), constraintCtx,
       ).map(describeViolation);
-    };
 
     const deleteIds = new Set(deletes.map((d) => d.block_id));
     // Apply deletes to the effective view first (they free up space).
@@ -457,20 +446,9 @@ Respond with ONLY a JSON object matching:
         skipped.push(`update ${u.block_id}: invalid time`);
         continue;
       }
-      if (collides(newDay, newStart, newEnd, newSpec, newTeacher, u.block_id)) {
-        skipped.push(`update ${u.block_id}: would overlap an existing block`);
-        continue;
-      }
-      // Recess/lunch/PLC/hours: reject edits that violate the same rules the
-      // generator enforces, not just specialist/teacher overlap.
       const origU = blockById[u.block_id];
-      const ruleVio = ruleViolations(
-        newDay,
-        u.start_time ?? origU?.start_time,
-        u.end_time ?? origU?.end_time,
-        origU?.grade ?? null,
-        u.week_label !== undefined ? u.week_label : (origU?.week_label ?? null),
-      );
+      const newWeek = u.week_label !== undefined ? u.week_label : (origU?.week_label ?? null);
+      const ruleVio = validate({ id: u.block_id, day: newDay, start: newStart, end: newEnd, grade: origU?.grade ?? null, week: newWeek, spec: newSpec, teacher: newTeacher });
       if (ruleVio.length) {
         skipped.push(`update ${u.block_id}: ${ruleVio.join("; ")}`);
         continue;
@@ -489,7 +467,7 @@ Respond with ONLY a JSON object matching:
       if (error) { errors.push(`update ${u.block_id}: ${error.message}`); continue; }
       applied++;
       // Reflect the accepted update in the effective view.
-      if (cur) { cur.day = newDay; cur.start = newStart; cur.end = newEnd; cur.spec = newSpec; }
+      if (cur) { cur.day = newDay; cur.start = newStart; cur.end = newEnd; cur.spec = newSpec; cur.week = newWeek; }
     }
 
     if (deletes.length) {
@@ -510,12 +488,9 @@ Respond with ONLY a JSON object matching:
       const endM = toMin(ins.end_time);
       if (startM === null || endM === null || endM <= startM) continue;
       if (startM < dayStart || endM > dayEnd) continue;
-      if (collides(ins.day_of_week, startM, endM, ins.specialist_id, ins.teacher_id)) {
-        skipped.push(`insert ${ins.grade ?? "?"} ${ins.day_of_week} ${ins.start_time}: would overlap`);
-        continue;
-      }
       const teachForGrade = teacherById[ins.teacher_id];
-      const insVio = ruleViolations(ins.day_of_week, ins.start_time, ins.end_time, ins.grade ?? teachForGrade?.grade ?? null, ins.week_label ?? null);
+      const insGrade = ins.grade ?? teachForGrade?.grade ?? null;
+      const insVio = validate({ id: `__cand_ins_${validInserts.length}`, day: ins.day_of_week, start: startM, end: endM, grade: insGrade, week: ins.week_label ?? null, spec: ins.specialist_id, teacher: ins.teacher_id });
       if (insVio.length) {
         skipped.push(`insert ${ins.grade ?? "?"} ${ins.day_of_week} ${ins.start_time}: ${insVio.join("; ")}`);
         continue;
@@ -537,7 +512,7 @@ Respond with ONLY a JSON object matching:
         placement_reason: ins.reason ? String(ins.reason).slice(0, 500) : null,
       });
       // Reserve the slot so later inserts can't double-book it.
-      effective.push({ id: `__ins_${effective.length}`, day: ins.day_of_week, start: startM, end: endM, spec: ins.specialist_id, teacher: ins.teacher_id });
+      effective.push({ id: `__ins_${effective.length}`, day: ins.day_of_week, start: startM, end: endM, spec: ins.specialist_id, teacher: ins.teacher_id, grade: insGrade, week: ins.week_label ?? null });
     }
 
     let insertedCount = 0;
