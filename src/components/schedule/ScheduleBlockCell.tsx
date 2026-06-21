@@ -27,6 +27,10 @@ interface ScheduleBlockCellProps {
   onClick?: () => void;
   draggable?: boolean;
   onDragStart?: (e: React.DragEvent) => void;
+  /** Touch/keyboard "pick up to move" — toggles this block as the one being moved. */
+  onPickUp?: () => void;
+  /** This block is currently picked up (waiting for a target slot). */
+  isSelected?: boolean;
   weekLabel?: string | null;
   notes?: string | null;
   onNotesChange?: (blockId: string, notes: string) => Promise<boolean> | boolean;
@@ -40,7 +44,7 @@ function durationMinutes(start: string, end: string): number {
 
 export default function ScheduleBlockCell({
   blockId, subject, specialistName, teacherName, room, grade, startTime, endTime, isOverride, hasConflict,
-  isLocked, isHighlighted, onToggleLock, onClick, draggable, onDragStart, weekLabel, notes, onNotesChange,
+  isLocked, isHighlighted, onToggleLock, onClick, draggable, onDragStart, onPickUp, isSelected, weekLabel, notes, onNotesChange,
 }: ScheduleBlockCellProps) {
   const iconOffset = weekLabel ? "right-7" : "right-1";
   const isA = weekLabel ? /^A/i.test(weekLabel) : false;
@@ -89,6 +93,7 @@ export default function ScheduleBlockCell({
       draggable={draggable && !isLocked}
       onDragStart={onDragStart}
       style={{ minHeight: `${minHeightPx}px` }}
+      aria-label={`${subject ?? "Block"}${grade ? `, grade ${grade}` : ""}${teacherName ? `, ${teacherName}` : ""}, ${formatTime(startTime)} to ${formatTime(endTime)}${isLocked ? ", locked" : ""}${hasConflict ? ", has a conflict" : ""}`}
       className={cn(
         "relative w-full rounded-md border px-2 py-1.5 text-left text-xs transition-all hover:shadow-md group",
         draggable && !isLocked && "cursor-grab active:cursor-grabbing",
@@ -96,6 +101,7 @@ export default function ScheduleBlockCell({
         getLeftBorder(subject),
         hasConflict && "ring-2 ring-destructive/60 border-destructive/50",
         isLocked && "ring-2 ring-primary/40 opacity-90",
+        isSelected && "ring-2 ring-primary shadow-[0_0_0_3px_hsl(var(--primary)/0.25)] animate-pulse",
         isHighlighted && "ring-2 ring-sky-500/70 shadow-[0_0_0_3px_rgba(14,165,233,0.15)] animate-pulse-once",
       )}
     >
@@ -104,8 +110,21 @@ export default function ScheduleBlockCell({
           Changed
         </span>
       )}
-      {draggable && !isLocked && (
-        <GripVertical className="absolute left-0.5 top-1/2 -translate-y-1/2 h-3 w-3 opacity-0 group-hover:opacity-40 transition-opacity" />
+      {/* Pick-up handle: works for touch + keyboard (mouse can still drag the block). */}
+      {onPickUp && draggable && !isLocked && (
+        <button
+          type="button"
+          aria-label={isSelected ? `Cancel moving ${subject ?? "block"}` : `Move ${subject ?? "block"}`}
+          aria-pressed={isSelected}
+          title={isSelected ? "Cancel move" : "Move block"}
+          onClick={(e) => { e.stopPropagation(); onPickUp(); }}
+          className={cn(
+            "absolute left-0 top-1/2 -translate-y-1/2 z-10 inline-flex h-6 w-5 items-center justify-center rounded transition-opacity touch-none",
+            isSelected ? "opacity-100 text-primary" : "opacity-30 group-hover:opacity-70 hover:opacity-100",
+          )}
+        >
+          <GripVertical className="h-3.5 w-3.5" />
+        </button>
       )}
       {weekLabel && (
         <span className={cn(

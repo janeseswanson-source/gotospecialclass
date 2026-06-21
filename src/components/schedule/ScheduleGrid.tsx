@@ -1,7 +1,8 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { cn, formatTime } from "@/lib/utils";
 import ScheduleBlockCell from "./ScheduleBlockCell";
 import { computeConflictIds, parseTime } from "@/lib/scheduleGrid";
+import { X } from "lucide-react";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -55,9 +56,29 @@ export default function ScheduleGrid({
   recessBands, onNotesChange, notesEditable, conflictIds, liftedIds, highlightIds,
 }: ScheduleGridProps) {
   const [dragOverCell, setDragOverCell] = useState<string | null>(null);
+  // Touch/keyboard "pick up to move": the block waiting for a target slot.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const internalConflicts = useMemo(() => computeConflictIds(blocks), [blocks]);
   const conflicts = conflictIds ?? internalConflicts;
+
+  const selectedBlock = selectedId ? blocks.find((b) => b.id === selectedId) ?? null : null;
+
+  // Cancel an in-progress move with Escape.
+  useEffect(() => {
+    if (!selectedId) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSelectedId(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedId]);
+
+  const pickUp = (id: string) => setSelectedId((prev) => (prev === id ? null : id));
+  const placeInto = (day: string, time: string) => {
+    if (!selectedId || !onBlockDrop) return;
+    const id = selectedId;
+    setSelectedId(null);
+    onBlockDrop(id, day, time); // validated swap/move in the parent handler
+  };
 
   /** Return all blocks that *start* in this slot (covers A/B side-by-side). */
   const getBlocks = (day: string, time: string) => {
@@ -85,7 +106,26 @@ export default function ScheduleGrid({
 
   return (
     <div className="rounded-xl border border-border bg-card print-full-width">
-      <table className="w-full text-sm table-fixed">
+      {/* Move-mode banner — appears once a block is picked up (tap or keyboard). */}
+      {selectedBlock && (
+        <div
+          role="status"
+          className="flex items-center gap-2 rounded-t-xl border-b border-primary/30 bg-primary/10 px-3 py-2 text-xs text-foreground"
+        >
+          <span className="font-medium">
+            Moving {selectedBlock.subject ?? "block"}
+            {selectedBlock.grade ? ` (Gr. ${selectedBlock.grade})` : ""} — tap any slot to drop it here.
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelectedId(null)}
+            className="ml-auto inline-flex items-center gap-1 rounded px-2 py-0.5 text-muted-foreground hover:bg-background/60 hover:text-foreground"
+          >
+            <X className="h-3 w-3" /> Cancel <span className="opacity-60">(Esc)</span>
+          </button>
+        </div>
+      )}
+      <table className="w-full text-sm table-fixed" role="grid" aria-label="Master schedule, days across, times down">
         <thead className="sticky top-0 z-10 bg-card">
           <tr className="border-b border-border bg-muted/50">
             <th className="px-2 py-2 text-left font-medium text-muted-foreground w-16">Time</th>
@@ -131,13 +171,28 @@ export default function ScheduleGrid({
                     const slotBlocks = getBlocks(day, time).filter((b) => !liftedIds?.has(b.id));
                     const key = cellKey(day, time);
                     const isOver = dragOverCell === key;
+                    // In move-mode, every cell becomes a tap/keyboard drop target.
+                    const moveMode = !!selectedId && !!onBlockDrop;
+                    const isMoveSource = slotBlocks.some((b) => b.id === selectedId);
                     return (
                       <td
                         key={day}
+                        role={moveMode ? "button" : undefined}
+                        tabIndex={moveMode && !isMoveSource ? 0 : undefined}
+                        aria-label={moveMode && !isMoveSource ? `Drop here: ${day} at ${formatTime(time)}` : undefined}
                         className={cn(
                           "px-1 py-1 transition-colors align-top",
                           isOver && "bg-primary/10 ring-2 ring-inset ring-primary/40 rounded",
+                          moveMode && !isMoveSource && "cursor-pointer hover:bg-primary/10 hover:ring-2 hover:ring-inset hover:ring-primary/40 focus:bg-primary/10 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary rounded",
                         )}
+                        onClickCapture={(e) => {
+                          if (moveMode && !isMoveSource) { e.stopPropagation(); e.preventDefault(); placeInto(day, time); }
+                        }}
+                        onKeyDown={(e) => {
+                          if (moveMode && !isMoveSource && (e.key === "Enter" || e.key === " ")) {
+                            e.preventDefault(); placeInto(day, time);
+                          }
+                        }}
                         onDragOver={handleDragOver}
                         onDragEnter={() => setDragOverCell(key)}
                         onDragLeave={(e) => {
@@ -170,6 +225,8 @@ export default function ScheduleGrid({
                                   onClick={() => onBlockClick?.(block)}
                                   draggable={!!onBlockDrop}
                                   onDragStart={(e) => handleDragStart(e, block)}
+                                  onPickUp={onBlockDrop ? () => pickUp(block.id) : undefined}
+                                  isSelected={selectedId === block.id}
                                   weekLabel={block.week_label}
                                   notes={block.notes}
                                   onNotesChange={notesEditable ? onNotesChange : undefined}
