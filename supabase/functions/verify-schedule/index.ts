@@ -16,6 +16,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildConstraintContext, violations as constraintViolations } from "../_shared/constraints.ts";
 import { anthropicClient, anthropicApiKey, CLAUDE_MODEL, firstToolUse, describeAnthropicError } from "../_shared/anthropic.ts";
+import { qualityPercent } from "../_shared/scoring-rubric.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -137,13 +138,8 @@ Deno.serve(async (req) => {
     const warnings = Array.isArray(gen.warnings) ? gen.warnings : [];
 
     // Deterministic quality score from the optimizer's own penalty breakdown,
-    // so reviewer and generator agree on what "good" means.
-    const bd = scoreBreakdown;
-    const penaltyMag =
-      Math.abs(bd.subject_gap ?? 0) + Math.abs(bd.subject_day_clustering ?? 0) + Math.abs(bd.class_repeats ?? 0) +
-      Math.abs(bd.k_grade_after_780 ?? 0) + Math.abs(bd.cart_back_to_back ?? 0) + Math.abs(bd.grade_cohesion ?? 0) +
-      Math.abs(bd.contract_min ?? 0) + Math.abs(bd.warnings ?? 0) + Math.abs(bd.errors ?? 0);
-    const rubricScore = Math.max(0, Math.min(100, Math.round(100 - penaltyMag / 4)));
+    // via the SHARED rubric so reviewer and generator report identical numbers.
+    const rubricScore = qualityPercent(scoreBreakdown);
 
     // No key → still record the rubric score; skip the AI narrative/fixes.
     if (!anthropicApiKey()) {
@@ -164,8 +160,12 @@ Deno.serve(async (req) => {
       return s === null || e === null ? null : { id: b.id, day: b.day_of_week, start: s, end: e, spec: b.specialist_id ?? null, teacher: b.teacher_id ?? null, grade: b.grade ?? null, week: b.week_label ?? null };
     }).filter((x: Eff | null): x is Eff => x !== null);
 
-    const collides = (day: string, start: number, end: number, spec: string | null, teacher: string | null, ignoreId: string) =>
-      effective.some((e) => e.id !== ignoreId && e.day === day && start < e.end && e.start < end && ((spec && e.spec === spec) || (teacher && e.teacher === teacher)));
+    const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:00`;
+    // Shared-validator view of the live layout (big-group/week-label aware).
+    const asConstraintBlocks = () => effective.map((e) => ({
+      id: e.id, day_of_week: e.day, start_time: hhmm(e.start), end_time: hhmm(e.end),
+      specialist_id: e.spec, teacher_id: e.teacher, grade: e.grade, week_label: e.week,
+    }));
 
     // Context blocks for the model: specialists, teachers, hours.
     const specCtx = specialists.map((s: any) => `${s.name} (${s.subject})${s.uses_cart ? " [cart]" : ""} — works ${(s.working_days ?? DAYS).join("/")}`).join("\n");
@@ -229,12 +229,12 @@ Review it and call report_review with the worst remaining quality issues and a m
         const newEnd = fix.new_end ? toMin(fix.new_end) : cur.end;
         if (newStart === null || newEnd === null || newEnd <= newStart) continue;
         if (newStart < dayStart || newEnd > dayEnd) continue;
-        if (collides(newDay, newStart, newEnd, cur.spec, cur.teacher, cur.id)) continue;
-        // Hard-rule re-validation (recess/lunch/PLC/hours) against the live layout.
-        const hhmm = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}:00`;
+        // Single shared re-validation against the FULL live layout: catches
+        // specialist/teacher double-booking (big-group aware), recess/lunch,
+        // PLC locks, and school hours in one place.
         const vio = constraintViolations(
           { id: cur.id, day_of_week: newDay, start_time: hhmm(newStart), end_time: hhmm(newEnd), grade: cur.grade, week_label: cur.week, specialist_id: cur.spec, teacher_id: cur.teacher },
-          [],
+          asConstraintBlocks(),
           constraintCtx,
         );
         if (vio.length) continue;

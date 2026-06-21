@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { shuffle, deriveSeed, mulberry32, type Rng } from "./_random.ts";
 import { scoreSchedule, DEFAULT_WEIGHTS, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
+import { qualityPercent } from "../_shared/scoring-rubric.ts";
 import { calibrateMonteCarlo, monteCarloRun, MonteCarloBudgetExceededError } from "./_monteCarlo.ts";
 
 const corsHeaders = {
@@ -2744,20 +2745,7 @@ const __serveHandler = async (req: Request): Promise<Response> => {
     // (100 - sum(|soft penalties|)/4). Stop early when we reach TARGET_QUALITY,
     // or when the wall-clock budget is exhausted. Users said they're happy to
     // wait longer for a near-perfect schedule.
-    const PENALTY_KEYS = [
-      "subject_gap", "subject_day_clustering", "class_repeats", "k_grade_after_780",
-      "cart_back_to_back", "grade_cohesion", "contract_min", "spec_dayload_stdev",
-      "warnings", "errors",
-    ];
-    const qualityPct = (breakdown: Record<string, number> | null | undefined): number => {
-      if (!breakdown) return 0;
-      let mag = 0;
-      for (const k of PENALTY_KEYS) {
-        const v = breakdown[k];
-        if (typeof v === "number" && Number.isFinite(v)) mag += Math.abs(v);
-      }
-      return Math.max(0, Math.min(100, Math.round(100 - mag / 4)));
-    };
+    const qualityPct = qualityPercent;
     const TARGET_QUALITY = 99;
     // CPU is the binding constraint on Edge Functions (~2s before the
     // runtime kills the request). Each attempt costs ~700ms of CPU, so
@@ -2767,13 +2755,17 @@ const __serveHandler = async (req: Request): Promise<Response> => {
     const CPU_BUDGET_MS = 1200; // Reserve >800ms for save + return.
     const tStartOuter = performance.now();
 
-    let schedulerResult: ReturnType<typeof generateScheduleBlocks> | null = null;
+    let schedulerResult: SchedulerResult | null = null;
     let bestQuality = -1;
     let bestAttempt = -1;
     let attemptsRun = 0;
     let cumulativeAttemptMs = 0;
 
-    const runAttempt = (attempt: number) => {
+    // Returns its result rather than assigning the outer `schedulerResult`
+    // directly: assigning a captured variable only inside a closure defeats
+    // TypeScript's control-flow analysis (it would treat schedulerResult as
+    // perpetually null and mark the post-guard code unreachable → `never`).
+    const runAttempt = (attempt: number): { candidate: SchedulerResult; quality: number } => {
       const t0 = performance.now();
       const candidate = generateScheduleBlocks(
         generation.id, specialists, teachers, grades, school, recessConfigs,
@@ -2782,24 +2774,27 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       );
       const dt = performance.now() - t0;
       cumulativeAttemptMs += dt;
-      const q = qualityPct(candidate.scoreBreakdown as any);
-      console.log(`[HQ] attempt ${attempt} → quality ${q}% (${Math.round(dt)}ms, cum ${Math.round(cumulativeAttemptMs)}ms)`);
+      const quality = qualityPct(candidate.scoreBreakdown as any);
+      console.log(`[HQ] attempt ${attempt} → quality ${quality}% (${Math.round(dt)}ms, cum ${Math.round(cumulativeAttemptMs)}ms)`);
       attemptsRun++;
-      if (q > bestQuality) {
-        bestQuality = q;
-        bestAttempt = attempt;
-        schedulerResult = candidate;
-      }
+      return { candidate, quality };
     };
 
+    // The schedulerResult assignments below live in the OUTER scope (not a
+    // closure) so control-flow analysis tracks them and the
+    // `if (!schedulerResult)` guard narrows correctly.
     try {
       // Attempt 0 — must succeed at least once to have any result to save.
+      let r0: { candidate: SchedulerResult; quality: number };
       try {
-        runAttempt(0);
+        r0 = runAttempt(0);
       } catch (err) {
         console.error(`[HQ] attempt 0 threw, retrying once:`, err);
-        runAttempt(0);
+        r0 = runAttempt(0);
       }
+      bestQuality = r0.quality;
+      bestAttempt = 0;
+      schedulerResult = r0.candidate;
 
       for (let attempt = 1; attempt < MAX_ATTEMPTS && bestQuality < TARGET_QUALITY; attempt++) {
         // Hard CPU-aware break: stop while we still have headroom to save.
@@ -2808,7 +2803,12 @@ const __serveHandler = async (req: Request): Promise<Response> => {
           break;
         }
         try {
-          runAttempt(attempt);
+          const r = runAttempt(attempt);
+          if (r.quality > bestQuality) {
+            bestQuality = r.quality;
+            bestAttempt = attempt;
+            schedulerResult = r.candidate;
+          }
         } catch (err) {
           console.error(`[HQ] attempt ${attempt} threw:`, err);
         }
