@@ -1,3 +1,33 @@
+// ─────────────────────────────────────────────────────────────────────────
+// SCHEDULE GENERATION — deterministic solver (the solver owns ALL hard rules;
+// Claude only polishes soft quality afterwards in verify-schedule).
+//
+// Pipeline (per HTTP call):
+//   E.  Feasibility precheck — session capacity (per-specialist class_duration
+//       aware) vs. demand; emits a soft capacity_shortfall warning, never throws.
+//   3A. Deterministic seeding — admin/PLC locks, carried-forward locked blocks,
+//       specialist lunch reservations, special events block all specialists.
+//   3B. Strategy priority loop — tries conflict_strategies in order
+//       (ab_week | aa_bb_week | quick_30 | big_group | extra_rotation | standard;
+//       conflict_timing="after" or no conflict grades → standard only). Each
+//       strategy is Monte-Carlo restarted; first error-free best wins, else
+//       fewest-errors. conflict_grades scopes quick_30/extra_rotation.
+//   3C. Simulated annealing — local refinement (swap specialist / swap grade /
+//       de-cluster), every move re-scored.
+//   4.  Optional post-passes — makeup / lunch_clubs / event_planning.
+//   The HTTP handler runs a small best-of-2 internally and persists ONE
+//   generation; the CLIENT (src/lib/generateBestSchedule.ts) calls this many
+//   times for best-of-N (Edge CPU limit ≈ 2s/call), keeping the best.
+//
+// HARD constraints live in _shared/constraints.ts (double-booking big-group
+// aware, recess/lunch by grade band, PLC locks, school hours/early-release).
+// SOFT quality is the weighted scorer in _scoring.ts; quality % = the shared
+// rubric in _shared/scoring-rubric.ts. Wizard values consumed: school hours,
+// class_duration (+ per-specialist override), passing/setup time, grades,
+// working_days, grade_rotation, am_pm/day preferences, specialist + teacher +
+// part-time planning minutes, contractual minutes, recess grade bands
+// (staggered), admin/PLC rotation, big_group_config, clubs, events, calendar.
+// ─────────────────────────────────────────────────────────────────────────
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { shuffle, deriveSeed, mulberry32, type Rng } from "./_random.ts";
 import { scoreSchedule, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
@@ -2234,14 +2264,18 @@ export function generateScheduleBlocks(
   // still gets a best-effort schedule (the solver + no_coverage warnings show
   // exactly which classes couldn't be covered).
   const feasStartMin = timeToMinutes(school.start_time ?? "08:00");
-  const feasPeriodLen = (((school.class_duration && school.class_duration > 0) ? school.class_duration : 45) || 45)
-    + (school.passing_time ?? 5);
+  const schoolPeriodLen = ((school.class_duration && school.class_duration > 0) ? school.class_duration : 45);
+  const feasPassing = school.passing_time ?? 5;
   let sessionCapacity = 0;
   for (const s of specialists) {
+    // Respect a specialist's own class_duration override (e.g. 30-min K classes
+    // fit more sessions/day than the 45-min school default), so the capacity
+    // estimate — and any shortfall warning — is accurate per specialist.
+    const specPeriodLen = (((s.class_duration && s.class_duration > 0) ? s.class_duration : schoolPeriodLen) || 45) + feasPassing;
     for (const d of (s.working_days ?? DAYS)) {
       if (!DAYS.includes(d)) continue;
       const endMin = getEndMinForDay(d, school);
-      sessionCapacity += Math.max(0, Math.floor((endMin - feasStartMin) / Math.max(1, feasPeriodLen)));
+      sessionCapacity += Math.max(0, Math.floor((endMin - feasStartMin) / Math.max(1, specPeriodLen)));
     }
   }
   // Demand = one session per (class, specialist). A/B and AA/BB strategies

@@ -53,11 +53,12 @@ const REVIEW_TOOL = {
             fix: {
               type: "object",
               properties: {
-                action: { type: "string", enum: ["move", "none"] },
-                block_id: { type: "string", description: "Id of the block to move (from the BLOCKS list)." },
-                new_day: { type: ["string", "null"], description: "Mon|Tue|Wed|Thu|Fri or null to keep the day." },
-                new_start: { type: ["string", "null"], description: "HH:MM 24-hour or null to keep the time." },
-                new_end: { type: ["string", "null"], description: "HH:MM 24-hour or null to keep the time." },
+                action: { type: "string", enum: ["move", "swap", "none"] },
+                block_id: { type: "string", description: "Id of the block to move/swap (from the BLOCKS list)." },
+                new_day: { type: ["string", "null"], description: "move: Mon|Tue|Wed|Thu|Fri or null to keep the day." },
+                new_start: { type: ["string", "null"], description: "move: HH:MM 24-hour or null to keep the time." },
+                new_end: { type: ["string", "null"], description: "move: HH:MM 24-hour or null to keep the time." },
+                swap_with_id: { type: ["string", "null"], description: "swap: id of the OTHER block to exchange slots with (each keeps its own length)." },
                 reason: { type: "string" },
               },
               required: ["action"],
@@ -76,7 +77,7 @@ const SYSTEM = `You are a veteran K-6 elementary "specials" scheduling coordinat
 
 The schedule is already conflict-free (no double-bookings, nothing during recess/lunch or PLC). Your job is to improve QUALITY: make sure every class sees every specialist, spread subjects across the week (no subject twice in a day for one grade), balance each specialist's daily load, honor teacher AM/PM preferences, and keep Kindergarten sessions out of the late afternoon.
 
-Propose ONLY minimal, safe moves — moving one block to a free day/time. Never propose a move that would put two classes with the same teacher or specialist at the same time, or land on recess/lunch/PLC, or fall outside school hours; those will be rejected. If the schedule is already good, return an empty issues list and say so. Always answer by calling the report_review tool.`;
+Propose ONLY minimal, safe fixes: either MOVE one block to a free day/time, or SWAP two blocks' slots (each keeps its own length) when exchanging is cleaner than finding an empty slot — e.g. to separate a grade's two same-day sessions or honor an AM/PM preference. Never propose a fix that would put two classes with the same teacher or specialist at the same time, or land on recess/lunch/PLC, or fall outside school hours; those will be rejected. If the schedule is already good, return an empty issues list and say so. Always answer by calling the report_review tool.`;
 
 function buildSummary(blocks: any[], grades: string[], specialists: any[]): string {
   const byGrade: Record<string, Record<string, string[]>> = {};
@@ -219,37 +220,64 @@ Review it and call report_review with the worst remaining quality issues and a m
       if (round === 0) allIssues.push(...issues);
 
       let appliedThisRound = 0;
+      // Validate one block at a (day,start,end) against the given post-change
+      // layout — shared validator → specialist/teacher double-booking (big-group
+      // aware), recess/lunch, PLC, and school hours all in one check.
+      const ok = (e: typeof effective[number], day: string, start: number, end: number, layout: ReturnType<typeof asConstraintBlocks>) => {
+        if (end <= start || start < dayStart || end > dayEnd) return false;
+        return constraintViolations(
+          { id: e.id, day_of_week: day, start_time: hhmm(start), end_time: hhmm(end), grade: e.grade, week_label: e.week, specialist_id: e.spec, teacher_id: e.teacher },
+          layout, constraintCtx,
+        ).length === 0;
+      };
+
       for (const issue of issues) {
         const fix = issue?.fix;
-        if (!fix || fix.action !== "move" || !fix.block_id) continue;
-        const cur = effective.find((e) => e.id === fix.block_id);
-        if (!cur) continue;
-        const newDay = fix.new_day ?? cur.day;
-        const newStart = fix.new_start ? toMin(fix.new_start) : cur.start;
-        const newEnd = fix.new_end ? toMin(fix.new_end) : cur.end;
-        if (newStart === null || newEnd === null || newEnd <= newStart) continue;
-        if (newStart < dayStart || newEnd > dayEnd) continue;
-        // Single shared re-validation against the FULL live layout: catches
-        // specialist/teacher double-booking (big-group aware), recess/lunch,
-        // PLC locks, and school hours in one place.
-        const vio = constraintViolations(
-          { id: cur.id, day_of_week: newDay, start_time: hhmm(newStart), end_time: hhmm(newEnd), grade: cur.grade, week_label: cur.week, specialist_id: cur.spec, teacher_id: cur.teacher },
-          asConstraintBlocks(),
-          constraintCtx,
-        );
-        if (vio.length) continue;
+        if (!fix || !fix.block_id) continue;
+        const reason = typeof fix.reason === "string" ? fix.reason.slice(0, 500) : null;
 
-        const patch: Record<string, any> = {};
-        if (fix.new_day) patch.day_of_week = fix.new_day;
-        if (fix.new_start) patch.start_time = hhmm(newStart);
-        if (fix.new_end) patch.end_time = hhmm(newEnd);
-        if (typeof fix.reason === "string") patch.placement_reason = fix.reason.slice(0, 500);
-        if (Object.keys(patch).length === 0) continue;
+        if (fix.action === "move") {
+          const cur = effective.find((e) => e.id === fix.block_id);
+          if (!cur) continue;
+          const newDay = fix.new_day ?? cur.day;
+          const newStart = fix.new_start ? toMin(fix.new_start) : cur.start;
+          const newEnd = fix.new_end ? toMin(fix.new_end) : cur.end;
+          if (newStart === null || newEnd === null) continue;
+          if (!ok(cur, newDay, newStart, newEnd, asConstraintBlocks())) continue;
 
-        const { error } = await supabase.from("schedule_blocks").update(patch).eq("id", cur.id);
-        if (error) continue;
-        cur.day = newDay; cur.start = newStart; cur.end = newEnd;
-        applied++; appliedThisRound++;
+          const { error } = await supabase.from("schedule_blocks").update({
+            day_of_week: newDay, start_time: hhmm(newStart), end_time: hhmm(newEnd), ...(reason ? { placement_reason: reason } : {}),
+          }).eq("id", cur.id);
+          if (error) continue;
+          cur.day = newDay; cur.start = newStart; cur.end = newEnd;
+          applied++; appliedThisRound++;
+        } else if (fix.action === "swap" && fix.swap_with_id) {
+          const a = effective.find((e) => e.id === fix.block_id);
+          const b = effective.find((e) => e.id === fix.swap_with_id);
+          if (!a || !b || a.id === b.id) continue;
+          // a → b's slot (keeps a's length); b → a's slot (keeps b's length).
+          const aS = b.start, aE = b.start + (a.end - a.start);
+          const bS = a.start, bE = a.start + (b.end - b.start);
+          // Validate both against the layout AFTER the swap (so they don't
+          // false-positive on each other's old positions, and any real clash
+          // with a third block is caught).
+          const after = asConstraintBlocks().map((cb) =>
+            cb.id === a.id ? { ...cb, day_of_week: b.day, start_time: hhmm(aS), end_time: hhmm(aE) }
+            : cb.id === b.id ? { ...cb, day_of_week: a.day, start_time: hhmm(bS), end_time: hhmm(bE) }
+            : cb);
+          if (!ok(a, b.day, aS, aE, after)) continue;
+          if (!ok(b, a.day, bS, bE, after)) continue;
+
+          const [{ error: e1 }, { error: e2 }] = await Promise.all([
+            supabase.from("schedule_blocks").update({ day_of_week: b.day, start_time: hhmm(aS), end_time: hhmm(aE), ...(reason ? { placement_reason: reason } : {}) }).eq("id", a.id),
+            supabase.from("schedule_blocks").update({ day_of_week: a.day, start_time: hhmm(bS), end_time: hhmm(bE), ...(reason ? { placement_reason: reason } : {}) }).eq("id", b.id),
+          ]);
+          if (e1 || e2) continue;
+          const aDay = b.day, bDay = a.day;
+          a.day = aDay; a.start = aS; a.end = aE;
+          b.day = bDay; b.start = bS; b.end = bE;
+          applied++; appliedThisRound++;
+        }
       }
 
       if (appliedThisRound === 0) break; // nothing improved → stop iterating
