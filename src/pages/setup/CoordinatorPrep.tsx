@@ -354,36 +354,54 @@ const CoordinatorPrep = () => {
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             <ClipboardList className="h-6 w-6 text-primary" />
-            Coordinator Prep
+            The Take-In Template
           </h1>
           <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
-            Gather these answers before sitting down to the Setup Wizard. They'll prefill the wizard where they match, and you can print this as a worksheet to fill out at school.
+            Prefer paper to clicking through a wizard? Print this one sheet, fill it in by hand,
+            then upload it — Claude reads your handwriting and fills in your whole setup for you.
+            It's the same setup, the easy way.
           </p>
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <SaveStatusIndicator status={saveStatus} />
-          <Button variant="outline" onClick={handleDownloadPdf} disabled={downloading}>
-            <Download className="h-4 w-4 mr-2" />
-            {downloading ? 'Preparing…' : 'Download Prep PDF'}
-          </Button>
-          <Button variant="outline" onClick={() => uploadRef.current?.click()} disabled={uploading}>
-            {uploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
-            {uploading ? 'Reading…' : 'Upload Filled Prep (AI Autofill)'}
-          </Button>
-          <input
-            ref={uploadRef}
-            type="file"
-            accept="application/pdf,image/png,image/jpeg,image/webp"
-            className="hidden"
-            onChange={handleUpload}
-          />
-          <Button asChild>
-            <Link to="/app/setup">
-              <Wand2 className="h-4 w-4 mr-2" />
-              Open Setup Wizard
-            </Link>
-          </Button>
-        </div>
+        <SaveStatusIndicator status={saveStatus} />
+      </div>
+
+      {/* How it works — three plain steps */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {[
+          { n: 1, icon: Download, title: 'Print the sheet', body: 'Download the PDF and print it (or fill it on screen below).' },
+          { n: 2, icon: FileText, title: 'Fill it in', body: 'Write your answers by hand at school — no computer needed.' },
+          { n: 3, icon: Wand2, title: 'Upload — we do the rest', body: 'Snap a photo or scan it. Claude fills in your setup automatically.' },
+        ].map((s) => (
+          <div key={s.n} className="rounded-xl border border-border bg-card p-4 flex items-start gap-3">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-sm">{s.n}</div>
+            <div>
+              <p className="font-medium text-card-foreground text-sm flex items-center gap-1.5"><s.icon className="h-3.5 w-3.5 text-primary" />{s.title}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{s.body}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap rounded-xl border border-primary/20 bg-primary/5 p-4">
+        <Button onClick={() => uploadRef.current?.click()} disabled={uploading} size="lg">
+          {uploading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
+          {uploading ? 'Reading your sheet…' : 'Upload my filled-in sheet'}
+        </Button>
+        <Button variant="outline" onClick={handleDownloadPdf} disabled={downloading}>
+          <Download className="h-4 w-4 mr-2" />
+          {downloading ? 'Preparing…' : 'Download blank template (PDF)'}
+        </Button>
+        <input
+          ref={uploadRef}
+          type="file"
+          accept="application/pdf,image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={handleUpload}
+        />
+        <span className="text-xs text-muted-foreground flex-1 min-w-[12rem]">
+          Rather click through it instead?{' '}
+          <Link to="/app/setup" className="text-primary underline underline-offset-2 hover:opacity-80">Use the Setup Wizard</Link>.
+        </span>
       </div>
 
       {aiWarnings.length > 0 && (

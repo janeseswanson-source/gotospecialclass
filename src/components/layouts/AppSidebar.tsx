@@ -14,7 +14,7 @@ import {
 const navItems = [
   { label: 'Dashboard', icon: LayoutDashboard, path: '/app/dashboard' },
   { label: 'Schools', icon: School, path: '/app/schools' },
-  { label: 'Coordinator Prep', icon: ClipboardList, path: '/app/coordinator-prep' },
+  { label: 'Take-In Template', icon: ClipboardList, path: '/app/coordinator-prep' },
   { label: 'Setup Wizard', icon: Wand2, path: '/app/setup' },
   { label: 'Master Schedule', icon: CalendarDays, path: '/app/schedule' },
   { label: 'Master Admin View', icon: LayoutGrid, path: '/app/admin-view' },

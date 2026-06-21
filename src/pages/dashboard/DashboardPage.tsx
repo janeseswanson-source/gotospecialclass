@@ -297,12 +297,18 @@ const DashboardPage = () => {
           </div>
           <h2 className="text-lg font-bold text-foreground">Welcome to Specialist Ops!</h2>
           <p className="mt-2 max-w-md mx-auto text-sm text-muted-foreground">
-            Get started by running the Setup Wizard — enter your school info, add teachers and specialists, and generate your first schedule in minutes.
+            There are two ways to set up — pick whichever feels easier. Either one gets you to your first schedule in minutes.
           </p>
-          <Link to="/app/setup" className="mt-5 inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-2.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors">
-            <Wand2 className="h-4 w-4" />
-            Start Setup Wizard
-          </Link>
+          <div className="mt-5 flex flex-col sm:flex-row items-stretch justify-center gap-3 max-w-xl mx-auto">
+            <Link to="/app/setup" className="flex-1 inline-flex flex-col items-center gap-1 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors">
+              <span className="inline-flex items-center gap-2"><Wand2 className="h-4 w-4" /> Set up on screen</span>
+              <span className="text-[11px] font-normal opacity-90">Click through the guided wizard</span>
+            </Link>
+            <Link to="/app/coordinator-prep" className="flex-1 inline-flex flex-col items-center gap-1 rounded-lg border border-primary/40 bg-card px-6 py-3 text-sm font-medium text-primary hover:bg-primary/5 transition-colors">
+              <span className="inline-flex items-center gap-2"><ClipboardList className="h-4 w-4" /> Use the paper template</span>
+              <span className="text-[11px] font-normal text-muted-foreground">Print, fill by hand, upload — AI does the rest</span>
+            </Link>
+          </div>
         </div>
       )}
 
@@ -312,15 +318,15 @@ const DashboardPage = () => {
             <ClipboardList className="h-5 w-5" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="font-semibold text-foreground">New here? Fill out the Coordinator Prep first.</p>
+            <p className="font-semibold text-foreground">Prefer paper? Try the Take-In Template.</p>
             <p className="text-sm text-muted-foreground mt-1">
-              It's a quick intake of school info, schedule preferences and specialist details — it'll pre-fill the wizard for you.
+              Print one sheet, fill in your school info and specialists by hand, then upload it — Claude reads it and fills your setup automatically. No wizard required.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Button asChild size="sm">
                 <Link to="/app/coordinator-prep">
                   <ClipboardList className="h-4 w-4 mr-2" />
-                  Start Prep
+                  Open the template
                 </Link>
               </Button>
               <Button size="sm" variant="ghost" onClick={dismissPrepBanner}>
