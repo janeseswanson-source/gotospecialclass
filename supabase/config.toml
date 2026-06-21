@@ -17,3 +17,12 @@ verify_jwt = false
 
 [functions.delete-user]
 verify_jwt = false
+
+[functions.schedule-chat]
+verify_jwt = false
+
+[functions.apply-schedule-edits]
+verify_jwt = false
+
+[functions.replan-subgraph]
+verify_jwt = false
