@@ -83,9 +83,10 @@ export default function ScheduleBlockCell({
     }
   }
 
-  // Height scales with duration so a 30-min and a 90-min block are visually
-  // distinguishable at a glance (clamped so short blocks stay readable).
-  const minHeightPx = Math.min(150, Math.max(48, durationMinutes(startTime, endTime) * 1.1));
+  // Height scales gently with duration so a 30-min and 90-min block are
+  // distinguishable without dominating the row. Tighter than before so the
+  // master grid reads like an operations board, not oversized cards.
+  const minHeightPx = Math.min(96, Math.max(40, Math.round(durationMinutes(startTime, endTime) * 0.7)));
 
   return (
     <button
@@ -95,8 +96,16 @@ export default function ScheduleBlockCell({
       data-block-id={blockId}
       style={{ minHeight: `${minHeightPx}px` }}
       aria-label={`${subject ?? "Block"}${grade ? `, grade ${grade}` : ""}${teacherName ? `, ${teacherName}` : ""}, ${formatTime(startTime)} to ${formatTime(endTime)}${isLocked ? ", locked" : ""}${hasConflict ? ", has a conflict" : ""}`}
+      title={[
+        subject,
+        grade ? `Grade ${grade}` : null,
+        teacherName,
+        specialistName,
+        `${formatTime(startTime)}–${formatTime(endTime)}`,
+        room,
+      ].filter(Boolean).join(" · ")}
       className={cn(
-        "relative w-full rounded-md border px-2 py-1.5 text-left text-xs transition-all hover:shadow-md group",
+        "relative w-full rounded-md border px-2 py-1 text-left text-xs leading-tight transition-all hover:shadow-md hover:z-20 group",
         draggable && !isLocked && "cursor-grab active:cursor-grabbing",
         getColorClass(subject),
         getLeftBorder(subject),
@@ -120,16 +129,16 @@ export default function ScheduleBlockCell({
           title={isSelected ? "Cancel move" : "Move block"}
           onClick={(e) => { e.stopPropagation(); onPickUp(); }}
           className={cn(
-            "absolute left-0 top-1/2 -translate-y-1/2 z-10 inline-flex h-6 w-5 items-center justify-center rounded transition-opacity touch-none",
-            isSelected ? "opacity-100 text-primary" : "opacity-30 group-hover:opacity-70 hover:opacity-100",
+            "absolute left-0 top-1/2 -translate-y-1/2 z-10 inline-flex h-5 w-4 items-center justify-center rounded transition-opacity touch-none",
+            isSelected ? "opacity-100 text-primary" : "opacity-0 group-hover:opacity-60 hover:opacity-100",
           )}
         >
-          <GripVertical className="h-3.5 w-3.5" />
+          <GripVertical className="h-3 w-3" />
         </button>
       )}
       {weekLabel && (
         <span className={cn(
-          "absolute right-1 top-1 text-[9px] font-bold px-1 py-px rounded leading-none border",
+          "absolute right-1 top-1 text-[8px] font-bold px-1 rounded leading-none border",
           isA
             ? "bg-blue-500/15 text-blue-700 dark:text-blue-300 border-blue-500/30"
             : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30",
@@ -138,37 +147,50 @@ export default function ScheduleBlockCell({
         </span>
       )}
       {hasConflict && (
-        <AlertTriangle className={cn("absolute top-1 h-3 w-3 text-destructive", iconOffset)} />
+        <AlertTriangle className={cn("absolute top-0.5 h-3 w-3 text-destructive", iconOffset)} />
       )}
       {onToggleLock && !hasConflict && (
         <button
           onClick={(e) => { e.stopPropagation(); onToggleLock(); }}
-          className={cn("absolute top-1 h-4 w-4 opacity-0 group-hover:opacity-70 hover:opacity-100 transition-opacity", iconOffset)}
+          className={cn("absolute top-0.5 h-3.5 w-3.5 opacity-0 group-hover:opacity-70 hover:opacity-100 transition-opacity", iconOffset)}
           title={isLocked ? "Unlock block" : "Lock block"}
         >
-          {isLocked ? <Lock className="h-3 w-3 text-primary" /> : <LockOpen className="h-3 w-3 text-muted-foreground" />}
+          {isLocked ? <Lock className="h-2.5 w-2.5 text-primary" /> : <LockOpen className="h-2.5 w-2.5 text-muted-foreground" />}
         </button>
       )}
-      <p className="font-semibold truncate">{subject ?? "—"}</p>
-      {teacherName && (
-        <p className="truncate text-[11px] font-medium text-foreground/85">
-          {teacherName}{grade ? ` · Gr. ${grade}` : ''}
+      {/* Primary line: subject (bold) + optional grade chip. The grade chip is
+       *  the single most-scanned piece of info — pulling it inline with the
+       *  subject saves vertical space vs. a dedicated second line. */}
+      <div className="flex items-center gap-1 min-w-0 pr-5">
+        <span className="font-semibold text-[12px] truncate flex-1 min-w-0">{subject ?? "—"}</span>
+        {grade && (
+          <span className="shrink-0 rounded bg-foreground/10 px-1 text-[9px] font-semibold leading-[14px] text-foreground/80">
+            {grade}
+          </span>
+        )}
+      </div>
+      {/* Secondary line: teacher (or specialist as fallback). Kept to one line
+       *  with truncation. Time appears on hover via the row's title attribute
+       *  and the always-visible time column on the left rail. */}
+      {(teacherName || specialistName) && (
+        <p className="truncate text-[10px] text-foreground/65 mt-0.5">
+          {teacherName ?? specialistName}
         </p>
       )}
-      {!teacherName && grade && <p className="truncate font-medium text-[10px] print:text-muted-foreground/60">Gr. {grade}</p>}
-      {specialistName && <p className="truncate text-[10px] text-muted-foreground">{specialistName}</p>}
+      {/* Time only shown on hover to reduce visual noise; the left time-rail
+       *  already labels the row. */}
       <p
-        className="mt-0.5 text-[10px] opacity-50 group-hover:opacity-90 transition-opacity"
+        className="mt-0.5 text-[9px] opacity-0 group-hover:opacity-80 transition-opacity"
         title={`${formatTime(startTime)}–${formatTime(endTime)}`}
       >
-        {formatTime(startTime)}–{formatTime(endTime)} {room && `· ${room}`}
+        {formatTime(startTime)}–{formatTime(endTime)}{room ? ` · ${room}` : ""}
       </p>
       {hasNotes && !onNotesChange && (
         <p
           className="mt-0.5 italic text-[10px] truncate opacity-80"
           title={trimmedNotesPreview}
         >
-          {trimmedNotesPreview.length > 40 ? trimmedNotesPreview.slice(0, 40) + "…" : trimmedNotesPreview}
+          {trimmedNotesPreview.length > 32 ? trimmedNotesPreview.slice(0, 32) + "…" : trimmedNotesPreview}
         </p>
       )}
       {isOverride && !hasConflict && !onToggleLock && (
