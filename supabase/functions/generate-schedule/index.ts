@@ -1,6 +1,37 @@
+// ─────────────────────────────────────────────────────────────────────────
+// SCHEDULE GENERATION — deterministic solver (the solver owns ALL hard rules;
+// Claude only polishes soft quality afterwards in verify-schedule).
+//
+// Pipeline (per HTTP call):
+//   E.  Feasibility precheck — session capacity (per-specialist class_duration
+//       aware) vs. demand; emits a soft capacity_shortfall warning, never throws.
+//   3A. Deterministic seeding — admin/PLC locks, carried-forward locked blocks,
+//       specialist lunch reservations, special events block all specialists.
+//   3B. Strategy priority loop — tries conflict_strategies in order
+//       (ab_week | aa_bb_week | quick_30 | big_group | extra_rotation | standard;
+//       conflict_timing="after" or no conflict grades → standard only). Each
+//       strategy is Monte-Carlo restarted; first error-free best wins, else
+//       fewest-errors. conflict_grades scopes quick_30/extra_rotation.
+//   3C. Simulated annealing — local refinement (swap specialist / swap grade /
+//       de-cluster), every move re-scored.
+//   4.  Optional post-passes — makeup / lunch_clubs / event_planning.
+//   The HTTP handler runs a small best-of-2 internally and persists ONE
+//   generation; the CLIENT (src/lib/generateBestSchedule.ts) calls this many
+//   times for best-of-N (Edge CPU limit ≈ 2s/call), keeping the best.
+//
+// HARD constraints live in _shared/constraints.ts (double-booking big-group
+// aware, recess/lunch by grade band, PLC locks, school hours/early-release).
+// SOFT quality is the weighted scorer in _scoring.ts; quality % = the shared
+// rubric in _shared/scoring-rubric.ts. Wizard values consumed: school hours,
+// class_duration (+ per-specialist override), passing/setup time, grades,
+// working_days, grade_rotation, am_pm/day preferences, specialist + teacher +
+// part-time planning minutes, contractual minutes, recess grade bands
+// (staggered), admin/PLC rotation, big_group_config, clubs, events, calendar.
+// ─────────────────────────────────────────────────────────────────────────
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { shuffle, deriveSeed, mulberry32, type Rng } from "./_random.ts";
-import { scoreSchedule, DEFAULT_WEIGHTS, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
+import { scoreSchedule, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
+import { qualityPercent } from "../_shared/scoring-rubric.ts";
 import { calibrateMonteCarlo, monteCarloRun, MonteCarloBudgetExceededError } from "./_monteCarlo.ts";
 
 const corsHeaders = {
@@ -85,6 +116,8 @@ interface Specialist {
   second_location: string | null;
   weekly_planning_minutes: number | null;
   class_duration?: number | null;
+  /** Per-specialist extra "PLUS" rotation: { Mon: { active, startTime, grades:[{grade,startTime?,durationMinutes?}] }, … } */
+  plus_rotation?: Record<string, { active?: boolean; startTime?: string; grades?: Array<{ grade: string; startTime?: string; durationMinutes?: number }> }> | null;
 }
 
 interface Teacher {
@@ -476,7 +509,11 @@ export function validatePlanningTime(blocks: Block[], specialists: Specialist[],
     // else fall back to the school default per day × working days.
     const workDayCount = (spec.working_days ?? DAYS).filter((d: string) => DAYS.includes(d)).length || DAYS.length;
     const perDayDefault = spec.planning_minutes ?? school.planning_minutes ?? 0;
-    const required = spec.weekly_planning_minutes ?? (perDayDefault * workDayCount);
+    // Part-time specialists carry their own (usually smaller) weekly planning
+    // guarantee — honor it instead of the full-time figure.
+    const required = (spec.is_part_time && spec.part_time_planning_minutes != null)
+      ? spec.part_time_planning_minutes
+      : (spec.weekly_planning_minutes ?? (perDayDefault * workDayCount));
     if (required > 0 && free < required) {
       warnings.push({
         type: "planning_shortfall",
@@ -1782,6 +1819,51 @@ function generateAdminRotationBlocks(
   return blocks;
 }
 
+// ─── PLUS rotation blocks (admin-specified extra specialist sessions) ──
+// Each specialist may carry a per-day PLUS rotation (an extra rotation beyond
+// the normal weekly grid). We materialise the admin-specified ones as fixed
+// teaching blocks so the solver seeds them as occupancy and schedules the
+// regular rotation AROUND them. ("AI auto-fit" PLUS, with no explicit day/time,
+// is left to the normal rotation — there is nothing fixed to seed.)
+export function generatePlusRotationBlocks(
+  generationId: string,
+  specialists: Specialist[],
+  school: any,
+): Block[] {
+  const defaultDur = (school?.class_duration && school.class_duration > 0) ? school.class_duration : 45;
+  const blocks: Block[] = [];
+  for (const spec of specialists) {
+    const pr = spec.plus_rotation;
+    if (!pr || typeof pr !== "object") continue;
+    for (const [dayKey, entry] of Object.entries(pr)) {
+      if (!entry?.active) continue;
+      const day = DAY_FULL_TO_SHORT[dayKey] ?? dayKey;
+      if (!DAYS.includes(day)) continue;
+      for (const g of (entry.grades ?? [])) {
+        if (!g?.grade) continue;
+        const startStr = g.startTime || entry.startTime;
+        if (!startStr) continue;
+        const startMin = timeToMinutes(startStr);
+        if (!Number.isFinite(startMin)) continue;
+        const dur = (g.durationMinutes && g.durationMinutes > 0) ? g.durationMinutes : defaultDur;
+        blocks.push({
+          generation_id: generationId,
+          day_of_week: day,
+          start_time: minutesToTime(startMin),
+          end_time: minutesToTime(startMin + dur),
+          subject: spec.subject ? `${spec.subject} (PLUS)` : "PLUS",
+          specialist_id: spec.id,
+          teacher_id: null,
+          grade: g.grade,
+          room: spec.location ?? null,
+          week_label: null,
+        });
+      }
+    }
+  }
+  return blocks;
+}
+
 // ─── Specialist lunch block reservation ──────────────────────────────
 function reserveSpecialistLunchBlocks(
   generationId: string,
@@ -2229,14 +2311,18 @@ export function generateScheduleBlocks(
   // still gets a best-effort schedule (the solver + no_coverage warnings show
   // exactly which classes couldn't be covered).
   const feasStartMin = timeToMinutes(school.start_time ?? "08:00");
-  const feasPeriodLen = (((school.class_duration && school.class_duration > 0) ? school.class_duration : 45) || 45)
-    + (school.passing_time ?? 5);
+  const schoolPeriodLen = ((school.class_duration && school.class_duration > 0) ? school.class_duration : 45);
+  const feasPassing = school.passing_time ?? 5;
   let sessionCapacity = 0;
   for (const s of specialists) {
+    // Respect a specialist's own class_duration override (e.g. 30-min K classes
+    // fit more sessions/day than the 45-min school default), so the capacity
+    // estimate — and any shortfall warning — is accurate per specialist.
+    const specPeriodLen = (((s.class_duration && s.class_duration > 0) ? s.class_duration : schoolPeriodLen) || 45) + feasPassing;
     for (const d of (s.working_days ?? DAYS)) {
       if (!DAYS.includes(d)) continue;
       const endMin = getEndMinForDay(d, school);
-      sessionCapacity += Math.max(0, Math.floor((endMin - feasStartMin) / Math.max(1, feasPeriodLen)));
+      sessionCapacity += Math.max(0, Math.floor((endMin - feasStartMin) / Math.max(1, specPeriodLen)));
     }
   }
   // Demand = one session per (class, specialist). A/B and AA/BB strategies
@@ -2320,6 +2406,17 @@ export function generateScheduleBlocks(
     if (lb.grade) occupancy.bookGradeRange(lb.day_of_week, lb.grade, start, end);
   }
 
+  // Pre-seed admin-specified PLUS rotation blocks (extra specialist sessions):
+  // book the specialist and lock the grade so the regular rotation works around
+  // them, exactly like a locked block. They're added to the output below.
+  const plusBlocks = generatePlusRotationBlocks(generationId, specialists, school);
+  for (const pb of plusBlocks) {
+    const start = timeToMinutes(pb.start_time);
+    const end = timeToMinutes(pb.end_time);
+    if (pb.specialist_id) occupancy.book(pb.day_of_week, start, end, pb.specialist_id, null);
+    if (pb.grade) occupancy.bookGradeRange(pb.day_of_week, pb.grade, start, end);
+  }
+
   // Block specialist lunch blocks in occupancy
   const lunchBlocks = reserveSpecialistLunchBlocks(generationId, specialists, recessConfigs, school);
   for (const lb of lunchBlocks) {
@@ -2364,6 +2461,7 @@ export function generateScheduleBlocks(
       id: t.id,
       am_pm_preference: t.am_pm_preference,
       day_preference: t.day_preference,
+      weekly_planning_minutes: t.weekly_planning_minutes,
     })),
     grades,
   };
@@ -2390,7 +2488,7 @@ export function generateScheduleBlocks(
       const finalWarnings = computeWarnings(sa.blocks, specialists, grades);
       const breakdown = scoreSchedule({ blocks: sa.blocks, warnings: finalWarnings, preferenceViolations: sa.preferenceViolations }, scoringInput, weightOverrides).breakdown;
       return {
-        blocks: [...lunchBlocks, ...sa.blocks],
+        blocks: [...lunchBlocks, ...plusBlocks, ...sa.blocks],
         chosenStrategy: "standard",
         attemptedStrategies: [{ strategy: "standard", error_count: 0, warning_count: 0 }],
         fallbackReason: null,
@@ -2406,7 +2504,7 @@ export function generateScheduleBlocks(
     const finalWarnings = computeWarnings(mc.best.blocks, specialists, grades);
     const breakdown = scoreSchedule({ blocks: mc.best.blocks, warnings: finalWarnings, preferenceViolations: mc.best.preferenceViolations }, scoringInput, weightOverrides).breakdown;
     return {
-      blocks: [...lunchBlocks, ...mc.best.blocks],
+      blocks: [...lunchBlocks, ...plusBlocks, ...mc.best.blocks],
       chosenStrategy: "standard",
       attemptedStrategies: [{ strategy: "standard", error_count: 0, warning_count: 0 }],
       fallbackReason: null,
@@ -2553,7 +2651,7 @@ export function generateScheduleBlocks(
   ).breakdown;
 
   return {
-    blocks: [...lunchBlocks, ...baseBlocks],
+    blocks: [...lunchBlocks, ...plusBlocks, ...baseBlocks],
     chosenStrategy: chosenStrategy ?? "standard",
     attemptedStrategies: attempted,
     fallbackReason,
@@ -2635,6 +2733,7 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       second_location: s.second_location,
       weekly_planning_minutes: s.weekly_planning_minutes,
       class_duration: s.class_duration ?? null,
+      plus_rotation: (s.plus_rotation ?? null) as Specialist["plus_rotation"],
     }));
 
     const teachers: Teacher[] = (teachRes.data ?? []).map((t: any) => ({
@@ -2744,20 +2843,7 @@ const __serveHandler = async (req: Request): Promise<Response> => {
     // (100 - sum(|soft penalties|)/4). Stop early when we reach TARGET_QUALITY,
     // or when the wall-clock budget is exhausted. Users said they're happy to
     // wait longer for a near-perfect schedule.
-    const PENALTY_KEYS = [
-      "subject_gap", "subject_day_clustering", "class_repeats", "k_grade_after_780",
-      "cart_back_to_back", "grade_cohesion", "contract_min", "spec_dayload_stdev",
-      "warnings", "errors",
-    ];
-    const qualityPct = (breakdown: Record<string, number> | null | undefined): number => {
-      if (!breakdown) return 0;
-      let mag = 0;
-      for (const k of PENALTY_KEYS) {
-        const v = breakdown[k];
-        if (typeof v === "number" && Number.isFinite(v)) mag += Math.abs(v);
-      }
-      return Math.max(0, Math.min(100, Math.round(100 - mag / 4)));
-    };
+    const qualityPct = qualityPercent;
     const TARGET_QUALITY = 99;
     // CPU is the binding constraint on Edge Functions (~2s before the
     // runtime kills the request). Each attempt costs ~700ms of CPU, so
@@ -2767,13 +2853,17 @@ const __serveHandler = async (req: Request): Promise<Response> => {
     const CPU_BUDGET_MS = 1200; // Reserve >800ms for save + return.
     const tStartOuter = performance.now();
 
-    let schedulerResult: ReturnType<typeof generateScheduleBlocks> | null = null;
+    let schedulerResult: SchedulerResult | null = null;
     let bestQuality = -1;
     let bestAttempt = -1;
     let attemptsRun = 0;
     let cumulativeAttemptMs = 0;
 
-    const runAttempt = (attempt: number) => {
+    // Returns its result rather than assigning the outer `schedulerResult`
+    // directly: assigning a captured variable only inside a closure defeats
+    // TypeScript's control-flow analysis (it would treat schedulerResult as
+    // perpetually null and mark the post-guard code unreachable → `never`).
+    const runAttempt = (attempt: number): { candidate: SchedulerResult; quality: number } => {
       const t0 = performance.now();
       const candidate = generateScheduleBlocks(
         generation.id, specialists, teachers, grades, school, recessConfigs,
@@ -2782,24 +2872,27 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       );
       const dt = performance.now() - t0;
       cumulativeAttemptMs += dt;
-      const q = qualityPct(candidate.scoreBreakdown as any);
-      console.log(`[HQ] attempt ${attempt} → quality ${q}% (${Math.round(dt)}ms, cum ${Math.round(cumulativeAttemptMs)}ms)`);
+      const quality = qualityPct(candidate.scoreBreakdown as any);
+      console.log(`[HQ] attempt ${attempt} → quality ${quality}% (${Math.round(dt)}ms, cum ${Math.round(cumulativeAttemptMs)}ms)`);
       attemptsRun++;
-      if (q > bestQuality) {
-        bestQuality = q;
-        bestAttempt = attempt;
-        schedulerResult = candidate;
-      }
+      return { candidate, quality };
     };
 
+    // The schedulerResult assignments below live in the OUTER scope (not a
+    // closure) so control-flow analysis tracks them and the
+    // `if (!schedulerResult)` guard narrows correctly.
     try {
       // Attempt 0 — must succeed at least once to have any result to save.
+      let r0: { candidate: SchedulerResult; quality: number };
       try {
-        runAttempt(0);
+        r0 = runAttempt(0);
       } catch (err) {
         console.error(`[HQ] attempt 0 threw, retrying once:`, err);
-        runAttempt(0);
+        r0 = runAttempt(0);
       }
+      bestQuality = r0.quality;
+      bestAttempt = 0;
+      schedulerResult = r0.candidate;
 
       for (let attempt = 1; attempt < MAX_ATTEMPTS && bestQuality < TARGET_QUALITY; attempt++) {
         // Hard CPU-aware break: stop while we still have headroom to save.
@@ -2808,7 +2901,12 @@ const __serveHandler = async (req: Request): Promise<Response> => {
           break;
         }
         try {
-          runAttempt(attempt);
+          const r = runAttempt(attempt);
+          if (r.quality > bestQuality) {
+            bestQuality = r.quality;
+            bestAttempt = attempt;
+            schedulerResult = r.candidate;
+          }
         } catch (err) {
           console.error(`[HQ] attempt ${attempt} threw:`, err);
         }

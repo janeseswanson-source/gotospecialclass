@@ -86,6 +86,8 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
   // Proposed edits the user has already applied or discarded (by toolCallId),
   // so they drop out of the pending Apply bar.
   const [resolvedCallIds, setResolvedCallIds] = useState<Set<string>>(new Set());
+  const [rejectedCallIds, setRejectedCallIds] = useState<Set<string>>(new Set());
+  const [skippedByCallId, setSkippedByCallId] = useState<Record<string, string>>({});
   const [applying, setApplying] = useState(false);
 
   const transport = useMemo(() => {
@@ -212,11 +214,25 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
     });
   }
 
+  // Proposals the user hasn't rejected — only these get applied.
+  const acceptedProposals = useMemo(
+    () => pendingProposals.filter((p) => !rejectedCallIds.has(p.toolCallId)),
+    [pendingProposals, rejectedCallIds],
+  );
+
+  function toggleReject(callId: string) {
+    setRejectedCallIds((prev) => {
+      const next = new Set(prev);
+      next.has(callId) ? next.delete(callId) : next.add(callId);
+      return next;
+    });
+  }
+
   async function applyChanges() {
-    if (!generationId || applying || pendingProposals.length === 0) return;
+    if (!generationId || applying || acceptedProposals.length === 0) return;
     setApplying(true);
-    const callIds = pendingProposals.map((p) => p.toolCallId);
-    const ops = pendingProposals.map((p) => p.op);
+    setSkippedByCallId({});
+    const ops = acceptedProposals.map((p) => p.op);
     try {
       const { data: sess } = await supabase.auth.getSession();
       const token = sess.session?.access_token ?? tokenRef.current;
@@ -229,16 +245,31 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data?.error ?? `HTTP ${resp.status}`);
-      markResolved(callIds);
+
+      // Map each skipped reason back to the proposal it belongs to (by block id)
+      // so the user sees exactly WHICH change failed and WHY — and keep those
+      // rows visible (annotated) instead of silently dropping them.
+      const skipped: string[] = Array.isArray(data.skipped) ? data.skipped : [];
+      const skipMap: Record<string, string> = {};
+      const appliedCallIds: string[] = [];
+      for (const p of acceptedProposals) {
+        const op: any = p.op;
+        const ids = [op.block_id, op.a_id, op.b_id].filter(Boolean) as string[];
+        const reason = ids.length ? skipped.find((s) => ids.some((id) => s.includes(id))) : undefined;
+        if (reason) skipMap[p.toolCallId] = reason.replace(/^[a-z]+\s+[0-9a-f-]+:\s*/i, "");
+        else appliedCallIds.push(p.toolCallId);
+      }
+      markResolved(appliedCallIds);   // applied → leave the review list
+      setSkippedByCallId(skipMap);    // failed → stay, with the reason shown
+
       onScheduleChanged();
       const changedIds: string[] = Array.isArray(data.changed_block_ids) ? data.changed_block_ids : [];
       if (changedIds.length) onApplied?.(changedIds);
-      const skipped: string[] = Array.isArray(data.skipped) ? data.skipped : [];
       toast({
         title: skipped.length
-          ? `Applied ${data.applied}, skipped ${skipped.length}`
+          ? `Applied ${data.applied}, ${skipped.length} couldn't apply`
           : `Applied ${data.applied} change${data.applied === 1 ? "" : "s"}`,
-        description: skipped.length ? skipped.slice(0, 3).join("; ") : "The schedule has been updated.",
+        description: skipped.length ? "The items in red below couldn't be applied — see why." : "The schedule has been updated.",
         variant: skipped.length ? "destructive" : undefined,
       });
     } catch (e: any) {
@@ -250,6 +281,8 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
 
   function discardChanges() {
     markResolved(pendingProposals.map((p) => p.toolCallId));
+    setRejectedCallIds(new Set());
+    setSkippedByCallId({});
   }
 
   async function submit() {
@@ -264,9 +297,16 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
       toast({ title: "Already sending", description: "Wait for the current response to finish." });
       return;
     }
-    // Starting a new turn: the server re-plans from the live DB, so any
-    // un-applied proposals from a previous turn are stale — drop them.
-    if (pendingProposals.length) discardChanges();
+    // Starting a new turn re-plans from the live DB, so un-applied proposals
+    // from a previous turn become stale. Don't drop them silently — confirm
+    // first so the user never loses pending work by accident.
+    if (pendingProposals.length) {
+      const proceed = window.confirm(
+        `You have ${pendingProposals.length} unapplied change${pendingProposals.length === 1 ? "" : "s"}. Sending a new message will discard ${pendingProposals.length === 1 ? "it" : "them"}. Continue?`,
+      );
+      if (!proceed) return;
+      discardChanges();
+    }
     setInput("");
     try {
       console.log("[chat] sendMessage", text);
@@ -312,9 +352,10 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
             />
           ) : (
             messages.map((m) => {
-              const hasContent = (m.parts ?? []).some(
-                (p: any) => (p.type === "text" && p.text?.trim()) || p.type?.startsWith?.("tool-"),
-              );
+              const parts = (m.parts ?? []) as any[];
+              const hasText = parts.some((p) => p.type === "text" && p.text?.trim());
+              const proposedCount = parts.filter((p) => p.type?.startsWith?.("tool-") && p.output?.status === "proposed").length;
+              const hasTool = parts.some((p) => p.type?.startsWith?.("tool-"));
               return (
                 <Message key={m.id} from={m.role === "user" ? "user" : "assistant"}>
                   <MessageContent>
@@ -344,10 +385,20 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
                       }
                       return null;
                     })}
-                    {m.role === "assistant" && !hasContent && !isLoading && (
-                      <p className="text-xs italic text-muted-foreground">
-                        No response — please try again or rephrase.
-                      </p>
+                    {/* Assistant turns that only made tool proposals (no prose)
+                        still get a clear, visible acknowledgement in the chat. */}
+                    {m.role === "assistant" && !hasText && !isLoading && (
+                      hasTool ? (
+                        <p className="text-xs text-foreground">
+                          {proposedCount > 0
+                            ? `I've proposed ${proposedCount} change${proposedCount === 1 ? "" : "s"} — review and Apply ${proposedCount === 1 ? "it" : "them"} below.`
+                            : "Done — see the result above."}
+                        </p>
+                      ) : (
+                        <p className="text-xs italic text-muted-foreground">
+                          No response — please try again or rephrase.
+                        </p>
+                      )
                     )}
                   </MessageContent>
                 </Message>
@@ -391,25 +442,44 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
         <div className="border-t border-amber-500/30 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2.5 space-y-2">
           <div className="flex items-center gap-3">
             <div className="flex-1 text-xs">
-              <p className="font-semibold text-foreground">
-                {pendingProposals.length} proposed change{pendingProposals.length === 1 ? "" : "s"} — not saved yet
+              <p className="font-semibold text-foreground">Review changes — not saved yet</p>
+              <p className="text-[10px] text-muted-foreground">
+                {acceptedProposals.length} of {pendingProposals.length} selected. Uncheck any you don't want.
               </p>
             </div>
             <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={discardChanges} disabled={applying}>
-              Discard
+              Discard all
             </Button>
-            <Button size="sm" className="h-7 gap-1 text-xs" onClick={applyChanges} disabled={applying}>
+            <Button size="sm" className="h-7 gap-1 text-xs" onClick={applyChanges} disabled={applying || acceptedProposals.length === 0}>
               {applying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-              {applying ? "Applying…" : "Apply"}
+              {applying ? "Applying…" : `Apply ${acceptedProposals.length || ""}`.trim()}
             </Button>
           </div>
-          <ul className="max-h-28 overflow-y-auto space-y-1">
-            {pendingProposals.map((p) => (
-              <li key={p.toolCallId} className="flex items-start gap-1.5 text-[11px] text-foreground">
-                <span className="mt-0.5 text-amber-700 dark:text-amber-400"><OpIcon kind={(p.op as any)?.kind} /></span>
-                <span className="min-w-0 flex-1">{opLabel(p.op)}</span>
-              </li>
-            ))}
+          <ul className="max-h-40 overflow-y-auto space-y-1">
+            {pendingProposals.map((p) => {
+              const rejected = rejectedCallIds.has(p.toolCallId);
+              const skipReason = skippedByCallId[p.toolCallId];
+              return (
+                <li key={p.toolCallId} className="rounded border border-border/60 bg-background/60 px-2 py-1.5">
+                  <label className="flex items-start gap-2 text-[11px] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-primary"
+                      checked={!rejected}
+                      onChange={() => toggleReject(p.toolCallId)}
+                      disabled={applying}
+                    />
+                    <span className="mt-0.5 text-amber-700 dark:text-amber-400"><OpIcon kind={(p.op as any)?.kind} /></span>
+                    <span className={`min-w-0 flex-1 ${rejected ? "line-through opacity-50" : "text-foreground"}`}>
+                      {opLabel(p.op)}
+                    </span>
+                  </label>
+                  {skipReason && (
+                    <p className="mt-1 pl-6 text-[10px] font-medium text-destructive">Couldn't apply: {skipReason}</p>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

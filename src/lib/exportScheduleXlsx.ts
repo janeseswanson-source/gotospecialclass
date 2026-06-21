@@ -39,7 +39,7 @@ function buildBrandHeader(ws: ExcelJS.Worksheet, lastCol: number, title: string,
   t.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
   t.font = { name: "Arial", size: 16, bold: true, color: { argb: WHITE } };
   t.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
-  ws.getRow(1).height = 30;
+  ws.getRow(1).height = 36;
   // Subtitle band (gold rule on cream)
   ws.mergeCells(`A2:${colLetter}2`);
   const s = ws.getCell("A2");
@@ -48,7 +48,7 @@ function buildBrandHeader(ws: ExcelJS.Worksheet, lastCol: number, title: string,
   s.font = { name: "Arial", size: 9, italic: true, color: { argb: MUTE } };
   s.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
   s.border = { bottom: { style: "medium", color: { argb: GOLD } } };
-  ws.getRow(2).height = 18;
+  ws.getRow(2).height = 22;
 }
 
 function headerCell(cell: ExcelJS.Cell, text: string) {
@@ -100,15 +100,15 @@ export async function exportScheduleXlsx(opts: {
   const isTeaching = (b: Blk) => b.specialist_id && !/lunch|planning|plc|recess/i.test(b.subject ?? "") && (b.grade ?? "").toLowerCase() !== "lunch";
 
   // ── Sheet 1: Master Schedule grid ──
-  const ms = wb.addWorksheet("Master Schedule", { views: [{ state: "frozen", xSplit: 1, ySplit: 4 }], properties: { defaultRowHeight: 16 } });
-  ms.columns = [{ width: 13 }, ...DAYS.map(() => ({ width: 26 }))];
+  const ms = wb.addWorksheet("Master Schedule", { views: [{ state: "frozen", xSplit: 1, ySplit: 4 }], properties: { defaultRowHeight: 18 } });
+  ms.columns = [{ width: 16 }, ...DAYS.map(() => ({ width: 32 }))];
   buildBrandHeader(ms, DAYS.length + 1, `Master Schedule — ${schoolName}`, `${schoolYear ? schoolYear + "  ·  " : ""}${school?.start_time ? formatTime(school.start_time) : ""}–${school?.end_time ? formatTime(school.end_time) : ""}  ·  GoToSpecialClass`);
 
   // Day header row (row 3 is spacer-free; put headers at row 3)
   const hdr = ms.getRow(3);
   headerCell(hdr.getCell(1), "Time");
   DAYS.forEach((d, i) => headerCell(hdr.getCell(i + 2), DAY_FULL[d]));
-  hdr.height = 20;
+  hdr.height = 26;
 
   // Distinct teaching start times.
   const starts = Array.from(new Set(blocks.filter(isTeaching).map((b) => b.start_time))).sort();
@@ -129,7 +129,7 @@ export async function exportScheduleXlsx(opts: {
       c.font = { name: "Arial", size: 9, bold: true, color: { argb: NAVY } };
       c.alignment = { vertical: "middle", horizontal: "center" };
       c.border = { top: { style: "thin", color: { argb: GOLD } }, bottom: { style: "thin", color: { argb: GOLD } } };
-      row.height = 16;
+      row.height = 24;
       continue;
     }
     // Time cell.
@@ -137,7 +137,7 @@ export async function exportScheduleXlsx(opts: {
     const tc = row.getCell(1);
     tc.value = startBlk ? `${formatTime(startBlk.start_time)}\n${formatTime(startBlk.end_time)}` : formatTime(blocks.find(b=>parseMin(b.start_time)===startMin)?.start_time ?? "");
     tc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CREAM } };
-    tc.font = { name: "Arial", size: 8.5, bold: true, color: { argb: NAVY } };
+    tc.font = { name: "Arial", size: 9, bold: true, color: { argb: NAVY } };
     tc.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
     tc.border = thinBorder();
 
@@ -177,20 +177,21 @@ export async function exportScheduleXlsx(opts: {
         const teach = b.teacher_id ? teachById.get(b.teacher_id) : null;
         const subj = b.subject ?? spec?.subject ?? "";
         const teacherName = teach?.name ?? spec?.name ?? "";
-        rich.push({ text: "\n", font: { size: 4 } });
-        rich.push({ text: subj.padEnd(8, " "), font: { name: "Arial", size: 8.5, bold: true, color: { argb: accent } } });
+        rich.push({ text: "\n", font: { size: 7 } });
+        rich.push({ text: subj.padEnd(8, " "), font: { name: "Arial", size: 9, bold: true, color: { argb: accent } } });
         if (teacherName) {
-          rich.push({ text: `  ${teacherName}`, font: { name: "Arial", size: 8.5, color: { argb: NAVY } } });
+          rich.push({ text: `  ${teacherName}`, font: { name: "Arial", size: 9, color: { argb: NAVY } } });
         }
       });
       cell.value = { richText: rich };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
-      cell.alignment = { vertical: "top", horizontal: "left", wrapText: true, indent: 1 };
+      cell.alignment = { vertical: "top", horizontal: "left", wrapText: true, indent: 2 };
       cell.border = thinBorder();
       const lines = rows.length + 1;
       if (lines > maxLines) maxLines = lines;
     });
-    row.height = Math.max(20, maxLines * 13);
+    // Generous row height so cells breathe (taller base + more per rotation line).
+    row.height = Math.max(36, maxLines * 19);
   }
 
   // ── Per-specialist sheets ──
@@ -198,13 +199,13 @@ export async function exportScheduleXlsx(opts: {
     const mine = blocks.filter((b) => b.specialist_id === spec.id && isTeaching(b));
     if (mine.length === 0) continue;
     const safe = (spec.name as string).replace(/[\\/?*[\]:]/g, "").slice(0, 28) || "Specialist";
-    const ws = wb.addWorksheet(safe, { views: [{ state: "frozen", xSplit: 1, ySplit: 4 }] });
-    ws.columns = [{ width: 13 }, ...DAYS.map(() => ({ width: 24 }))];
+    const ws = wb.addWorksheet(safe, { views: [{ state: "frozen", xSplit: 1, ySplit: 4 }], properties: { defaultRowHeight: 18 } });
+    ws.columns = [{ width: 16 }, ...DAYS.map(() => ({ width: 28 }))];
     buildBrandHeader(ws, DAYS.length + 1, `${spec.name} — ${spec.subject}`, `${schoolName}${schoolYear ? "  ·  " + schoolYear : ""}  ·  GoToSpecialClass`);
     const h = ws.getRow(3);
     headerCell(h.getCell(1), "Time");
     DAYS.forEach((d, i) => headerCell(h.getCell(i + 2), DAY_FULL[d]));
-    h.height = 20;
+    h.height = 26;
 
     const myStarts = Array.from(new Set(mine.map((b) => b.start_time))).sort();
     const { accent, fill } = subjectColors(spec.subject);
@@ -214,7 +215,7 @@ export async function exportScheduleXlsx(opts: {
       const ex = mine.find((b) => b.start_time === st)!;
       tc.value = `${formatTime(ex.start_time)}\n${formatTime(ex.end_time)}`;
       tc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CREAM } };
-      tc.font = { name: "Arial", size: 8.5, bold: true, color: { argb: NAVY } };
+      tc.font = { name: "Arial", size: 9, bold: true, color: { argb: NAVY } };
       tc.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
       tc.border = thinBorder();
       DAYS.forEach((day, i) => {
@@ -224,14 +225,14 @@ export async function exportScheduleXlsx(opts: {
           const teach = b.teacher_id ? teachById.get(b.teacher_id) : null;
           cell.value = `${b.grade ? `Gr ${b.grade}` : ""}${teach ? `\n${teach.name}` : ""}${b.week_label ? `  (${b.week_label})` : ""}`;
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
-          cell.font = { name: "Arial", size: 9, color: { argb: accent }, bold: true };
+          cell.font = { name: "Arial", size: 10, color: { argb: accent }, bold: true };
         } else {
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ri % 2 ? ZEBRA : WHITE } };
         }
         cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
         cell.border = thinBorder();
       });
-      row.height = 30;
+      row.height = 42;
     });
   }
 
