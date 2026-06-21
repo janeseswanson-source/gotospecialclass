@@ -1,50 +1,44 @@
-## Goal
+## Two bugs
 
-Make the "Edit with AI" panel respond reliably, and make AI-applied changes obvious in the Master Grid with a colored glow + animation on the changed blocks.
+### 1. AI chat returns nothing in the chatbox
 
-## What's actually wrong
+Looking at recent `explain-schedule` logs we see `Http: connection closed before message completed` — Anthropic was tearing the stream down. The previous model id (`claude-opus-4-8`) doesn't exist on Anthropic; I already fixed it to `claude-opus-4-5` (verified live: it returns a real response), but **`schedule-chat`'s `streamText` call never passes `maxOutputTokens`**, and the `@ai-sdk/anthropic` v2 provider does not always inject a default. When it doesn't, Anthropic's API rejects the request (it requires `max_tokens`), the stream closes immediately, and the chatbox stays empty — there's nothing for `useChat` to render.
 
-1. **Chat not responding.** Every Claude call in the project is pinned to `CLAUDE_MODEL = "claude-opus-4-8"` (in `supabase/functions/_shared/anthropic.ts`). That model id does not exist in the Anthropic API — the streaming `schedule-chat` request rejects before producing tokens, so the panel just hangs / errors silently. Recent `schedule-chat` logs are empty, consistent with the stream failing fast.
+We also swallow stream errors silently: `result.toUIMessageStreamResponse(...)` has no `onError` mapper, so anything thrown inside the stream (provider 4xx, tool error, JSON issue) is sent as a generic abort with no message in `useChat`'s `error`.
 
-2. **Highlight is too subtle.** The plumbing already works end‑to‑end: `apply-schedule-edits` returns `changed_block_ids`, `ScheduleChatPanel` forwards them via `onApplied`, `MasterSchedulePage` puts them in `recentChangedIds`, `ScheduleGrid` passes `isHighlighted` to `ScheduleBlockCell`, and the cell applies `animate-pulse-once`. But `animate-pulse-once` is only an opacity dip (`0% 100% opacity 1, 50% 0.55`) and `ring-sky-500/70` — there's no glow, no color shift, and it disappears after ~3 seconds while the flag stays for 12s.
+### 2. Drag-swap toasts "Swapped ✓" but the grid doesn't visibly change
+
+`handleBlockDrop` calls `setBlocks(candidate)` synchronously and then writes both rows in parallel. The state shape is right, so the grid *should* re-render. The likely culprit is one of:
+
+- The `useEffect` at line 186 reloads from DB whenever `specialists`/`teachers` array references change. If anything triggers a `setSpecialists`/`setTeachers` re-set after the swap (parent context, a refetch, etc.) the in-flight optimistic state gets overwritten by a stale DB read fired before the swap UPDATEs commit.
+- A swap between two cells in the same row (same time, different day) does shift positions, but with no visual feedback the user reads it as "nothing happened".
+- The swap touches blocks that aren't in the currently-visible grade/week filter, so the user looking at one tab doesn't see them move.
+
+I want to confirm via Playwright, but the fix is the same regardless: make the swap visibly obvious *and* defend the state update.
 
 ## Plan
 
-### 1. Use a real Claude model (fixes "not responding")
+### A. `supabase/functions/schedule-chat/index.ts`
 
-In `supabase/functions/_shared/anthropic.ts`:
+1. Pass `maxOutputTokens: 4096` (and `temperature: 0.2`) to `streamText` so Anthropic accepts the request.
+2. Add `onError` to `toUIMessageStreamResponse` that returns a readable message (`err?.message ?? "Chat failed"`) so transport errors actually surface in the panel.
+3. Also wrap the initial `streamText(...)` in a try/catch that JSON-returns the provider's error message instead of dropping the connection.
 
-- Change `CLAUDE_MODEL` from `"claude-opus-4-8"` to a currently-available Anthropic model id. Recommended: `"claude-opus-4-5"` (latest Opus; what the user means by "Opus 4.x"). If that 404s in this account, fall back to `"claude-sonnet-4-5"`.
-- No other code changes needed — every function reads `CLAUDE_MODEL` from this file.
+Apply the same `maxOutputTokens` to `explain-schedule` (also uses `streamText`).
 
-Then redeploy `schedule-chat`, `apply-schedule-edits`, `explain-schedule`, `verify-schedule`, `resolve-conflicts-ai`, `parse-*`, `calendar-search` so they pick up the new id, and curl `schedule-chat` with a trivial message to confirm a token stream comes back.
+### B. `src/components/schedule/ScheduleChatPanel.tsx`
 
-### 2. Stronger "just changed" visual on the grid
+1. When `error` is set, show the actual `error.message` (already wired) — once the server propagates it, the user will know what went wrong instead of seeing an empty bubble.
+2. If the stream returns no text and no proposals, render a one-line fallback ("No response — please try again or rephrase.") so the user isn't staring at a blank conversation.
 
-In `src/index.css`:
+### C. Drag-swap visual feedback in `src/pages/schedule/MasterSchedulePage.tsx`
 
-- Replace `.animate-pulse-once` and its keyframes with a longer, more visible **glow + color-wash** animation, e.g. `animate-ai-changed` running ~2.5s × 3 (total ~7.5s, matching the 12s flag with a comfortable tail):
-  - Animates a colored ring (`hsl(var(--primary))` or a dedicated `--ai-change` token) AND a soft outer box-shadow glow that pulses from strong → soft.
-  - Adds a brief background tint wash (e.g. `bg-primary/15` → transparent) so the block visibly "lights up", not just outlines.
+1. **Reuse the AI-changed glow for manual swaps.** After a successful `handleBlockDrop` swap or move, call `flagChangedBlocks([blockId, targetBlock?.id].filter(Boolean))`. This already triggers the new sky-blue glow + auto-scroll-to-block, so the user immediately sees both swapped blocks light up.
+2. **Defend against stale reload overwriting optimistic state.** Replace the broad `useEffect([selectedGen, specialists, teachers])` reload with one that only runs when `selectedGen` changes, plus an explicit one-shot remap when `specialists`/`teachers` arrive for the first time. This stops a context-driven `setSpecialists` from clobbering `setBlocks(candidate)` mid-swap.
+3. After the parallel `await Promise.all([... update ...])`, re-derive `mapBlocks` on the candidate so the row carries forward the latest `specialist_name`/`teacher_name` (defensive — current spread already keeps them, but this guards against future schema drift).
 
-In `src/components/schedule/ScheduleBlockCell.tsx`:
+### D. Verify
 
-- Swap the `isHighlighted` class set from `ring-2 ring-sky-500/70 shadow-[…] animate-pulse-once` to the new `animate-ai-changed` utility plus a persistent thin colored ring while highlighted (so even between pulses the block reads as "just changed").
-- Make sure it doesn't fight the `isSelected` style — `isHighlighted` should win visually while active.
-
-In `src/pages/schedule/MasterSchedulePage.tsx`:
-
-- Align the clear timer (`12_000` ms) with the animation length so highlight + animation end together (use ~8s, or keep 12s but ensure the animation loops/holds the colored ring for the full duration via `animation-fill-mode: both`).
-- After `flagChangedBlocks`, also auto-scroll the grid to the first changed block id (smooth) and show a small toast: "Highlighted N change(s) in the grid." so the user knows where to look.
-
-### 3. Verify
-
-- Open the AI editor, send "Move 3rd grade music to Tuesday morning", confirm a streamed reply arrives and a proposal card appears.
-- Click Apply → confirm the targeted block(s) in the Master Grid glow with the new color + animation for the full duration, on both the All Grades view and the per-grade view.
-- Check `schedule-chat` logs for clean `onFinish` (no stream errors), and `apply-schedule-edits` returns `changed_block_ids`.
-
-## Out of scope
-
-- Reworking the chat panel layout, tool list, or proposal cards.
-- Persistence model / chat history changes.
-- Other AI surfaces' prompts.
+- Reload the Master Schedule, open the AI editor, send "hi" — should get a streamed reply. Then try "Move 3rd grade music to Tuesday morning" → Apply → blocks glow blue.
+- Drag a block onto another block → both blocks glow blue in place after the toast, and the grid reflects the new positions on both All-Grades and per-grade views without a manual reload.
+- Open Playwright against `localhost:8080` to confirm both end-to-end (screenshot the grid before/after the swap and after sending a chat message).
