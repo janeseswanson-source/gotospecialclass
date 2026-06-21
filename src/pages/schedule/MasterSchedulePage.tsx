@@ -104,10 +104,11 @@ export default function MasterSchedulePage() {
   const changedClearTimer = useRef<number | null>(null);
   const flagChangedBlocks = useCallback((ids: string[]) => {
     if (!ids.length) return;
+    // Highlight persists until the NEXT set of changes (or page reload) so the
+    // user can actually find what the AI changed instead of a fading 8s glow.
     setRecentChangedIds(new Set(ids));
     if (changedClearTimer.current) window.clearTimeout(changedClearTimer.current);
-    changedClearTimer.current = window.setTimeout(() => setRecentChangedIds(new Set()), 8_000);
-    // Scroll the first changed block into view so the user sees the glow.
+    // Scroll the first changed block into view so the user sees the highlight.
     requestAnimationFrame(() => {
       const first = ids[0];
       const el = document.querySelector(`[data-block-id="${first}"]`) as HTMLElement | null;
