@@ -22,7 +22,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import SpecialistExportModal from "./exports/SpecialistExportModal";
 import AdminExportModal from "./exports/AdminExportModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds, computeAutoFit } from "@/lib/scheduleGrid";
+import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds, computeConflictPairs, computeAutoFit, parseTime } from "@/lib/scheduleGrid";
 import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
@@ -342,98 +342,121 @@ export default function MasterSchedulePage() {
   );
   const trayIds = useMemo(() => new Set(trayBlocks.map((b) => b.id)), [trayBlocks]);
 
+  /** Minutes -> "HH:MM:SS" for DB writes. */
+  function minToHMS(min: number): string {
+    return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}:00`;
+  }
+
+  /**
+   * After a proposed move/swap, check whether any of the moved blocks ended up
+   * in a bad spot, and return a plain-language reason (or null if it's fine).
+   * Catches the things that make a drop "not work": double-booking a teacher or
+   * specialist, landing on recess/lunch, or falling outside school hours.
+   */
+  function placementProblem(candidate: BlockData[], movedIds: string[]): string | null {
+    const conflictIds = computeConflictIds(candidate);
+    for (const id of movedIds) {
+      if (!conflictIds.has(id)) continue;
+      // Find a clashing partner for a specific message.
+      let partner: BlockData | null = null;
+      for (const { a, b } of computeConflictPairs(candidate)) {
+        if (a.id === id) { partner = b as BlockData; break; }
+        if (b.id === id) { partner = a as BlockData; break; }
+      }
+      const me = candidate.find((x) => x.id === id);
+      const who = partner?.teacher_name || partner?.specialist_name || partner?.subject || "another class";
+      return `${me?.subject ?? "That block"} would clash with ${who} at the same time. Try an empty slot.`;
+    }
+    for (const id of movedIds) {
+      const b = candidate.find((x) => x.id === id);
+      if (!b) continue;
+      const s = parseTime(b.start_time), e = parseTime(b.end_time);
+      if (recessBands.some((band) => s < parseTime(band.end_time) && parseTime(band.start_time) < e)) {
+        return `${b.subject ?? "That block"} would land on recess or lunch.`;
+      }
+      if (schoolStartTime && s < parseTime(schoolStartTime)) return `${b.subject ?? "That block"} would start before school opens.`;
+      if (schoolEndTime && e > parseTime(schoolEndTime)) return `${b.subject ?? "That block"} would run past the end of the day.`;
+    }
+    return null;
+  }
+
   async function handleBlockDrop(blockId: string, newDay: string, newTime: string) {
     if (lockedIds.has(blockId)) {
-      toast({ title: "Block is locked", variant: "destructive" });
+      toast({ title: "This block is locked", description: "Unlock it first to move it.", variant: "destructive" });
       return;
     }
     const block = blocks.find((b) => b.id === blockId);
     if (!block) return;
     if (block.day_of_week === newDay && block.start_time === newTime) return;
 
-    // Detect a block whose interval CONTAINS the target time (any subject) on
-    // the same day & coinciding week → attempt a swap. Using interval-contains
-    // (not exact start-time equality) is important: compact-view rows only
-    // expose the start-time of one column's block, so a Tuesday block that
-    // starts a few minutes earlier than the displayed row would otherwise be
-    // invisible to this check and the drop would be rejected as "occupied".
-    const newTimeMin = (() => { const [h, m] = newTime.split(":").map(Number); return h * 60 + m; })();
-    const targetBlock = blocks.find((b) => {
-      if (b.id === blockId) return false;
-      if (b.day_of_week !== newDay) return false;
-      if (b.week_label && block.week_label && b.week_label !== block.week_label) return false;
-      const [bh, bm] = b.start_time.split(":").map(Number);
-      const [eh, em] = b.end_time.split(":").map(Number);
-      const bs = bh * 60 + bm;
-      const be = eh * 60 + em;
-      return newTimeMin >= bs && newTimeMin < be;
-    });
+    const dur = (b: BlockData) => parseTime(b.end_time) - parseTime(b.start_time);
+
+    // Is the target slot occupied? (interval-contains so compact rows still
+    // match a block that starts a few minutes earlier in that cell.)
+    const newTimeMin = parseTime(newTime);
+    const targetBlock = blocks.find((b) =>
+      b.id !== blockId && b.day_of_week === newDay &&
+      !(b.week_label && block.week_label && b.week_label !== block.week_label) &&
+      newTimeMin >= parseTime(b.start_time) && newTimeMin < parseTime(b.end_time),
+    );
 
     if (targetBlock) {
+      // ── SWAP: each block takes the OTHER's slot but keeps its OWN length ──
       if (lockedIds.has(targetBlock.id)) {
-        toast({ title: "Target block is locked", variant: "destructive" });
+        toast({ title: "That block is locked", description: "Unlock it to swap.", variant: "destructive" });
         return;
       }
-      // Swap day/time of the two blocks (keep durations unchanged).
-      const aSlot = { day: block.day_of_week, start: block.start_time, end: block.end_time };
-      const bSlot = { day: targetBlock.day_of_week, start: targetBlock.start_time, end: targetBlock.end_time };
-      const newBlocks = blocks.map((b) => {
-        if (b.id === block.id) return { ...b, day_of_week: bSlot.day, start_time: bSlot.start, end_time: bSlot.end, is_override: true };
-        if (b.id === targetBlock.id) return { ...b, day_of_week: aSlot.day, start_time: aSlot.start, end_time: aSlot.end, is_override: true };
-        return b;
-      });
-      setBlocks(newBlocks);
-      pushHistory(newBlocks);
+      const aStart = parseTime(targetBlock.start_time);          // block → target's start
+      const bStart = parseTime(block.start_time);                // target → block's start
+      const aNew = { day_of_week: targetBlock.day_of_week, start_time: minToHMS(aStart), end_time: minToHMS(aStart + dur(block)), is_override: true };
+      const bNew = { day_of_week: block.day_of_week, start_time: minToHMS(bStart), end_time: minToHMS(bStart + dur(targetBlock)), is_override: true };
+
+      const candidate = blocks.map((b) =>
+        b.id === block.id ? { ...b, ...aNew } : b.id === targetBlock.id ? { ...b, ...bNew } : b,
+      );
+      const problem = placementProblem(candidate, [block.id, targetBlock.id]);
+      if (problem) {
+        toast({ title: "Can't swap these", description: problem, variant: "destructive" });
+        return;
+      }
+      setBlocks(candidate);
+      pushHistory(candidate);
       const [{ error: e1 }, { error: e2 }] = await Promise.all([
-        supabase.from("schedule_blocks").update({ day_of_week: bSlot.day, start_time: bSlot.start, end_time: bSlot.end, is_override: true }).eq("id", block.id),
-        supabase.from("schedule_blocks").update({ day_of_week: aSlot.day, start_time: aSlot.start, end_time: aSlot.end, is_override: true }).eq("id", targetBlock.id),
+        supabase.from("schedule_blocks").update(aNew).eq("id", block.id),
+        supabase.from("schedule_blocks").update(bNew).eq("id", targetBlock.id),
       ]);
       if (e1 || e2) {
-        toast({ title: "Swap failed", variant: "destructive" });
+        toast({ title: "Swap couldn't be saved", variant: "destructive" });
         loadBlocks(selectedGen);
       } else {
-        toast({ title: "Blocks swapped", description: `${block.subject ?? "Block"} ⇄ ${targetBlock.subject ?? "block"}` });
+        toast({ title: "Swapped ✓", description: `${block.subject ?? "Block"} ⇄ ${targetBlock.subject ?? "block"}` });
+        const spec = specialists.find(s => s.id === block.specialist_id);
+        if (spec) setReplanSuggestion({ specialistId: spec.id, specialistName: spec.name });
       }
       return;
     }
 
-    const fit = computeAutoFit({
-      movingBlock: block,
-      targetDay: newDay,
-      targetTime: newTime,
-      allBlocks: blocks,
-      recessBands,
-      schoolEnd: schoolEndTime,
-    });
-
+    // ── MOVE to an empty slot: keep full length, validate, then commit ──
+    const fit = computeAutoFit({ movingBlock: block, targetDay: newDay, targetTime: newTime, allBlocks: blocks, recessBands, schoolEnd: schoolEndTime });
     if (!fit.ok) {
       toast({ title: "Can't drop here", description: fit.reason, variant: "destructive" });
       return;
     }
-
-    const newBlocks = blocks.map((b) =>
-      b.id === blockId
-        ? { ...b, day_of_week: newDay, start_time: fit.start, end_time: fit.end, is_override: true }
-        : b,
-    );
-    setBlocks(newBlocks);
-    pushHistory(newBlocks);
-
-    const { error } = await supabase
-      .from("schedule_blocks")
-      .update({ day_of_week: newDay, start_time: fit.start, end_time: fit.end, is_override: true })
-      .eq("id", blockId);
-
+    const moveNew = { day_of_week: newDay, start_time: fit.start, end_time: fit.end, is_override: true };
+    const candidate = blocks.map((b) => (b.id === blockId ? { ...b, ...moveNew } : b));
+    const problem = placementProblem(candidate, [blockId]);
+    if (problem) {
+      toast({ title: "Can't drop here", description: problem, variant: "destructive" });
+      return;
+    }
+    setBlocks(candidate);
+    pushHistory(candidate);
+    const { error } = await supabase.from("schedule_blocks").update(moveNew).eq("id", blockId);
     if (error) {
-      toast({ title: "Failed to move block", variant: "destructive" });
+      toast({ title: "Move couldn't be saved", variant: "destructive" });
       loadBlocks(selectedGen);
     } else {
-      toast({
-        title: "Block moved",
-        description: fit.shortened
-          ? `Shortened to ${fit.duration} min to fit the slot.`
-          : undefined,
-      });
+      toast({ title: "Moved ✓", description: fit.shortened ? `Shortened to ${fit.duration} min to fit.` : undefined });
       const spec = specialists.find(s => s.id === block.specialist_id || s.name === block.specialist_name);
       if (spec) setReplanSuggestion({ specialistId: spec.id, specialistName: spec.name });
     }
