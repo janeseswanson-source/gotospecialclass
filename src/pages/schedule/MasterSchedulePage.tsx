@@ -430,6 +430,8 @@ export default function MasterSchedulePage() {
         loadBlocks(selectedGen);
       } else {
         toast({ title: "Swapped ✓", description: `${block.subject ?? "Block"} ⇄ ${targetBlock.subject ?? "block"}` });
+        // Make the swap visible in the grid: both blocks glow + scroll into view.
+        flagChangedBlocks([block.id, targetBlock.id]);
         const spec = specialists.find(s => s.id === block.specialist_id);
         if (spec) setReplanSuggestion({ specialistId: spec.id, specialistName: spec.name });
       }
