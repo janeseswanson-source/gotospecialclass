@@ -1302,8 +1302,12 @@ export default function MasterSchedulePage() {
                 </p>
               )}
               {activeGen?.winning_score != null && (() => {
+                const SPECIAL = new Set(["Lunch", "Planning", "Makeup", "Admin", "PLC"]);
+                const gradeCount = new Set(
+                  blocks.map((b) => b.grade).filter((g): g is string => !!g && !SPECIAL.has(g)),
+                ).size;
                 const pct = scoreToPercent(activeGen.winning_score, {
-                  gradeCount: (selectedSchool?.grades_served as string[] | undefined)?.length ?? 0,
+                  gradeCount,
                   teacherCount: teachers.length,
                   specialistCount: specialists.length,
                 });
@@ -1313,17 +1317,15 @@ export default function MasterSchedulePage() {
                   : pct >= 70 ? "text-amber-600 dark:text-amber-400"
                   : "text-destructive";
                 return (
-                  <div className="space-y-0.5">
-                    <p className="text-xs text-muted-foreground">
-                      Optimizer score:{" "}
-                      <span className={cn("font-bold", color)}>
-                        {pct != null ? `${pct}%` : Math.round(activeGen.winning_score)}
-                      </span>
-                      {pct != null && (
-                        <span className="text-muted-foreground/70"> · raw {Math.round(activeGen.winning_score)}</span>
-                      )}
-                    </p>
-                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Optimizer score:{" "}
+                    <span className={cn("font-bold", color)}>
+                      {pct != null ? `${pct}%` : Math.round(activeGen.winning_score)}
+                    </span>
+                    {pct != null && (
+                      <span className="text-muted-foreground/70"> · raw {Math.round(activeGen.winning_score)}</span>
+                    )}
+                  </p>
                 );
               })()}
               {!activeGen && (
