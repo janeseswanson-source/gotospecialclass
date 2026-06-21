@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { cn, formatTime } from "@/lib/utils";
-import ScheduleBlockCell from "./ScheduleBlockCell";
+
+import ScheduleStackCell from "./ScheduleStackCell";
 import { computeConflictIds, parseTime } from "@/lib/scheduleGrid";
 import { X } from "lucide-react";
 
@@ -201,39 +202,17 @@ export default function ScheduleGrid({
                         onDrop={(e) => handleDrop(e, day, time)}
                       >
                         {slotBlocks.length > 0 ? (
-                          <div className={cn(
-                            "flex gap-1",
-                            slotBlocks.length <= 2 ? "items-stretch" : "flex-col",
-                          )}>
-                            {slotBlocks.map((block) => (
-                              <div key={block.id} className={slotBlocks.length <= 2 && slotBlocks.length > 1 ? "flex-1 min-w-0" : "w-full min-w-0"}>
-
-                                <ScheduleBlockCell
-                                  blockId={block.id}
-                                  subject={block.subject}
-                                  specialistName={block.specialist_name}
-                                  teacherName={block.teacher_name}
-                                  room={block.room}
-                                  grade={block.grade}
-                                  startTime={block.start_time}
-                                  endTime={block.end_time}
-                                  isOverride={block.is_override}
-                                  hasConflict={conflicts.has(block.id)}
-                                  isLocked={lockedIds?.has(block.id)}
-                                  isHighlighted={highlightIds?.has(block.id)}
-                                  onToggleLock={onToggleLock ? () => onToggleLock(block.id) : undefined}
-                                  onClick={() => onBlockClick?.(block)}
-                                  draggable={!!onBlockDrop}
-                                  onDragStart={(e) => handleDragStart(e, block)}
-                                  onPickUp={onBlockDrop ? () => pickUp(block.id) : undefined}
-                                  isSelected={selectedId === block.id}
-                                  weekLabel={block.week_label}
-                                  notes={block.notes}
-                                  onNotesChange={notesEditable ? onNotesChange : undefined}
-                                />
-                              </div>
-                            ))}
-                          </div>
+                          <ScheduleStackCell
+                            blocks={slotBlocks}
+                            conflictIds={conflicts}
+                            lockedIds={lockedIds}
+                            highlightIds={highlightIds}
+                            onBlockClick={onBlockClick}
+                            onPickUp={onBlockDrop ? pickUp : undefined}
+                            selectedId={selectedId}
+                            draggable={!!onBlockDrop}
+                            onDragStart={handleDragStart}
+                          />
                         ) : (
                           <div className="h-10 rounded-md bg-muted/20" />
                         )}

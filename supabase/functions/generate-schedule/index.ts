@@ -2759,20 +2759,20 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       return Math.max(0, Math.min(100, Math.round(100 - mag / 4)));
     };
     const TARGET_QUALITY = 99;
-    const MAX_ATTEMPTS = 20;
-    // Wall-clock soft budget for the HQ loop. We must leave headroom for
-    // DB inserts + metadata updates that run AFTER the loop, otherwise we
-    // get "CPU Time exceeded" mid-save and the user loses everything.
-    const HQ_SOFT_BUDGET_MS = 120_000;
-    const POST_RESERVE_MS = 30_000;
-    const HQ_HARD_BUDGET_MS = HQ_SOFT_BUDGET_MS + POST_RESERVE_MS;
+    // CPU is the binding constraint on Edge Functions (~5s total before
+    // the runtime kills the request). Each attempt costs ~700ms of CPU,
+    // so 4 attempts is the safe ceiling — beyond that we risk losing
+    // everything mid-save. The user-visible best-of-N still picks the
+    // highest-quality candidate.
+    const MAX_ATTEMPTS = 4;
+    const CPU_BUDGET_MS = 3500; // Total budget spent inside generation attempts.
     const tStartOuter = performance.now();
 
     let schedulerResult: ReturnType<typeof generateScheduleBlocks> | null = null;
     let bestQuality = -1;
     let bestAttempt = -1;
     let attemptsRun = 0;
-    let maxAttemptMs = 0;
+    let cumulativeAttemptMs = 0;
 
     const runAttempt = (attempt: number) => {
       const t0 = performance.now();
@@ -2782,9 +2782,9 @@ const __serveHandler = async (req: Request): Promise<Response> => {
         weightOverrides, attempt,
       );
       const dt = performance.now() - t0;
-      if (dt > maxAttemptMs) maxAttemptMs = dt;
+      cumulativeAttemptMs += dt;
       const q = qualityPct(candidate.scoreBreakdown as any);
-      console.log(`[HQ] attempt ${attempt} → quality ${q}% (${Math.round(dt)}ms)`);
+      console.log(`[HQ] attempt ${attempt} → quality ${q}% (${Math.round(dt)}ms, cum ${Math.round(cumulativeAttemptMs)}ms)`);
       attemptsRun++;
       if (q > bestQuality) {
         bestQuality = q;
@@ -2803,16 +2803,9 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       }
 
       for (let attempt = 1; attempt < MAX_ATTEMPTS && bestQuality < TARGET_QUALITY; attempt++) {
-        const elapsed = performance.now() - tStartOuter;
-        if (elapsed > HQ_SOFT_BUDGET_MS) {
-          console.log(`[HQ] soft budget hit after ${attemptsRun} attempts (${Math.round(elapsed)}ms)`);
-          break;
-        }
-        // Don't start another attempt if we don't have time to finish it
-        // AND keep reserve for the save phase.
-        const projectedEnd = elapsed + maxAttemptMs * 1.3;
-        if (projectedEnd > HQ_SOFT_BUDGET_MS) {
-          console.log(`[HQ] skipping attempt ${attempt} — projected ${Math.round(projectedEnd)}ms would exceed soft budget`);
+        // Hard CPU-aware break: stop while we still have headroom to save.
+        if (cumulativeAttemptMs > CPU_BUDGET_MS) {
+          console.log(`[HQ] cpu budget hit after ${attemptsRun} attempts (${Math.round(cumulativeAttemptMs)}ms) — saving best (${bestQuality}%)`);
           break;
         }
         try {

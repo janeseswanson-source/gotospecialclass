@@ -1,42 +1,65 @@
-## Goal
-Stop the "CPU Time exceeded" error from killing a generation run, push toward 20 attempts, and always persist the highest-scoring schedule seen so far.
+## 1. Schedule generation: stop hitting "CPU Time exceeded"
 
-## Root cause
-Logs show 8 HQ attempts completed (~5s elapsed) and then `CPU Time exceeded` hit during the post-generation phase (DB writes + verify-schedule call) before anything was saved. The outer HQ loop currently:
-- caps at `MAX_ATTEMPTS = 8` and `TOTAL_BUDGET_MS = 240_000`
-- uses *wall clock* only, but Supabase edge functions have a separate CPU-time ceiling — so the loop happily keeps burning CPU and leaves no headroom for the save/verify phase that runs afterwards.
-- has no top-level try/catch, so when CPU is exhausted mid-save the partial best is lost.
+The logs show 7 HQ attempts at ~700ms wall each, then CPU exceeded mid-attempt-7 — before save. Wall-clock gating isn't enough; CPU accumulates faster than wall time.
 
-## Plan (edits in `supabase/functions/generate-schedule/index.ts`)
+**Fix in `supabase/functions/generate-schedule/index.ts`:**
+- Lower `MAX_ATTEMPTS` from 20 → **6** (logs show CPU budget bursts around attempt 7).
+- Add a **CPU-aware early break**: track cumulative attempt time; if `cumulativeAttemptMs > 3500` AND we already have a result with quality ≥ 90, break.
+- Wrap the **entire save + verify path** in `try/catch`; if save partially fails, persist `best_blocks` first, skip the `verify-schedule` HTTP call when remaining wall budget < 15s.
+- Use `EdgeRuntime.waitUntil(...)` for the optional `verify-schedule` call so it never blocks the response.
+- Always return a 200 with the best-of-N result; never let the loop kill the request.
 
-1. **Raise attempt ceiling, but gate by remaining budget**
-   - `MAX_ATTEMPTS = 20`
-   - Track `tStartHQ = performance.now()`. Before each attempt, estimate per-attempt cost from the slowest attempt so far (`maxAttemptMs`) and only start the next attempt if `elapsed + maxAttemptMs * 1.3 < HQ_SOFT_BUDGET_MS`.
-   - `HQ_SOFT_BUDGET_MS ≈ 120_000` so we always leave a hard reserve (`POST_RESERVE_MS ≈ 60_000`) for DB inserts + verify-schedule.
-   - Early-exit as soon as `bestQuality >= TARGET_QUALITY (99)`.
+Target: schedules of 89–95% reliably; 99% only when it converges naturally within budget. Honest expectation-setting beats "always 99%" claims that crash.
 
-2. **Always keep the best result across all attempts**
-   - Current code already replaces `schedulerResult` only when `q > bestQuality` — keep that.
-   - Also track `bestQuality`, `bestAttemptIndex`, and `attemptsRun` to log/report and to include in the success payload (so the UI can show "best of N attempts").
+## 2. AI Edit chat: still silent
 
-3. **Survive a per-attempt failure**
-   - Already wraps each attempt in try/catch. Add the same protection around the initial attempt 0 — if it throws, fall back to a single deterministic attempt with `attempt=0` and `monteCarlo` disabled-style minimal seed so we always have *some* schedulerResult.
+Even with `apikey` header added last turn, user reports no AI reply. Plan:
+- Inspect `supabase/functions/schedule-chat/index.ts` to confirm it actually streams (`toUIMessageStreamResponse`) and isn't throwing before first chunk.
+- Check recent `schedule-chat` edge logs for 4xx / 5xx after the user's last message.
+- If logs show 401: function is mis-configured for `verify_jwt` — set it to `false` in `supabase/config.toml` and validate JWT in code (matches the Edge Function guidance).
+- If logs show 500: capture exact error and patch.
+- Add a visible status line in the chat panel header showing fetch state for the user.
 
-4. **Survive CPU/time exhaustion during the loop**
-   - Wrap the entire HQ loop body in try/catch. If a `CPU Time exceeded`–style error bubbles up, log it and break out keeping `schedulerResult = best so far`, then continue to the save/verify path.
-   - Before each iteration also check a hard wall-clock cap (`HQ_HARD_BUDGET_MS`) and break instead of starting another attempt.
+## 3. Master grid block: redesign to match reference
 
-5. **Reserve headroom for save + verify**
-   - After the loop, log remaining budget. If `< POST_RESERVE_MS` remaining, skip the optional `verify-schedule` HTTP call and just persist the best blocks + breakdown so the user still gets the schedule rather than a thrown error.
+Update `src/components/schedule/ScheduleBlockCell.tsx` and the way the grid groups multi-rotation cells:
 
-6. **Keep the score rubric unchanged**
-   - `qualityPct()` (100 − Σ|soft penalties|/4) already matches the verifier and `optimizerScore.ts`. No score-math changes — just more attempts and safer best-tracking.
+**New block layout (top-down, dense):**
+```
+[Grade chip] Start–End time
+Subject · Teacher
+Subject · Teacher
+Subject · Teacher
+```
 
-## Acceptance
-- Generation no longer surfaces "Schedule generation had an issue" toast when the CPU ceiling is approached; the best schedule of N attempts is saved.
-- Logs show `[HQ] attempt k → quality X%` up to 20 times (or until 99% reached) and `[HQ] best Y% after k attempts, saving...`.
-- Schedule Insights displays the highest score achieved across the run.
+- Always-visible time at top (not hover-only).
+- One row per rotation, format: `Subject · Teacher`.
+- **Dedupe repeated teacher/subject pairs** across rotations within the same cell.
+- Tighten font (text-[11px] for subject, text-[10px] for rotations).
+- Remove the height-scales-with-duration logic — fixed compact rows like the reference.
+
+Group multi-rotation blocks in `ScheduleGrid.tsx` into a **single stacked cell** instead of A/B side-by-side. The grade chip applies to the cell; each rotation line shows its own subject + teacher.
+
+## 4. XLSX export: match reference layout, keep brand
+
+Rewrite `src/lib/exportScheduleXlsx.ts` Master Schedule sheet cell rendering:
+
+- One cell per `(day, time)` containing **stacked rotation rows**:
+  - Top line: small grade chip (e.g. `1st`) bold, gold/navy.
+  - Then `Subject` (8pt) + `Teacher` (8pt) per rotation, one per line.
+- Dedupe repeats; collapse identical rotations.
+- Keep brand palette (navy header, cream time column, gold rules, subject-tinted fills).
+- Add full-width band rows for Recess / Lunch / Early Dismissal (already partly present) — make them visually match the screenshot's grey bands.
+- "Planning and Prep" section header band at the very top across all days.
+
+## Technical notes
+
+- HQ loop: track `attemptCpuBudgetMs = 3500`; combined wall budget stays at 90s soft.
+- Chat panel: add a `[chat] status` debug line surfaced only when `import.meta.env.DEV` is true so we can ship verbose logs without UI noise.
+- Block dedupe: hash by `${subject}|${teacher_id}`; keep first occurrence, drop duplicates within the same `(day, start_time)` cell.
+- XLSX: continue using ExcelJS rich-text per cell; grade chip = small `richText` run with gold fill via a leading character + space (Excel can't truly inline chips, so render as bold colored text prefix like `1st  Art  Teacher 1`).
 
 ## Out of scope
-- Per-strategy generator tuning (Monte Carlo / SA budgets stay as currently configured).
-- Chat panel work — already in progress in a previous turn.
+- Per-strategy generator tuning (Monte Carlo iteration counts stay).
+- Take-in template wizard merge (already shipped).
+- Optimizer score visualization (already shipped).

@@ -149,27 +149,48 @@ export async function exportScheduleXlsx(opts: {
         cell.border = thinBorder();
         return;
       }
+      // Dedupe rotations by subject+teacher so repeats collapse like the
+      // reference layout.
+      const seen = new Set<string>();
+      const rows = cellBlocks.filter((b) => {
+        const k = `${(b.subject ?? "").toLowerCase()}|${b.teacher_id ?? ""}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      const head = rows[0];
+      const headSpec = head.specialist_id ? specById.get(head.specialist_id) : null;
+      const headSubj = head.subject ?? headSpec?.subject ?? "";
+      const { accent, fill } = subjectColors(headSubj);
       const rich: ExcelJS.RichText[] = [];
-      cellBlocks.forEach((b, bi) => {
+      // Header line: grade chip (bold accent) + week label if any.
+      if (head.grade) {
+        rich.push({ text: `${head.grade}`, font: { name: "Arial", size: 9, bold: true, color: { argb: accent } } });
+        rich.push({ text: "  ", font: { name: "Arial", size: 9 } });
+      }
+      if (head.week_label) {
+        rich.push({ text: `(Week ${head.week_label})`, font: { name: "Arial", size: 8, italic: true, color: { argb: MUTE } } });
+      }
+      // One row per rotation: "Subject  Teacher"
+      rows.forEach((b) => {
         const spec = b.specialist_id ? specById.get(b.specialist_id) : null;
         const teach = b.teacher_id ? teachById.get(b.teacher_id) : null;
         const subj = b.subject ?? spec?.subject ?? "";
-        const { accent } = subjectColors(subj);
-        const head = `${b.grade ? `Gr ${b.grade} ` : ""}${subj}${b.week_label ? ` (${b.week_label})` : ""}`;
-        const detail = [teach?.name, spec?.name].filter(Boolean).join(" · ");
-        if (bi > 0) rich.push({ text: "\n", font: { size: 4 } });
-        rich.push({ text: head, font: { name: "Arial", size: 9, bold: true, color: { argb: accent } } });
-        if (detail) rich.push({ text: `\n${detail}`, font: { name: "Arial", size: 8, color: { argb: MUTE } } });
+        const teacherName = teach?.name ?? spec?.name ?? "";
+        rich.push({ text: "\n", font: { size: 4 } });
+        rich.push({ text: subj.padEnd(8, " "), font: { name: "Arial", size: 8.5, bold: true, color: { argb: accent } } });
+        if (teacherName) {
+          rich.push({ text: `  ${teacherName}`, font: { name: "Arial", size: 8.5, color: { argb: NAVY } } });
+        }
       });
       cell.value = { richText: rich };
-      const { fill } = subjectColors(cellBlocks[0].subject ?? specById.get(cellBlocks[0].specialist_id ?? "")?.subject);
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
       cell.alignment = { vertical: "top", horizontal: "left", wrapText: true, indent: 1 };
       cell.border = thinBorder();
-      const lines = cellBlocks.length * 2;
+      const lines = rows.length + 1;
       if (lines > maxLines) maxLines = lines;
     });
-    row.height = Math.max(28, maxLines * 12);
+    row.height = Math.max(20, maxLines * 13);
   }
 
   // ── Per-specialist sheets ──
