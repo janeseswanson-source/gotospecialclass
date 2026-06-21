@@ -201,3 +201,49 @@ Deno.test("scoreSchedule: spec_dayload_stdev penalises imbalanced loads", () => 
   assertEquals(bB.spec_dayload_stdev, 0);
   assert(bU.spec_dayload_stdev < 0);
 });
+
+Deno.test("scoreSchedule: subject_gap penalises (grade × specialist) pairs with zero sessions", () => {
+  // baseInput has 1 specialist (s1) and 2 grades (K, 1). Grade K has no blocks → 1 missing pair × −40.
+  const result: ScoreableResult = {
+    blocks: [block({ grade: "1", teacher_id: "t1", specialist_id: "s1" })],
+    warnings: [],
+    preferenceViolations: [],
+  };
+  assertEquals(scoreSchedule(result, baseInput).breakdown.subject_gap, -40);
+
+  // Both grades covered → no penalty.
+  const covered: ScoreableResult = {
+    blocks: [
+      block({ grade: "K", teacher_id: "t1", specialist_id: "s1" }),
+      block({ grade: "1", teacher_id: "t1", specialist_id: "s1" }),
+    ],
+    warnings: [],
+    preferenceViolations: [],
+  };
+  assertEquals(scoreSchedule(covered, baseInput).breakdown.subject_gap, 0);
+});
+
+Deno.test("scoreSchedule: subject_day_clustering penalises duplicate (grade, subject) on same day", () => {
+  // Two Music sessions for grade 1 on Mon → 1 duplicate × −15.
+  const dup: ScoreableResult = {
+    blocks: [
+      block({ grade: "1", subject: "Music", day_of_week: "Mon", teacher_id: "t1" }),
+      block({ grade: "1", subject: "Music", day_of_week: "Mon", teacher_id: "t2" }),
+    ],
+    warnings: [],
+    preferenceViolations: [],
+  };
+  assertEquals(scoreSchedule(dup, baseInput).breakdown.subject_day_clustering, -15);
+
+  // Same subject on different days → no penalty.
+  const spread: ScoreableResult = {
+    blocks: [
+      block({ grade: "1", subject: "Music", day_of_week: "Mon" }),
+      block({ grade: "1", subject: "Music", day_of_week: "Tue" }),
+    ],
+    warnings: [],
+    preferenceViolations: [],
+  };
+  assertEquals(scoreSchedule(spread, baseInput).breakdown.subject_day_clustering, 0);
+});
+

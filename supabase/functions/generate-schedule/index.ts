@@ -2904,16 +2904,10 @@ const __serveHandler = async (req: Request): Promise<Response> => {
         { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
-    if (err instanceof Error && err.message.startsWith("Infeasible schedule:")) {
-      console.error("Generate schedule infeasible:", err.message);
-      return new Response(
-        JSON.stringify({ error: err.message, code: "infeasible_schedule" }),
-        { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
     // Note: capacity shortfall is surfaced as a soft warning (capacity_shortfall),
     // not a hard error, so the user still gets a best-effort schedule.
-
     console.error("Generate schedule error:", err);
+
     return new Response(
       JSON.stringify({ error: (err instanceof Error ? err.message : String(err)) || "Internal error" }),
       { status: 500, headers: corsHeaders }
