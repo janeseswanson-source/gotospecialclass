@@ -2074,10 +2074,17 @@ function runSimulatedAnnealing(
       const blockToMove = group[Math.floor(rng() * group.length)];
       const spec = specialists.find(s => s.id === blockToMove.specialist_id);
       if (!spec) { T *= SA_COOLING; continue; }
+      // Never strand a specialist on an idle day: if this is the only block
+      // on this day for this specialist, skip — matches the MOVE guard.
+      const isLastOnDay = !teachingBlocks.some(
+        (b) => b !== blockToMove && b.specialist_id === blockToMove.specialist_id && b.day_of_week === blockToMove.day_of_week,
+      );
+      if (isLastOnDay) { T *= SA_COOLING; continue; }
       const usedDays = gradeSubjDays.get(`${blockToMove.grade}|${blockToMove.subject ?? ""}`) ?? new Set();
       const duration = timeToMinutes(blockToMove.end_time) - timeToMinutes(blockToMove.start_time);
       const workDays = (spec.working_days ?? DAYS).filter(d => DAYS.includes(d) && !usedDays.has(d));
       if (workDays.length === 0) { T *= SA_COOLING; continue; }
+
 
       const testBlocks = currentBlocks.filter(b => b !== blockToMove);
       const occ = buildOccupancyFromBlocks(baseOccupancy, testBlocks);
@@ -2903,7 +2910,9 @@ const __serveHandler = async (req: Request): Promise<Response> => {
         JSON.stringify({ error: err.message, code: "infeasible_schedule" }),
         { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
-    }
+    // Note: capacity shortfall is surfaced as a soft warning (capacity_shortfall),
+    // not a hard error, so the user still gets a best-effort schedule.
+
     console.error("Generate schedule error:", err);
     return new Response(
       JSON.stringify({ error: (err instanceof Error ? err.message : String(err)) || "Internal error" }),
