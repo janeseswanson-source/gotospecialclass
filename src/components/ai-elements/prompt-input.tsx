@@ -1227,9 +1227,10 @@ export const PromptInputSubmit = ({
 
   let Icon = <CornerDownLeftIcon className="size-4" />;
 
-  if (status === "submitted") {
-    Icon = <Spinner />;
-  } else if (status === "streaming") {
+  // Treat "submitted" and "streaming" the same way: the request is in flight
+  // and the user must be able to cancel it. A spinner during "submitted" hides
+  // the stop affordance and reads as "you can't do anything right now".
+  if (status === "submitted" || status === "streaming") {
     Icon = <SquareIcon className="size-4" />;
   } else if (status === "error") {
     Icon = <XIcon className="size-4" />;
