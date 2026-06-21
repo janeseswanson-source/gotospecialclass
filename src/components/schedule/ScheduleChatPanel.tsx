@@ -272,41 +272,48 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
               description="Try one of the suggestions below, or type your own."
             />
           ) : (
-            messages.map((m) => (
-              <Message key={m.id} from={m.role === "user" ? "user" : "assistant"}>
-                <MessageContent>
-                  {m.parts.map((part, i) => {
-                    if (part.type === "text") {
-                      return m.role === "user" ? (
-                        <p key={i} className="whitespace-pre-wrap">{part.text}</p>
-                      ) : (
-                        <MessageResponse key={i}>{part.text}</MessageResponse>
-                      );
-                    }
-                    if (part.type?.startsWith("tool-")) {
-                      const tp = part as any;
-                      // Mutating tools get a plain-language card instead of a
-                      // raw JSON dump — the user must be able to read exactly
-                      // what the AI wants to change (or why it couldn't).
-                      const card = tp.output ? <ProposalCard key={i} output={tp.output} /> : null;
-                      if (card && (tp.output?.status === "proposed" || tp.output?.ok === false)) return card;
-                      return (
-                        <Tool key={i} defaultOpen={false} className="my-2">
-                          <ToolHeader type={tp.type} state={tp.state} />
-                          <ToolContent>
-                            {tp.input && <ToolInput input={tp.input} />}
-                            {(tp.output !== undefined || tp.errorText) && (
-                              <ToolOutput output={tp.output} errorText={tp.errorText} />
-                            )}
-                          </ToolContent>
-                        </Tool>
-                      );
-                    }
-                    return null;
-                  })}
-                </MessageContent>
-              </Message>
-            ))
+            messages.map((m) => {
+              const hasContent = (m.parts ?? []).some(
+                (p: any) => (p.type === "text" && p.text?.trim()) || p.type?.startsWith?.("tool-"),
+              );
+              return (
+                <Message key={m.id} from={m.role === "user" ? "user" : "assistant"}>
+                  <MessageContent>
+                    {m.parts.map((part, i) => {
+                      if (part.type === "text") {
+                        return m.role === "user" ? (
+                          <p key={i} className="whitespace-pre-wrap">{part.text}</p>
+                        ) : (
+                          <MessageResponse key={i}>{part.text}</MessageResponse>
+                        );
+                      }
+                      if (part.type?.startsWith("tool-")) {
+                        const tp = part as any;
+                        const card = tp.output ? <ProposalCard key={i} output={tp.output} /> : null;
+                        if (card && (tp.output?.status === "proposed" || tp.output?.ok === false)) return card;
+                        return (
+                          <Tool key={i} defaultOpen={false} className="my-2">
+                            <ToolHeader type={tp.type} state={tp.state} />
+                            <ToolContent>
+                              {tp.input && <ToolInput input={tp.input} />}
+                              {(tp.output !== undefined || tp.errorText) && (
+                                <ToolOutput output={tp.output} errorText={tp.errorText} />
+                              )}
+                            </ToolContent>
+                          </Tool>
+                        );
+                      }
+                      return null;
+                    })}
+                    {m.role === "assistant" && !hasContent && !isLoading && (
+                      <p className="text-xs italic text-muted-foreground">
+                        No response — please try again or rephrase.
+                      </p>
+                    )}
+                  </MessageContent>
+                </Message>
+              );
+            })
           )}
           {isLoading && (
             <div className="px-2 py-1">
