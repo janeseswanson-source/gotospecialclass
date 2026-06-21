@@ -122,15 +122,15 @@ export function calibrateMonteCarlo<T>(
   const result = strategyFn(rng);
   const calibrationMs = performance.now() - t0;
 
-  // Push harder on the search by default: previously 200/100/50 inside a
-  // 60s budget. Bumping the ceiling lets the optimizer try roughly 2× more
-  // candidates per strategy without exceeding the same time budget for
-  // typical school sizes — directly improving the winning score.
+  // Edge Function CPU budget (~2s per request) is the binding constraint;
+  // MC iterations are pure CPU. Keep the ceiling low so one strategy run +
+  // scoring + save always fits with headroom. Background refinement (if
+  // enabled) explores more candidates without blocking the user.
   let iterations: number;
-  if (calibrationMs <= 150) iterations = 400;
-  else if (calibrationMs <= 300) iterations = 200;
-  else if (calibrationMs <= 600) iterations = 100;
-  else iterations = 60;
+  if (calibrationMs <= 150) iterations = 80;
+  else if (calibrationMs <= 300) iterations = 40;
+  else if (calibrationMs <= 600) iterations = 24;
+  else iterations = 12;
 
   const projectedMs = calibrationMs * iterations;
   if (projectedMs > 90_000) {

@@ -1,65 +1,42 @@
-## 1. Schedule generation: stop hitting "CPU Time exceeded"
+## Plan
 
-The logs show 7 HQ attempts at ~700ms wall each, then CPU exceeded mid-attempt-7 — before save. Wall-clock gating isn't enough; CPU accumulates faster than wall time.
+### Goal
+Stop the “failed generation” / CPU Time exceeded loop while still aiming for the best schedule possible.
 
-**Fix in `supabase/functions/generate-schedule/index.ts`:**
-- Lower `MAX_ATTEMPTS` from 20 → **6** (logs show CPU budget bursts around attempt 7).
-- Add a **CPU-aware early break**: track cumulative attempt time; if `cumulativeAttemptMs > 3500` AND we already have a result with quality ≥ 90, break.
-- Wrap the **entire save + verify path** in `try/catch`; if save partially fails, persist `best_blocks` first, skip the `verify-schedule` HTTP call when remaining wall budget < 15s.
-- Use `EdgeRuntime.waitUntil(...)` for the optional `verify-schedule` call so it never blocks the response.
-- Always return a 200 with the best-of-N result; never let the loop kill the request.
+### What I found
+- The latest backend log still shows `CPU Time exceeded` in `generate-schedule`.
+- Even with only 4 outer attempts, one attempt already runs Monte Carlo up to 400 iterations per strategy plus scoring/annealing, so CPU can be exhausted before the save finishes.
+- The screenshot’s “No Coverage” messages are schedule-quality warnings from the last saved schedule, not the root crash. The root crash is the generation function being killed before it can reliably persist results.
 
-Target: schedules of 89–95% reliably; 99% only when it converges naturally within budget. Honest expectation-setting beats "always 99%" claims that crash.
+### Implementation steps
+1. **Make the first request reliable**
+   - Change `generate-schedule` so the user click only runs a fast, bounded generation pass that always keeps enough CPU headroom to save blocks and metadata.
+   - Cap Monte Carlo iterations much lower for the interactive path.
+   - Remove the outer best-of-4 loop from the synchronous request path.
+   - Save the best available candidate before running expensive warning/quality work when needed.
 
-## 2. AI Edit chat: still silent
+2. **Add true best-of-20 as background refinement**
+   - After the fast schedule is saved, launch a non-blocking background refinement with `EdgeRuntime.waitUntil`.
+   - Run up to 20 candidate attempts there, always tracking the highest score.
+   - If a better schedule is found, save it as a newer generation version or update the generation metadata safely.
+   - If background refinement gets killed, the user still has the first saved schedule instead of a failed generation.
 
-Even with `apikey` header added last turn, user reports no AI reply. Plan:
-- Inspect `supabase/functions/schedule-chat/index.ts` to confirm it actually streams (`toUIMessageStreamResponse`) and isn't throwing before first chunk.
-- Check recent `schedule-chat` edge logs for 4xx / 5xx after the user's last message.
-- If logs show 401: function is mis-configured for `verify_jwt` — set it to `false` in `supabase/config.toml` and validate JWT in code (matches the Edge Function guidance).
-- If logs show 500: capture exact error and patch.
-- Add a visible status line in the chat panel header showing fetch state for the user.
+3. **Surface generation state clearly in the UI**
+   - Show the first generated version immediately.
+   - If refinement is still running, show a clear “Optimizing best schedule…” status rather than a failure toast.
+   - Refresh/select the improved generation once the background best-of-20 version is saved.
 
-## 3. Master grid block: redesign to match reference
+4. **Fix the “No Coverage” outcome after generation succeeds**
+   - Treat “no coverage for every grade” as a generation-quality failure only if there truly are no instructional specialist blocks.
+   - Prefer A/B or standard fallback automatically when the selected strategy produces coverage gaps for all grades.
+   - Keep warnings visible when capacity is genuinely short, but don’t let a crash create a misleading empty/partial schedule.
 
-Update `src/components/schedule/ScheduleBlockCell.tsx` and the way the grid groups multi-rotation cells:
+5. **Verify backend and chat**
+   - Redeploy `generate-schedule` after the changes.
+   - Check edge logs for absence of `CPU Time exceeded`.
+   - Test AI Edit chat logs separately if it still returns silence, but avoid mixing that into generation persistence unless the logs show the same cause.
 
-**New block layout (top-down, dense):**
-```
-[Grade chip] Start–End time
-Subject · Teacher
-Subject · Teacher
-Subject · Teacher
-```
-
-- Always-visible time at top (not hover-only).
-- One row per rotation, format: `Subject · Teacher`.
-- **Dedupe repeated teacher/subject pairs** across rotations within the same cell.
-- Tighten font (text-[11px] for subject, text-[10px] for rotations).
-- Remove the height-scales-with-duration logic — fixed compact rows like the reference.
-
-Group multi-rotation blocks in `ScheduleGrid.tsx` into a **single stacked cell** instead of A/B side-by-side. The grade chip applies to the cell; each rotation line shows its own subject + teacher.
-
-## 4. XLSX export: match reference layout, keep brand
-
-Rewrite `src/lib/exportScheduleXlsx.ts` Master Schedule sheet cell rendering:
-
-- One cell per `(day, time)` containing **stacked rotation rows**:
-  - Top line: small grade chip (e.g. `1st`) bold, gold/navy.
-  - Then `Subject` (8pt) + `Teacher` (8pt) per rotation, one per line.
-- Dedupe repeats; collapse identical rotations.
-- Keep brand palette (navy header, cream time column, gold rules, subject-tinted fills).
-- Add full-width band rows for Recess / Lunch / Early Dismissal (already partly present) — make them visually match the screenshot's grey bands.
-- "Planning and Prep" section header band at the very top across all days.
-
-## Technical notes
-
-- HQ loop: track `attemptCpuBudgetMs = 3500`; combined wall budget stays at 90s soft.
-- Chat panel: add a `[chat] status` debug line surfaced only when `import.meta.env.DEV` is true so we can ship verbose logs without UI noise.
-- Block dedupe: hash by `${subject}|${teacher_id}`; keep first occurrence, drop duplicates within the same `(day, start_time)` cell.
-- XLSX: continue using ExcelJS rich-text per cell; grade chip = small `richText` run with gold fill via a leading character + space (Excel can't truly inline chips, so render as bold colored text prefix like `1st  Art  Teacher 1`).
-
-## Out of scope
-- Per-strategy generator tuning (Monte Carlo iteration counts stay).
-- Take-in template wizard merge (already shipped).
-- Optimizer score visualization (already shipped).
+### Technical notes
+- The reason a 20-generation loop cannot safely run inside one Edge Function request is CPU time, not wait time. Wall-clock waiting is okay; CPU-heavy local optimization is what gets killed.
+- The safe pattern is: save a valid first result quickly, then do heavier optimization asynchronously and never let it block the user’s saved schedule.
+- The existing UI/export stacked-cell work can stay; this plan focuses on generation reliability and schedule quality.

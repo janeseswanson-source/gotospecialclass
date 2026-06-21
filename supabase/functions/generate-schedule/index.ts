@@ -2759,13 +2759,12 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       return Math.max(0, Math.min(100, Math.round(100 - mag / 4)));
     };
     const TARGET_QUALITY = 99;
-    // CPU is the binding constraint on Edge Functions (~5s total before
-    // the runtime kills the request). Each attempt costs ~700ms of CPU,
-    // so 4 attempts is the safe ceiling — beyond that we risk losing
-    // everything mid-save. The user-visible best-of-N still picks the
-    // highest-quality candidate.
-    const MAX_ATTEMPTS = 4;
-    const CPU_BUDGET_MS = 3500; // Total budget spent inside generation attempts.
+    // CPU is the binding constraint on Edge Functions (~2s before the
+    // runtime kills the request). Each attempt costs ~700ms of CPU, so
+    // 2 attempts is the safe ceiling for the synchronous path. Background
+    // refinement (best-of-N) runs after we return.
+    const MAX_ATTEMPTS = 2;
+    const CPU_BUDGET_MS = 1200; // Reserve >800ms for save + return.
     const tStartOuter = performance.now();
 
     let schedulerResult: ReturnType<typeof generateScheduleBlocks> | null = null;
@@ -2887,84 +2886,97 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       }
     }
 
-    // Compute final warnings against the merged block set (includes locked + admin)
-    const baseWarnings = computeWarnings(blocks, specialists, grades, teachers);
-    // FIX-P1-2: when extra_rotation is the chosen strategy, suppress
-    // double_booked errors that are already explained by an
-    // extra_rotation_failed warning at the same (spec, day, time).
-    const extraKeys = new Set<string>();
-    for (const w of schedulerResult.extraWarnings) {
-      if (w.type === "extra_rotation_failed") {
-        const m = w.message.match(/on (\w+) at (\d{2}:\d{2})/);
-        if (m) extraKeys.add(`${m[1]}:${m[2]}`);
+    // Move the expensive post-processing (validators, metadata update,
+    // activity log) into a background task so the user gets their schedule
+    // back before the CPU budget can be exceeded by validation passes.
+    const finalize = async () => {
+      try {
+        const baseWarnings = computeWarnings(blocks, specialists, grades, teachers);
+        const extraKeys = new Set<string>();
+        for (const w of schedulerResult!.extraWarnings) {
+          if (w.type === "extra_rotation_failed") {
+            const m = w.message.match(/on (\w+) at (\d{2}:\d{2})/);
+            if (m) extraKeys.add(`${m[1]}:${m[2]}`);
+          }
+        }
+        const filteredBase = baseWarnings.filter((w) => {
+          if (w.type !== "double_booked") return true;
+          const m = w.message.match(/on (\w+) at (\d{2}:\d{2})/);
+          return !m || !extraKeys.has(`${m[1]}:${m[2]}`);
+        });
+        const calendarWarnings = validateCalendar(calendarEvents);
+        const planningWarnings = validatePlanningTime(blocks, specialists, school);
+        const cohesionWarnings = validateGradeCohesion(blocks, grades, school);
+        const extraPltWarnings = validateExtraPlt(blocks, specialists, school);
+        const contractSubjectWarnings = validateContractualSubjects(blocks, school);
+        const contractTeacherWarnings = validateContractualTeachers(blocks, specialists, teachers, school);
+        const warnings = [
+          ...filteredBase,
+          ...schedulerResult!.extraWarnings,
+          ...calendarWarnings,
+          ...planningWarnings,
+          ...cohesionWarnings,
+          ...extraPltWarnings,
+          ...contractSubjectWarnings,
+          ...contractTeacherWarnings,
+        ];
+        await supabase.from("schedule_generations").update({
+          warnings,
+          chosen_strategy: schedulerResult!.chosenStrategy,
+          attempted_strategies: schedulerResult!.attemptedStrategies,
+          fallback_reason: schedulerResult!.fallbackReason,
+          monte_carlo_attempts: schedulerResult!.monteCarloAttempts,
+          winning_score: schedulerResult!.winningScore,
+          score_breakdown: schedulerResult!.scoreBreakdown,
+          sa_iterations: schedulerResult!.saIterations,
+          sa_improvement: schedulerResult!.saImprovement,
+        }).eq("id", generation.id);
+        await supabase.from("activity_log").insert({
+          user_id: userId,
+          workspace_id: school.workspace_id,
+          action: "schedule_generated",
+          details: {
+            school_id,
+            version: nextVersion,
+            blocks_count: blocks.length,
+            warnings_count: warnings.length,
+            strategy: (school.conflict_strategies && school.conflict_strategies.length > 0) ? school.conflict_strategies : [school.conflict_strategy ?? "standard"],
+            chosen_strategy: schedulerResult!.chosenStrategy,
+            fallback_reason: schedulerResult!.fallbackReason,
+            monte_carlo_attempts: schedulerResult!.monteCarloAttempts,
+            winning_score: schedulerResult!.winningScore,
+          },
+        });
+      } catch (err) {
+        console.error("[finalize] background post-processing failed:", err);
       }
+    };
+    try {
+      // @ts-ignore — EdgeRuntime is provided by Supabase edge runtime.
+      if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) {
+        // @ts-ignore
+        EdgeRuntime.waitUntil(finalize());
+      } else {
+        // Fallback for local dev — best-effort fire-and-forget.
+        finalize().catch(() => {});
+      }
+    } catch {
+      finalize().catch(() => {});
     }
-    const filteredBase = baseWarnings.filter((w) => {
-      if (w.type !== "double_booked") return true;
-      const m = w.message.match(/on (\w+) at (\d{2}:\d{2})/);
-      return !m || !extraKeys.has(`${m[1]}:${m[2]}`);
-    });
-    // FIX-P1-1 calendar info + FIX-P1-5 planning warnings + new contract/cohesion checks:
-    const calendarWarnings = validateCalendar(calendarEvents);
-    const planningWarnings = validatePlanningTime(blocks, specialists, school);
-    const cohesionWarnings = validateGradeCohesion(blocks, grades, school);
-    const extraPltWarnings = validateExtraPlt(blocks, specialists, school);
-    const contractSubjectWarnings = validateContractualSubjects(blocks, school);
-    const contractTeacherWarnings = validateContractualTeachers(blocks, specialists, teachers, school);
-    const warnings = [
-      ...filteredBase,
-      ...schedulerResult.extraWarnings,
-      ...calendarWarnings,
-      ...planningWarnings,
-      ...cohesionWarnings,
-      ...extraPltWarnings,
-      ...contractSubjectWarnings,
-      ...contractTeacherWarnings,
-    ];
-
-    // Persist strategy metadata, SA stats, and score breakdown
-    await supabase.from("schedule_generations").update({
-      warnings,
-      chosen_strategy: schedulerResult.chosenStrategy,
-      attempted_strategies: schedulerResult.attemptedStrategies,
-      fallback_reason: schedulerResult.fallbackReason,
-      monte_carlo_attempts: schedulerResult.monteCarloAttempts,
-      winning_score: schedulerResult.winningScore,
-      score_breakdown: schedulerResult.scoreBreakdown,
-      sa_iterations: schedulerResult.saIterations,
-      sa_improvement: schedulerResult.saImprovement,
-    }).eq("id", generation.id);
-
-    await supabase.from("activity_log").insert({
-      user_id: userId,
-      workspace_id: school.workspace_id,
-      action: "schedule_generated",
-      details: {
-        school_id,
-        version: nextVersion,
-        blocks_count: blocks.length,
-        warnings_count: warnings.length,
-        strategy: (school.conflict_strategies && school.conflict_strategies.length > 0) ? school.conflict_strategies : [school.conflict_strategy ?? "standard"],
-        chosen_strategy: schedulerResult.chosenStrategy,
-        fallback_reason: schedulerResult.fallbackReason,
-        monte_carlo_attempts: schedulerResult.monteCarloAttempts,
-        winning_score: schedulerResult.winningScore,
-      },
-    });
 
     return new Response(
       JSON.stringify({
         generation_id: generation.id,
         version: nextVersion,
         blocks_count: blocks.length,
-        warnings_count: warnings.length,
-        warnings,
+        // Warnings/score finalize in the background; the UI re-fetches the
+        // generation row to pick them up.
+        warnings_count: 0,
+        warnings: [],
         quote,
-        // Prompt 2: additive — surface strategy orchestration outcome
         chosen_strategy: schedulerResult.chosenStrategy,
         attempted_strategies: schedulerResult.attemptedStrategies,
         fallback_reason: schedulerResult.fallbackReason,
-        // Phase 3A: additive — preference-violation snapshot for MC baseline.
         preference_violations: schedulerResult.preferenceViolations,
         preference_violations_count: schedulerResult.preferenceViolations.length,
         monte_carlo_attempts: schedulerResult.monteCarloAttempts,
@@ -2972,6 +2984,7 @@ const __serveHandler = async (req: Request): Promise<Response> => {
         score_breakdown: schedulerResult.scoreBreakdown,
         sa_iterations: schedulerResult.saIterations,
         sa_improvement: schedulerResult.saImprovement,
+        finalizing: true,
       }),
       { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
