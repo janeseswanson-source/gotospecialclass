@@ -9,6 +9,7 @@ import { Rocket, Loader2, School, Users, Star, Calendar, Cog, AlertTriangle, Che
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { logActivity } from '@/lib/activityLogger';
+import { track } from '@/lib/observability';
 import { getStrategyTitle } from '@/lib/conflictStrategies';
 import { cn } from '@/lib/utils';
 import { SafeSection } from '@/components/SafeSection';
@@ -126,8 +127,10 @@ const StepReview = () => {
         supabase.functions.invoke('verify-schedule', {
           body: { generation_id: (genData as any).generation_id },
         }).catch(() => {});
+        track('schedule_generated', { via: 'setup_wizard' });
       }
       logActivity('setup_completed', { school_name: data.schoolName });
+      track('setup_completed');
       navigate('/app/schedule-success');
     } catch (err: any) {
       console.error('Build error:', err);

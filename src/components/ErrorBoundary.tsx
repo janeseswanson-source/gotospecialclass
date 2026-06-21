@@ -1,5 +1,6 @@
 import React from "react";
 import { Button } from "@/components/ui/button";
+import { captureError } from "@/lib/observability";
 
 interface Props {
   children: React.ReactNode;
@@ -22,6 +23,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
     console.error("ErrorBoundary caught:", error, info);
+    captureError(error, { componentStack: info.componentStack });
   }
 
   render() {

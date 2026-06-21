@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
+import { identifyUser, resetUser } from '@/lib/observability';
 
 interface AuthContextType {
   session: Session | null;
@@ -24,6 +25,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(session);
       setUser(session?.user ?? null);
       setLoading(false);
+
+      if (session?.user) identifyUser(session.user.id);
+      else if (_event === 'SIGNED_OUT') resetUser();
 
       // Redeem pending license key after first sign-in
       if (_event === 'SIGNED_IN' && session?.user) {
