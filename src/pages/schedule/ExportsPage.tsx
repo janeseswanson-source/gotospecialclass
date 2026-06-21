@@ -10,6 +10,7 @@ import { toast } from "@/hooks/use-toast";
 import { logActivity } from "@/lib/activityLogger";
 import { exportSchedulePDF } from "@/lib/exportPdf";
 import { exportMasterAdminXlsx } from "@/lib/exportMasterAdminXlsx";
+import { exportScheduleXlsx } from "@/lib/exportScheduleXlsx";
 import { formatTime } from "@/lib/utils";
 
 export default function ExportsPage() {
@@ -77,6 +78,18 @@ export default function ExportsPage() {
     }
   }
 
+  async function exportBrandedWorkbook() {
+    if (!selectedSchoolId) return;
+    try {
+      const ok = await exportScheduleXlsx({ schoolId: selectedSchoolId, generationId: genId });
+      if (!ok) { toast({ title: "Generate a schedule first.", variant: "destructive" }); return; }
+      toast({ title: "Branded spreadsheet downloaded ✓" });
+      await recordExport("branded_xlsx", "csv");
+    } catch (e: any) {
+      toast({ title: e?.message ?? "Export failed", variant: "destructive" });
+    }
+  }
+
   function downloadFile(content: string, filename: string, mimeType: string) {
     const blob = new Blob([content], { type: mimeType });
     const url = URL.createObjectURL(blob);
@@ -129,6 +142,7 @@ export default function ExportsPage() {
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
+            <ExportCard title="Branded Master Schedule (Excel)" description="The full grid plus each specialist's week, in an on-brand, color-coded workbook." icon={CsvIcon} format="XLSX" disabled={!hasSchedule} onExport={exportBrandedWorkbook} />
             <ExportCard title="Master Schedule CSV" description="Comma-separated for spreadsheets." icon={CsvIcon} format="CSV" disabled={!hasSchedule} onExport={exportCSV} />
             <ExportCard title="Print Schedule (PDF)" description="Clean, print-friendly layout via browser print." icon={PdfIcon} format="PDF" disabled={!hasSchedule} onExport={exportPDF} />
             <ExportCard title="Word Document" description="Editable .doc format for customizing." icon={DocIcon} format="DOC" disabled={!hasSchedule} onExport={exportWord} />

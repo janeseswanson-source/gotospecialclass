@@ -1,0 +1,260 @@
+// Branded master-schedule spreadsheet export.
+//
+// Uses ExcelJS (not the community `xlsx`, which silently drops all cell
+// styling) so the workbook is genuinely on-brand: navy/gold/cream palette,
+// subject-tinted cells, merged title band, frozen header, clean borders.
+//
+// Produces: a "Master Schedule" grid sheet (Time × Days) plus one sheet per
+// specialist (their personal week) — "the entire master schedule, or any
+// specialist's schedule, in a beautiful way."
+import ExcelJS from "exceljs";
+import { supabase } from "@/integrations/supabase/client";
+import { formatTime } from "@/lib/utils";
+
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"] as const;
+const DAY_FULL: Record<string, string> = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday" };
+
+// Brand palette (ARGB).
+const NAVY = "FF1B2A4A";
+const GOLD = "FFC5A55A";
+const CREAM = "FFFBF5E6";
+const WHITE = "FFFFFFFF";
+const MUTE = "FF6B7280";
+const GRIDLINE = "FFD9DCE3";
+const ZEBRA = "FFF7F8FA";
+
+/** Subject → soft fill + accent (ARGB), matching the app/PDF subject colors. */
+function subjectColors(subject?: string | null): { fill: string; accent: string } {
+  const s = (subject ?? "").toLowerCase();
+  const mk = (accent: string, fill: string) => ({ accent, fill });
+  if (s.includes("art")) return mk("FFD97706", "FFFDF6EC");
+  if (s.includes("music")) return mk("FF2563EB", "FFEFF4FE");
+  if (s.includes("pe") || s.includes("physical") || s.includes("gym")) return mk("FF16A34A", "FFEFFaF1");
+  if (s.includes("library") || s.includes("media")) return mk("FF92400E", "FFFBF3EA");
+  if (s.includes("spanish") || s.includes("language") || s.includes("foreign")) return mk("FFDC2626", "FFFDEFEF");
+  if (s.includes("stem") || s.includes("science")) return mk("FF0369A1", "FFEDF6FC");
+  if (s.includes("tech") || s.includes("computer")) return mk("FF7C3AED", "FFF4F0FE");
+  if (s.includes("drama") || s.includes("theat")) return mk("FF9333EA", "FFF7F0FD");
+  if (s.includes("dance")) return mk("FFBE185D", "FFFCEFF4");
+  if (s.includes("garden")) return mk("FF4D7C0F", "FFF3F8EA");
+  if (s.includes("lunch") || s.includes("recess")) return mk(GOLD, CREAM);
+  return mk(GOLD, "FFF7F4EC");
+}
+
+function thinBorder(color = GRIDLINE) {
+  return {
+    top: { style: "thin" as const, color: { argb: color } },
+    bottom: { style: "thin" as const, color: { argb: color } },
+    left: { style: "thin" as const, color: { argb: color } },
+    right: { style: "thin" as const, color: { argb: color } },
+  };
+}
+
+function parseMin(t?: string | null): number {
+  if (!t) return 0;
+  const [h, m] = t.split(":").map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+interface Blk {
+  day_of_week: string; start_time: string; end_time: string;
+  subject: string | null; grade: string | null; week_label: string | null;
+  specialist_id: string | null; teacher_id: string | null;
+}
+
+function buildBrandHeader(ws: ExcelJS.Worksheet, lastCol: number, title: string, sub: string) {
+  const colLetter = ws.getColumn(lastCol).letter;
+  // Title band (navy)
+  ws.mergeCells(`A1:${colLetter}1`);
+  const t = ws.getCell("A1");
+  t.value = title;
+  t.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
+  t.font = { name: "Arial", size: 16, bold: true, color: { argb: WHITE } };
+  t.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
+  ws.getRow(1).height = 30;
+  // Subtitle band (gold rule on cream)
+  ws.mergeCells(`A2:${colLetter}2`);
+  const s = ws.getCell("A2");
+  s.value = sub;
+  s.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CREAM } };
+  s.font = { name: "Arial", size: 9, italic: true, color: { argb: MUTE } };
+  s.alignment = { vertical: "middle", horizontal: "left", indent: 1 };
+  s.border = { bottom: { style: "medium", color: { argb: GOLD } } };
+  ws.getRow(2).height = 18;
+}
+
+function headerCell(cell: ExcelJS.Cell, text: string) {
+  cell.value = text;
+  cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
+  cell.font = { name: "Arial", size: 10, bold: true, color: { argb: WHITE } };
+  cell.alignment = { vertical: "middle", horizontal: "center" };
+  cell.border = thinBorder(NAVY);
+}
+
+export async function exportScheduleXlsx(opts: {
+  schoolId: string;
+  generationId: string | null;
+  schoolName?: string;
+  schoolYear?: string;
+}): Promise<boolean> {
+  const { schoolId, generationId } = opts;
+  if (!generationId) return false;
+
+  const [{ data: school }, { data: specsData }, { data: teachData }, { data: blocksData }, { data: recessData }] = await Promise.all([
+    supabase.from("schools").select("name, school_year, start_time, end_time").eq("id", schoolId).maybeSingle(),
+    supabase.from("specialists").select("id, name, subject").eq("school_id", schoolId),
+    supabase.from("classroom_teachers").select("id, name, grade").eq("school_id", schoolId),
+    supabase.from("schedule_blocks").select("day_of_week, start_time, end_time, subject, grade, week_label, specialist_id, teacher_id").eq("generation_id", generationId),
+    supabase.from("recess_lunch_config").select("*").eq("school_id", schoolId),
+  ]);
+
+  const blocks = (blocksData ?? []) as Blk[];
+  if (!blocks.length) return false;
+  const specs = specsData ?? [];
+  const teachers = teachData ?? [];
+  const specById = new Map(specs.map((s: any) => [s.id, s]));
+  const teachById = new Map(teachers.map((t: any) => [t.id, t]));
+  const schoolName = opts.schoolName ?? school?.name ?? "School";
+  const schoolYear = opts.schoolYear ?? school?.school_year ?? "";
+
+  // Recess/lunch windows (start → {end,label}) from all band rows.
+  const bands = new Map<number, { end: number; label: string }>();
+  for (const r of recessData ?? []) {
+    if (r.am_recess_start && r.am_recess_end) bands.set(parseMin(r.am_recess_start), { end: parseMin(r.am_recess_end), label: "Recess" });
+    if (r.pm_recess_start && r.pm_recess_end) bands.set(parseMin(r.pm_recess_start), { end: parseMin(r.pm_recess_end), label: "Recess" });
+    if (r.lunch_start && r.lunch_end) bands.set(parseMin(r.lunch_start), { end: parseMin(r.lunch_end), label: "Lunch" });
+  }
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "GoToSpecialClass";
+  wb.created = new Date();
+
+  const isTeaching = (b: Blk) => b.specialist_id && !/lunch|planning|plc|recess/i.test(b.subject ?? "") && (b.grade ?? "").toLowerCase() !== "lunch";
+
+  // ── Sheet 1: Master Schedule grid ──
+  const ms = wb.addWorksheet("Master Schedule", { views: [{ state: "frozen", xSplit: 1, ySplit: 4 }], properties: { defaultRowHeight: 16 } });
+  ms.columns = [{ width: 13 }, ...DAYS.map(() => ({ width: 26 }))];
+  buildBrandHeader(ms, DAYS.length + 1, `Master Schedule — ${schoolName}`, `${schoolYear ? schoolYear + "  ·  " : ""}${school?.start_time ? formatTime(school.start_time) : ""}–${school?.end_time ? formatTime(school.end_time) : ""}  ·  GoToSpecialClass`);
+
+  // Day header row (row 3 is spacer-free; put headers at row 3)
+  const hdr = ms.getRow(3);
+  headerCell(hdr.getCell(1), "Time");
+  DAYS.forEach((d, i) => headerCell(hdr.getCell(i + 2), DAY_FULL[d]));
+  hdr.height = 20;
+
+  // Distinct teaching start times.
+  const starts = Array.from(new Set(blocks.filter(isTeaching).map((b) => b.start_time))).sort();
+  const bandStarts = Array.from(bands.keys());
+  const allStartMins = Array.from(new Set([...starts.map(parseMin), ...bandStarts])).sort((a, b) => a - b);
+
+  for (const startMin of allStartMins) {
+    const band = bands.get(startMin);
+    const hasClass = blocks.some((b) => isTeaching(b) && parseMin(b.start_time) === startMin);
+    const row = ms.addRow([]);
+    if (band && !hasClass) {
+      // Full-width recess/lunch band.
+      ms.mergeCells(row.number, 1, row.number, DAYS.length + 1);
+      const c = row.getCell(1);
+      const hh = (m: number) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+      c.value = `${formatTime(hh(startMin))}–${formatTime(hh(band.end))}  ·  ${band.label.toUpperCase()}`;
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CREAM } };
+      c.font = { name: "Arial", size: 9, bold: true, color: { argb: NAVY } };
+      c.alignment = { vertical: "middle", horizontal: "center" };
+      c.border = { top: { style: "thin", color: { argb: GOLD } }, bottom: { style: "thin", color: { argb: GOLD } } };
+      row.height = 16;
+      continue;
+    }
+    // Time cell.
+    const startBlk = blocks.find((b) => parseMin(b.start_time) === startMin && isTeaching(b));
+    const tc = row.getCell(1);
+    tc.value = startBlk ? `${formatTime(startBlk.start_time)}\n${formatTime(startBlk.end_time)}` : formatTime(blocks.find(b=>parseMin(b.start_time)===startMin)?.start_time ?? "");
+    tc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CREAM } };
+    tc.font = { name: "Arial", size: 8.5, bold: true, color: { argb: NAVY } };
+    tc.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    tc.border = thinBorder();
+
+    let maxLines = 1;
+    DAYS.forEach((day, i) => {
+      const cell = row.getCell(i + 2);
+      const cellBlocks = blocks.filter((b) => isTeaching(b) && b.day_of_week === day && parseMin(b.start_time) === startMin);
+      if (cellBlocks.length === 0) {
+        cell.border = thinBorder();
+        return;
+      }
+      const rich: ExcelJS.RichText[] = [];
+      cellBlocks.forEach((b, bi) => {
+        const spec = b.specialist_id ? specById.get(b.specialist_id) : null;
+        const teach = b.teacher_id ? teachById.get(b.teacher_id) : null;
+        const subj = b.subject ?? spec?.subject ?? "";
+        const { accent } = subjectColors(subj);
+        const head = `${b.grade ? `Gr ${b.grade} ` : ""}${subj}${b.week_label ? ` (${b.week_label})` : ""}`;
+        const detail = [teach?.name, spec?.name].filter(Boolean).join(" · ");
+        if (bi > 0) rich.push({ text: "\n", font: { size: 4 } });
+        rich.push({ text: head, font: { name: "Arial", size: 9, bold: true, color: { argb: accent } } });
+        if (detail) rich.push({ text: `\n${detail}`, font: { name: "Arial", size: 8, color: { argb: MUTE } } });
+      });
+      cell.value = { richText: rich };
+      const { fill } = subjectColors(cellBlocks[0].subject ?? specById.get(cellBlocks[0].specialist_id ?? "")?.subject);
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+      cell.alignment = { vertical: "top", horizontal: "left", wrapText: true, indent: 1 };
+      cell.border = thinBorder();
+      const lines = cellBlocks.length * 2;
+      if (lines > maxLines) maxLines = lines;
+    });
+    row.height = Math.max(28, maxLines * 12);
+  }
+
+  // ── Per-specialist sheets ──
+  for (const spec of specs) {
+    const mine = blocks.filter((b) => b.specialist_id === spec.id && isTeaching(b));
+    if (mine.length === 0) continue;
+    const safe = (spec.name as string).replace(/[\\/?*[\]:]/g, "").slice(0, 28) || "Specialist";
+    const ws = wb.addWorksheet(safe, { views: [{ state: "frozen", xSplit: 1, ySplit: 4 }] });
+    ws.columns = [{ width: 13 }, ...DAYS.map(() => ({ width: 24 }))];
+    buildBrandHeader(ws, DAYS.length + 1, `${spec.name} — ${spec.subject}`, `${schoolName}${schoolYear ? "  ·  " + schoolYear : ""}  ·  GoToSpecialClass`);
+    const h = ws.getRow(3);
+    headerCell(h.getCell(1), "Time");
+    DAYS.forEach((d, i) => headerCell(h.getCell(i + 2), DAY_FULL[d]));
+    h.height = 20;
+
+    const myStarts = Array.from(new Set(mine.map((b) => b.start_time))).sort();
+    const { accent, fill } = subjectColors(spec.subject);
+    myStarts.forEach((st, ri) => {
+      const row = ws.addRow([]);
+      const tc = row.getCell(1);
+      const ex = mine.find((b) => b.start_time === st)!;
+      tc.value = `${formatTime(ex.start_time)}\n${formatTime(ex.end_time)}`;
+      tc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CREAM } };
+      tc.font = { name: "Arial", size: 8.5, bold: true, color: { argb: NAVY } };
+      tc.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+      tc.border = thinBorder();
+      DAYS.forEach((day, i) => {
+        const cell = row.getCell(i + 2);
+        const b = mine.find((x) => x.day_of_week === day && x.start_time === st);
+        if (b) {
+          const teach = b.teacher_id ? teachById.get(b.teacher_id) : null;
+          cell.value = `${b.grade ? `Gr ${b.grade}` : ""}${teach ? `\n${teach.name}` : ""}${b.week_label ? `  (${b.week_label})` : ""}`;
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+          cell.font = { name: "Arial", size: 9, color: { argb: accent }, bold: true };
+        } else {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ri % 2 ? ZEBRA : WHITE } };
+        }
+        cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+        cell.border = thinBorder();
+      });
+      row.height = 30;
+    });
+  }
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${schoolName.replace(/\s+/g, "_")}_Master_Schedule.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return true;
+}

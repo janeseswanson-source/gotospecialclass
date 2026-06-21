@@ -6,7 +6,8 @@ import { useSchool } from "@/contexts/SchoolContext";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Undo2, Redo2, Lock, GitCompare, AlertTriangle, X as XIcon, Printer, Sparkles, Loader2, BrainCircuit, Lightbulb, Download, FileText, ChevronDown, LayoutGrid, MessageSquare, Check, RotateCcw } from "lucide-react";
+import { Undo2, Redo2, Lock, GitCompare, AlertTriangle, X as XIcon, Printer, Sparkles, Loader2, BrainCircuit, Lightbulb, Download, FileText, ChevronDown, LayoutGrid, MessageSquare, Check, RotateCcw, FileSpreadsheet } from "lucide-react";
+import { exportScheduleXlsx } from "@/lib/exportScheduleXlsx";
 import ScheduleChatPanel from "@/components/schedule/ScheduleChatPanel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatTime as formatTimeDisplay, cn } from "@/lib/utils";
@@ -93,6 +94,7 @@ export default function MasterSchedulePage() {
   const [updatingReview, setUpdatingReview] = useState(false);
   const [specExportOpen, setSpecExportOpen] = useState(false);
   const [adminExportOpen, setAdminExportOpen] = useState(false);
+  const [exportingXlsx, setExportingXlsx] = useState(false);
   const [replanSuggestion, setReplanSuggestion] = useState<{ specialistId: string; specialistName: string } | null>(null);
   const [replanLoading, setReplanLoading] = useState(false);
   // Blocks recently changed by the AI editor — highlighted in the grid so the
@@ -617,6 +619,20 @@ export default function MasterSchedulePage() {
     }
   }
 
+  async function handleExportXlsx() {
+    if (!selectedGen || !selectedSchoolId || exportingXlsx) return;
+    setExportingXlsx(true);
+    try {
+      const ok = await exportScheduleXlsx({ schoolId: selectedSchoolId, generationId: selectedGen, schoolName: selectedSchool?.name, schoolYear });
+      if (ok) toast({ title: "Spreadsheet exported ✓", description: "A branded Excel file with the master schedule and each specialist's week." });
+      else toast({ title: "Nothing to export", description: "Generate a schedule first.", variant: "destructive" });
+    } catch (e: any) {
+      toast({ title: "Export failed", description: e?.message ?? "Couldn't build the spreadsheet.", variant: "destructive" });
+    } finally {
+      setExportingXlsx(false);
+    }
+  }
+
   async function setReviewState(next: "accepted" | "rejected") {
     if (!selectedGen) return;
     if (next === "accepted" && blockingError.blocked) {
@@ -885,6 +901,9 @@ export default function MasterSchedulePage() {
               </DropdownMenuItem>
               <DropdownMenuItem disabled={blockingError.blocked} onClick={() => !blockingError.blocked && setAdminExportOpen(true)}>
                 <LayoutGrid className="h-4 w-4 mr-2" /> Admin Overview (PDF)
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={blockingError.blocked || exportingXlsx} onClick={() => !blockingError.blocked && handleExportXlsx()}>
+                {exportingXlsx ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileSpreadsheet className="h-4 w-4 mr-2" />} Branded Spreadsheet (Excel)
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem disabled={blockingError.blocked} onClick={() => !blockingError.blocked && window.print()}>
