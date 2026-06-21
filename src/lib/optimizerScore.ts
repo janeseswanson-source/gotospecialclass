@@ -1,49 +1,50 @@
-// Normalize the optimizer's raw `winning_score` into a 0–100% "quality"
-// percentage so the Schedule Insights panel can display something
-// meaningful to users. The raw score is a sum of penalties + bonuses and
-// its absolute value varies wildly by school size, so we express it as a
-// fraction of the theoretical positive ceiling for THIS schedule.
+// Normalize the optimizer's raw score into a 0–100% "quality" percentage
+// using the SAME rubric as the verify-schedule edge function so the two
+// numbers stay aligned (no more "AI Quality 89/100" next to "Optimizer 49%").
 //
-// Ceiling = the sum of every positive weight × the number of items it can
-// reward (one per grade for coverage, one per teacher for am/pm or day
-// preference, one per specialist for planning target met). This matches
-// the scorer in supabase/functions/generate-schedule/_scoring.ts.
+// Rubric: 100 - sum(|soft penalties|)/4, clamped to [0,100]. We read those
+// penalties straight from the persisted `score_breakdown` JSON.
+//
+// Why a rubric and not raw/ceiling: positive weights like "+20 per teacher
+// with a day preference" make the ceiling depend on how many teachers
+// actually have preferences set — if none do, the optimizer literally cannot
+// reach them and the percentage gets stuck at 50–60% no matter how perfect
+// the schedule is. A penalty-based rubric measures what the schedule is
+// doing WRONG, which is what users actually care about.
 
-interface CeilingInput {
-  gradeCount: number;
-  teacherCount: number;
-  specialistCount: number;
-}
+const PENALTY_KEYS = [
+  "subject_gap",
+  "subject_day_clustering",
+  "class_repeats",
+  "k_grade_after_780",
+  "cart_back_to_back",
+  "grade_cohesion",
+  "contract_min",
+  "spec_dayload_stdev",
+  "warnings",
+  "errors",
+] as const;
 
-const POSITIVE_WEIGHTS = {
-  full_week_coverage: 100,
-  am_pm_satisfied: 10,
-  day_pref_satisfied: 20,
-  planning_target_met: 30,
-};
-
-/** Theoretical best the optimizer could ever score for a given school. */
-export function maxPossibleScore(input: CeilingInput): number {
-  const { gradeCount, teacherCount, specialistCount } = input;
-  return (
-    POSITIVE_WEIGHTS.full_week_coverage * Math.max(1, gradeCount) +
-    POSITIVE_WEIGHTS.am_pm_satisfied * Math.max(0, teacherCount) +
-    POSITIVE_WEIGHTS.day_pref_satisfied * Math.max(0, teacherCount) +
-    POSITIVE_WEIGHTS.planning_target_met * Math.max(0, specialistCount)
-  );
-}
-
-/**
- * Convert a raw winning_score into an integer percentage 0–100.
- * Negative scores (errors dominating) clamp to 0; scores at or above the
- * theoretical max clamp to 100.
- */
-export function scoreToPercent(rawScore: number | null | undefined, input: CeilingInput): number | null {
-  if (rawScore == null || !Number.isFinite(rawScore)) return null;
-  const ceiling = maxPossibleScore(input);
-  if (ceiling <= 0) return null;
-  const pct = Math.round((rawScore / ceiling) * 100);
+/** Convert a persisted score_breakdown into a 0–100% quality percentage. */
+export function breakdownToPercent(breakdown: Record<string, number> | null | undefined): number | null {
+  if (!breakdown || typeof breakdown !== "object") return null;
+  let penaltyMag = 0;
+  for (const k of PENALTY_KEYS) {
+    const v = breakdown[k];
+    if (typeof v === "number" && Number.isFinite(v)) penaltyMag += Math.abs(v);
+  }
+  const pct = Math.round(100 - penaltyMag / 4);
   if (pct < 0) return 0;
   if (pct > 100) return 100;
   return pct;
+}
+
+/** Back-compat shim: older callers passed (rawScore, {gradeCount,...}).
+ *  We now ignore both and require the breakdown via breakdownToPercent. */
+export function scoreToPercent(
+  _rawScore: number | null | undefined,
+  _input: { gradeCount: number; teacherCount: number; specialistCount: number },
+  breakdown?: Record<string, number> | null,
+): number | null {
+  return breakdownToPercent(breakdown);
 }
