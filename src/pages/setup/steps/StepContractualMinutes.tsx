@@ -65,7 +65,7 @@ const StepContractualMinutes = () => {
   async function persist(patch: Record<string, unknown>) {
     if (!schoolId) return;
     setSaveStatus('saving');
-    const { error } = await supabase.from('schools').update(patch).eq('id', schoolId);
+    const { error } = await supabase.from('schools').update(patch as never).eq('id', schoolId);
     if (error) {
       setSaveStatus('idle');
       toast.error('Could not save contractual minutes');

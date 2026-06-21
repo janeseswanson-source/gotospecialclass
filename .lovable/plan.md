@@ -1,32 +1,28 @@
-# Generator fixes A–E (implemented)
+## Fix gaps in latest generator + branding changes
 
-## A. New / stronger penalties in `_scoring.ts`
-- `subject_gap: -40` per (grade, specialist) pair with zero sessions in the week.
-- `subject_day_clustering: -15` per duplicate of same (grade, subject) on same day.
-- `k_grade_after_780: -3 → -20`
-- `class_repeats: -8 → -25`
+### 1. Add missing unit tests for new penalties
+- In `_scoring_test.ts`, add tests for:
+  - `subject_gap`: a grade missing a specialist should incur −40 per missing pair.
+  - `subject_day_clustering`: two blocks of the same (grade, subject) on the same day should incur −15 per duplicate.
 
-## B. Monte Carlo
-- Iteration tiers raised: ≤200ms → 200, ≤500ms → 100, else → 50 (was 50/25/10).
-- Budget cap raised 30s → 60s.
+### 2. Guard anti-cluster shuffle against idle-day creation
+- In `runSimulatedAnnealing` (index.ts), the anti-cluster shuffle branch (mutation type 2) currently picks any block from a duplicate cluster and moves it.
+- It should check `isLastOnDay` — if the chosen block is the specialist's **only** teaching block on that day, skip the move (just as the regular MOVE mutation does). Without this, SA can accidentally strand a specialist on an idle day.
 
-## C. Simulated Annealing
-- Added third mutation type: "anti-cluster shuffle" — finds a (grade, subject, day) duplicate and relocates one occurrence to a day that doesn't already have that subject.
-- `SA_MAX_ITER` 200 → 500, cooling 0.95 → 0.97, time budget 8s → 12s.
+### 3. Decide + align feasibility check behavior
+**Background**: The approved plan specified a hard error (`throw new Error("Infeasible schedule: ...")`) returning HTTP 422. The implemented code changed this to a soft warning (`capacity_shortfall`) so generation continues and produces a best-effort schedule.
 
-## D. Shared rubric in `verify-schedule`
-- Quality score is computed deterministically from the generator's `score_breakdown` (sum of penalty magnitudes, scaled to 0–100).
-- AI is no longer asked to invent a score — only qualitative summary + concrete fixes.
+**Options**:
+- **Option A (keep warning)**: Remove the dead `infeasible_schedule` catch block at line ~2900 of `index.ts`. The warning path stays.
+- **Option B (revert to hard error)**: Change `generateScheduleBlocks` to throw when `sessionCapacity < requiredSessions`, and keep the existing catch block.
 
-## E. Pre-flight feasibility
-- Hard error in `generateScheduleBlocks` when `Σ(specialist working-days) < grades × specialists`.
-- Returned as HTTP 422 with code `infeasible_schedule` and an actionable message (add specialists / expand days / enable A/B Week).
+*Recommendation*: Option A (warning). A hard 422 blocks the user from seeing any schedule at all. The warning still tells them exactly what's wrong and how to fix it, while the solver covers as many classes as it can.
 
-## Files touched
-- `supabase/functions/generate-schedule/_scoring.ts`
-- `supabase/functions/generate-schedule/_monteCarlo.ts`
-- `supabase/functions/generate-schedule/_monteCarlo_test.ts`
+### 4. Type-check cleanup (if needed)
+- Verify `BrandedScheduleHeader.tsx` compiles cleanly. `React.ReactNode` is used without an explicit React import; it currently passes `tsc --noEmit`, so no action needed unless a future TS config change breaks it.
+
+### Files touched
 - `supabase/functions/generate-schedule/_scoring_test.ts`
 - `supabase/functions/generate-schedule/index.ts`
-- `supabase/functions/verify-schedule/index.ts`
-- `supabase/functions/update-scoring-weights/index.ts`
+
+**Estimated effort**: small (~15 min).
