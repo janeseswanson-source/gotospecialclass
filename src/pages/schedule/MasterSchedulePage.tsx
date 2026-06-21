@@ -459,6 +459,7 @@ export default function MasterSchedulePage() {
       loadBlocks(selectedGen);
     } else {
       toast({ title: "Moved ✓", description: fit.shortened ? `Shortened to ${fit.duration} min to fit.` : undefined });
+      flagChangedBlocks([blockId]);
       const spec = specialists.find(s => s.id === block.specialist_id || s.name === block.specialist_name);
       if (spec) setReplanSuggestion({ specialistId: spec.id, specialistName: spec.name });
     }
