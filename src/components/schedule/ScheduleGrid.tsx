@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { cn, formatTime } from "@/lib/utils";
 import ScheduleBlockCell from "./ScheduleBlockCell";
+import ScheduleStackCell from "./ScheduleStackCell";
 import { computeConflictIds, parseTime } from "@/lib/scheduleGrid";
 import { X } from "lucide-react";
 
