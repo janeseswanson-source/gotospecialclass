@@ -49,13 +49,6 @@ interface BlockRow {
   week_label: string | null;
 }
 
-function overlaps(a: BlockRow, day: string, startMin: number, endMin: number, weekLabel: string | null): boolean {
-  if (a.day_of_week !== day) return false;
-  if (weekLabel && a.week_label && weekLabel !== a.week_label) return false;
-  const aStart = timeToMin(a.start_time);
-  const aEnd = timeToMin(a.end_time);
-  return aStart < endMin && startMin < aEnd;
-}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -104,16 +97,24 @@ Deno.serve(async (req) => {
   let blocks: BlockRow[] = (blocksRaw ?? []) as BlockRow[];
 
   // Edit-time constraint context (school hours, recess/lunch, PLC/Admin
-  // grade-range locks), mirroring the generator. PLC/Admin locks are derived
-  // from the persisted blocks and are stable across these tool edits, so the
-  // context is built once. Specialist/teacher overlap is checked separately by
-  // each tool (for richer error messages), so we surface only the
-  // block-intrinsic + grade-lock violations here (empty allBlocks).
+  // grade-range locks), mirroring the generator — built once from the persisted
+  // blocks. Validation uses the SHARED validator with the FULL live block list,
+  // so a tool's check is identical to what apply-schedule-edits re-checks at
+  // Apply time (no more "proposed cleanly, then fails at Apply"). It detects
+  // specialist/teacher double-booking too (big-group sessions exempt), so the
+  // tools no longer hand-roll their own overlap checks.
   const constraintCtx = buildConstraintContext(school ?? {}, recessRaw ?? [], blocks as any);
-  const ruleViolations = (day: string, startTime: string, endTime: string, grade: string | null, week: string | null): string[] =>
+  const toConstraint = (b: BlockRow) => ({
+    id: b.id, day_of_week: b.day_of_week, start_time: b.start_time, end_time: b.end_time,
+    grade: b.grade, week_label: b.week_label, specialist_id: b.specialist_id, teacher_id: b.teacher_id,
+  });
+  const ruleViolations = (
+    cand: { id?: string; day: string; start: string; end: string; grade: string | null; week: string | null; specialist_id: string | null; teacher_id: string | null },
+    allBlocks: BlockRow[],
+  ): string[] =>
     constraintViolations(
-      { day_of_week: day, start_time: startTime, end_time: endTime, grade, week_label: week },
-      [],
+      { id: cand.id, day_of_week: cand.day, start_time: cand.start, end_time: cand.end, grade: cand.grade, week_label: cand.week, specialist_id: cand.specialist_id, teacher_id: cand.teacher_id },
+      allBlocks.map(toConstraint),
       constraintCtx,
     ).map(describeViolation);
 
@@ -141,8 +142,7 @@ CURRENT SCHEDULE CONTEXT
 - Teachers (${teachers.length}): ${teachers.map((t: any) => `${t.name} – Gr ${t.grade}`).join(", ")}.
 
 BLOCKS (id | day time | subject | grade | specialist | teacher):
-${blocks.slice(0, 200).map(describeBlock).join("\n")}
-${blocks.length > 200 ? `\n…and ${blocks.length - 200} more blocks. Use list_blocks with a filter to see them.` : ""}
+${blocks.map(describeBlock).join("\n")}
 
 RULES
 - Days are exactly: ${DAYS.join(", ")}. Use the 3-letter abbreviations.
@@ -214,19 +214,14 @@ RULES
       const duration = timeToMin(blk.end_time) - timeToMin(blk.start_time);
       const newStart = timeToMin(start_time + ":00");
       const newEnd = newStart + duration;
-      const conflicts = blocks.filter((other) =>
-        other.id !== blk.id &&
-        (other.specialist_id === blk.specialist_id || (blk.teacher_id && other.teacher_id === blk.teacher_id)) &&
-        overlaps(other, day, newStart, newEnd, blk.week_label)
-      );
-      if (conflicts.length > 0) {
-        return { ok: false, error: `Conflict with: ${conflicts.map(describeBlock).join("; ")}` };
-      }
       const newStartStr = minToTime(newStart);
       const newEndStr = minToTime(newEnd);
-      const vio = ruleViolations(day, newStartStr, newEndStr, blk.grade, blk.week_label);
+      const vio = ruleViolations(
+        { id: blk.id, day, start: newStartStr, end: newEndStr, grade: blk.grade, week: blk.week_label, specialist_id: blk.specialist_id, teacher_id: blk.teacher_id },
+        blocks,
+      );
       if (vio.length) {
-        return { ok: false, error: `Cannot move there — it ${vio.join(" and ")}. Pick a slot inside school hours that avoids this grade's recess/lunch and PLC time.` };
+        return { ok: false, error: `Cannot move there — it ${vio.join(" and ")}. Pick a slot inside school hours that avoids this grade's recess/lunch and PLC time and doesn't double-book the specialist or teacher.` };
       }
       const label = `Move ${blockShort(blk)}: ${blk.day_of_week} ${hm(blk.start_time)} → ${day} ${hm(newStartStr)}`;
       blk.day_of_week = day; blk.start_time = newStartStr; blk.end_time = newEndStr;
@@ -245,41 +240,37 @@ RULES
       const a = blocks.find((b) => b.id === block_a_id);
       const b = blocks.find((x) => x.id === block_b_id);
       if (!a || !b) return { ok: false, error: "One or both blocks not found" };
-      const aSlot = { day: a.day_of_week, start: a.start_time, end: a.end_time };
-      const bSlot = { day: b.day_of_week, start: b.start_time, end: b.end_time };
-      // Each block lands in the other's slot — validate both against recess/
-      // lunch/PLC/hours for their own grade before committing the swap.
-      const aVio = ruleViolations(bSlot.day, bSlot.start, bSlot.end, a.grade, a.week_label);
-      const bVio = ruleViolations(aSlot.day, aSlot.start, aSlot.end, b.grade, b.week_label);
+      if (a.id === b.id) return { ok: false, error: "Pick two different blocks to swap" };
+      // Each block takes the OTHER's day+start but keeps its OWN length (so a
+      // 30-min and a 45-min block don't get silently resized).
+      const aDur = timeToMin(a.end_time) - timeToMin(a.start_time);
+      const bDur = timeToMin(b.end_time) - timeToMin(b.start_time);
+      const aDay = b.day_of_week, aStart = timeToMin(b.start_time), aEnd = aStart + aDur;
+      const bDay = a.day_of_week, bStart = timeToMin(a.start_time), bEnd = bStart + bDur;
+      const aStartStr = minToTime(aStart), aEndStr = minToTime(aEnd);
+      const bStartStr = minToTime(bStart), bEndStr = minToTime(bEnd);
+      // Validate both against the layout AFTER the swap (so they don't false-
+      // positive on each other's old slots, and any real third-block clash is
+      // caught) — one shared, big-group-aware check.
+      const after = blocks.map((x) =>
+        x.id === a.id ? { ...x, day_of_week: aDay, start_time: aStartStr, end_time: aEndStr }
+        : x.id === b.id ? { ...x, day_of_week: bDay, start_time: bStartStr, end_time: bEndStr }
+        : x);
+      const aVio = ruleViolations({ id: a.id, day: aDay, start: aStartStr, end: aEndStr, grade: a.grade, week: a.week_label, specialist_id: a.specialist_id, teacher_id: a.teacher_id }, after);
+      const bVio = ruleViolations({ id: b.id, day: bDay, start: bStartStr, end: bEndStr, grade: b.grade, week: b.week_label, specialist_id: b.specialist_id, teacher_id: b.teacher_id }, after);
       if (aVio.length || bVio.length) {
         const parts: string[] = [];
         if (aVio.length) parts.push(`moving ${describeBlock(a)} ${aVio.join(" and ")}`);
         if (bVio.length) parts.push(`moving ${describeBlock(b)} ${bVio.join(" and ")}`);
         return { ok: false, error: `Swap rejected: ${parts.join("; ")}.` };
       }
-      // Specialist/teacher double-booking at the destination slots (against
-      // everyone EXCEPT the two blocks being swapped). Without this a swap
-      // could be proposed cleanly and then fail at Apply — confusing.
-      const others = blocks.filter((x) => x.id !== a.id && x.id !== b.id);
-      const swapConflicts = others.filter((o) =>
-        ((o.specialist_id && o.specialist_id === a.specialist_id) || (a.teacher_id && o.teacher_id === a.teacher_id))
-          ? overlaps(o, bSlot.day, timeToMin(bSlot.start), timeToMin(bSlot.end), a.week_label)
-          : false,
-      ).concat(others.filter((o) =>
-        ((o.specialist_id && o.specialist_id === b.specialist_id) || (b.teacher_id && o.teacher_id === b.teacher_id))
-          ? overlaps(o, aSlot.day, timeToMin(aSlot.start), timeToMin(aSlot.end), b.week_label)
-          : false,
-      ));
-      if (swapConflicts.length > 0) {
-        return { ok: false, error: `Swap rejected — it would overlap: ${swapConflicts.slice(0, 3).map(describeBlock).join("; ")}` };
-      }
       const label = `Swap ${blockShort(a)} (${a.day_of_week} ${hm(a.start_time)}) ↔ ${blockShort(b)} (${b.day_of_week} ${hm(b.start_time)})`;
-      a.day_of_week = bSlot.day; a.start_time = bSlot.start; a.end_time = bSlot.end;
-      b.day_of_week = aSlot.day; b.start_time = aSlot.start; b.end_time = aSlot.end;
+      a.day_of_week = aDay; a.start_time = aStartStr; a.end_time = aEndStr;
+      b.day_of_week = bDay; b.start_time = bStartStr; b.end_time = bEndStr;
       const op: EditOp = {
         kind: "swap", label,
-        a_id: a.id, a_day: bSlot.day, a_start: bSlot.start, a_end: bSlot.end,
-        b_id: b.id, b_day: aSlot.day, b_start: aSlot.start, b_end: aSlot.end,
+        a_id: a.id, a_day: aDay, a_start: aStartStr, a_end: aEndStr,
+        b_id: b.id, b_day: bDay, b_start: bStartStr, b_end: bEndStr,
       };
       return { ok: true, status: "proposed", op, swapped: [describeBlock(a), describeBlock(b)] };
     },
@@ -316,15 +307,13 @@ RULES
       const startMin = timeToMin(start_time + ":00");
       const endMin = timeToMin(end_time + ":00");
       if (endMin <= startMin) return { ok: false, error: "end_time must be after start_time" };
-      const conflicts = blocks.filter((other) =>
-        ((specId && other.specialist_id === specId) || (teachId && other.teacher_id === teachId)) &&
-        overlaps(other, day, startMin, endMin, null)
-      );
-      if (conflicts.length > 0) return { ok: false, error: `Conflict: ${conflicts.map(describeBlock).join("; ")}` };
       const insGrade = grade ?? (teachId ? teachMap.get(teachId)?.grade ?? null : null);
-      const insVio = ruleViolations(day, minToTime(startMin), minToTime(endMin), insGrade, null);
+      const insVio = ruleViolations(
+        { day, start: minToTime(startMin), end: minToTime(endMin), grade: insGrade, week: null, specialist_id: specId ?? null, teacher_id: teachId ?? null },
+        blocks,
+      );
       if (insVio.length) {
-        return { ok: false, error: `Cannot add there — it ${insVio.join(" and ")}. Choose a time inside school hours that avoids this grade's recess/lunch and PLC time.` };
+        return { ok: false, error: `Cannot add there — it ${insVio.join(" and ")}. Choose a time inside school hours that avoids this grade's recess/lunch and PLC time and doesn't double-book the specialist or teacher.` };
       }
       const room = teachId ? teachMap.get(teachId)?.room ?? null : null;
       // No DB write yet — give the in-memory block a temporary id so the model
@@ -400,9 +389,8 @@ RULES
       temperature: 0.2,
     });
 
-    return result.toUIMessageStreamResponse({
+    const response = result.toUIMessageStreamResponse({
       originalMessages: messages,
-      headers: corsHeaders,
       // Surface provider/tool errors as readable text so the chat panel can
       // show them instead of silently dropping to an empty bubble.
       onError: (err) => {
@@ -421,6 +409,10 @@ RULES
         }
       },
     });
+    // The stream options type doesn't accept `headers` in this AI SDK version,
+    // so attach CORS to the returned Response directly.
+    for (const [k, v] of Object.entries(corsHeaders)) response.headers.set(k, v);
+    return response;
   } catch (err: any) {
     console.error("[schedule-chat] stream error", err);
     return json(500, { error: err?.message ?? "Stream failed" });
