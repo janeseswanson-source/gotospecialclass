@@ -2214,6 +2214,10 @@ export function generateScheduleBlocks(
   adminBlocks: Block[],
   lockedBlocks: Block[] = [],
   weightOverrides?: Partial<Record<keyof ScoreBreakdown, number>>,
+  /** Optional extra salt mixed into the Monte Carlo seed. Lets an outer
+   *  retry loop explore independent permutation streams while keeping
+   *  determinism for the same (generationId, seedSalt) pair. */
+  seedSalt: number = 0,
 ): SchedulerResult {
   // ─── E: Pre-flight feasibility ────────────────────────────────────
   // Capacity is counted in SESSIONS, not specialist-days: a specialist teaches
@@ -2345,7 +2349,7 @@ export function generateScheduleBlocks(
   // generation UUID. Same generation → same Monte Carlo permutation
   // stream → same winning schedule. Different generations explore
   // different permutations.
-  const mcSeed = deriveSeed(0x9e3779b9, generationId);
+  const mcSeed = deriveSeed(deriveSeed(0x9e3779b9, generationId), `salt:${seedSalt}`);
   const scoringInput: ScoreableInput = {
     school: {
       start_time: school.start_time,
