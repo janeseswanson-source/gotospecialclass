@@ -1301,11 +1301,31 @@ export default function MasterSchedulePage() {
                   Strategy: <span className="font-medium text-foreground">{humanizeStrategy(activeGen.chosen_strategy)}</span>
                 </p>
               )}
-              {activeGen?.winning_score != null && (
-                <p className="text-xs text-muted-foreground">
-                  Optimizer score: <span className="font-medium text-foreground">{Math.round(activeGen.winning_score)}</span>
-                </p>
-              )}
+              {activeGen?.winning_score != null && (() => {
+                const pct = scoreToPercent(activeGen.winning_score, {
+                  gradeCount: (selectedSchool?.grades_served as string[] | undefined)?.length ?? 0,
+                  teacherCount: teachers.length,
+                  specialistCount: specialists.length,
+                });
+                const color = pct == null
+                  ? "text-foreground"
+                  : pct >= 90 ? "text-success"
+                  : pct >= 70 ? "text-amber-600 dark:text-amber-400"
+                  : "text-destructive";
+                return (
+                  <div className="space-y-0.5">
+                    <p className="text-xs text-muted-foreground">
+                      Optimizer score:{" "}
+                      <span className={cn("font-bold", color)}>
+                        {pct != null ? `${pct}%` : Math.round(activeGen.winning_score)}
+                      </span>
+                      {pct != null && (
+                        <span className="text-muted-foreground/70"> · raw {Math.round(activeGen.winning_score)}</span>
+                      )}
+                    </p>
+                  </div>
+                );
+              })()}
               {!activeGen && (
                 <p className="text-xs text-muted-foreground">Select a generation to see insights.</p>
               )}
