@@ -352,9 +352,10 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
             />
           ) : (
             messages.map((m) => {
-              const hasContent = (m.parts ?? []).some(
-                (p: any) => (p.type === "text" && p.text?.trim()) || p.type?.startsWith?.("tool-"),
-              );
+              const parts = (m.parts ?? []) as any[];
+              const hasText = parts.some((p) => p.type === "text" && p.text?.trim());
+              const proposedCount = parts.filter((p) => p.type?.startsWith?.("tool-") && p.output?.status === "proposed").length;
+              const hasTool = parts.some((p) => p.type?.startsWith?.("tool-"));
               return (
                 <Message key={m.id} from={m.role === "user" ? "user" : "assistant"}>
                   <MessageContent>
@@ -384,10 +385,20 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
                       }
                       return null;
                     })}
-                    {m.role === "assistant" && !hasContent && !isLoading && (
-                      <p className="text-xs italic text-muted-foreground">
-                        No response — please try again or rephrase.
-                      </p>
+                    {/* Assistant turns that only made tool proposals (no prose)
+                        still get a clear, visible acknowledgement in the chat. */}
+                    {m.role === "assistant" && !hasText && !isLoading && (
+                      hasTool ? (
+                        <p className="text-xs text-foreground">
+                          {proposedCount > 0
+                            ? `I've proposed ${proposedCount} change${proposedCount === 1 ? "" : "s"} — review and Apply ${proposedCount === 1 ? "it" : "them"} below.`
+                            : "Done — see the result above."}
+                        </p>
+                      ) : (
+                        <p className="text-xs italic text-muted-foreground">
+                          No response — please try again or rephrase.
+                        </p>
+                      )
                     )}
                   </MessageContent>
                 </Message>
