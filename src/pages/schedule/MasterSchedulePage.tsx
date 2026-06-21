@@ -25,6 +25,7 @@ import AdminExportModal from "./exports/AdminExportModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds, computeConflictPairs, computeAutoFit, parseTime, swapPlacements } from "@/lib/scheduleGrid";
 import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
+import { scoreToPercent } from "@/lib/optimizerScore";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
