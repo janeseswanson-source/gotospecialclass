@@ -116,6 +116,8 @@ interface Specialist {
   second_location: string | null;
   weekly_planning_minutes: number | null;
   class_duration?: number | null;
+  /** Per-specialist extra "PLUS" rotation: { Mon: { active, startTime, grades:[{grade,startTime?,durationMinutes?}] }, … } */
+  plus_rotation?: Record<string, { active?: boolean; startTime?: string; grades?: Array<{ grade: string; startTime?: string; durationMinutes?: number }> }> | null;
 }
 
 interface Teacher {
@@ -1817,6 +1819,51 @@ function generateAdminRotationBlocks(
   return blocks;
 }
 
+// ─── PLUS rotation blocks (admin-specified extra specialist sessions) ──
+// Each specialist may carry a per-day PLUS rotation (an extra rotation beyond
+// the normal weekly grid). We materialise the admin-specified ones as fixed
+// teaching blocks so the solver seeds them as occupancy and schedules the
+// regular rotation AROUND them. ("AI auto-fit" PLUS, with no explicit day/time,
+// is left to the normal rotation — there is nothing fixed to seed.)
+export function generatePlusRotationBlocks(
+  generationId: string,
+  specialists: Specialist[],
+  school: any,
+): Block[] {
+  const defaultDur = (school?.class_duration && school.class_duration > 0) ? school.class_duration : 45;
+  const blocks: Block[] = [];
+  for (const spec of specialists) {
+    const pr = spec.plus_rotation;
+    if (!pr || typeof pr !== "object") continue;
+    for (const [dayKey, entry] of Object.entries(pr)) {
+      if (!entry?.active) continue;
+      const day = DAY_FULL_TO_SHORT[dayKey] ?? dayKey;
+      if (!DAYS.includes(day)) continue;
+      for (const g of (entry.grades ?? [])) {
+        if (!g?.grade) continue;
+        const startStr = g.startTime || entry.startTime;
+        if (!startStr) continue;
+        const startMin = timeToMinutes(startStr);
+        if (!Number.isFinite(startMin)) continue;
+        const dur = (g.durationMinutes && g.durationMinutes > 0) ? g.durationMinutes : defaultDur;
+        blocks.push({
+          generation_id: generationId,
+          day_of_week: day,
+          start_time: minutesToTime(startMin),
+          end_time: minutesToTime(startMin + dur),
+          subject: spec.subject ? `${spec.subject} (PLUS)` : "PLUS",
+          specialist_id: spec.id,
+          teacher_id: null,
+          grade: g.grade,
+          room: spec.location ?? null,
+          week_label: null,
+        });
+      }
+    }
+  }
+  return blocks;
+}
+
 // ─── Specialist lunch block reservation ──────────────────────────────
 function reserveSpecialistLunchBlocks(
   generationId: string,
@@ -2359,6 +2406,17 @@ export function generateScheduleBlocks(
     if (lb.grade) occupancy.bookGradeRange(lb.day_of_week, lb.grade, start, end);
   }
 
+  // Pre-seed admin-specified PLUS rotation blocks (extra specialist sessions):
+  // book the specialist and lock the grade so the regular rotation works around
+  // them, exactly like a locked block. They're added to the output below.
+  const plusBlocks = generatePlusRotationBlocks(generationId, specialists, school);
+  for (const pb of plusBlocks) {
+    const start = timeToMinutes(pb.start_time);
+    const end = timeToMinutes(pb.end_time);
+    if (pb.specialist_id) occupancy.book(pb.day_of_week, start, end, pb.specialist_id, null);
+    if (pb.grade) occupancy.bookGradeRange(pb.day_of_week, pb.grade, start, end);
+  }
+
   // Block specialist lunch blocks in occupancy
   const lunchBlocks = reserveSpecialistLunchBlocks(generationId, specialists, recessConfigs, school);
   for (const lb of lunchBlocks) {
@@ -2430,7 +2488,7 @@ export function generateScheduleBlocks(
       const finalWarnings = computeWarnings(sa.blocks, specialists, grades);
       const breakdown = scoreSchedule({ blocks: sa.blocks, warnings: finalWarnings, preferenceViolations: sa.preferenceViolations }, scoringInput, weightOverrides).breakdown;
       return {
-        blocks: [...lunchBlocks, ...sa.blocks],
+        blocks: [...lunchBlocks, ...plusBlocks, ...sa.blocks],
         chosenStrategy: "standard",
         attemptedStrategies: [{ strategy: "standard", error_count: 0, warning_count: 0 }],
         fallbackReason: null,
@@ -2446,7 +2504,7 @@ export function generateScheduleBlocks(
     const finalWarnings = computeWarnings(mc.best.blocks, specialists, grades);
     const breakdown = scoreSchedule({ blocks: mc.best.blocks, warnings: finalWarnings, preferenceViolations: mc.best.preferenceViolations }, scoringInput, weightOverrides).breakdown;
     return {
-      blocks: [...lunchBlocks, ...mc.best.blocks],
+      blocks: [...lunchBlocks, ...plusBlocks, ...mc.best.blocks],
       chosenStrategy: "standard",
       attemptedStrategies: [{ strategy: "standard", error_count: 0, warning_count: 0 }],
       fallbackReason: null,
@@ -2593,7 +2651,7 @@ export function generateScheduleBlocks(
   ).breakdown;
 
   return {
-    blocks: [...lunchBlocks, ...baseBlocks],
+    blocks: [...lunchBlocks, ...plusBlocks, ...baseBlocks],
     chosenStrategy: chosenStrategy ?? "standard",
     attemptedStrategies: attempted,
     fallbackReason,
@@ -2675,6 +2733,7 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       second_location: s.second_location,
       weekly_planning_minutes: s.weekly_planning_minutes,
       class_duration: s.class_duration ?? null,
+      plus_rotation: (s.plus_rotation ?? null) as Specialist["plus_rotation"],
     }));
 
     const teachers: Teacher[] = (teachRes.data ?? []).map((t: any) => ({
