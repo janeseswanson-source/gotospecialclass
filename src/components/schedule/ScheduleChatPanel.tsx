@@ -238,16 +238,31 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
 
   async function submit() {
     const text = input.trim();
-    if (!text || isLoading || !generationId) return;
+    console.log("[chat] submit attempt", { text, generationId, isLoading, hydrated });
+    if (!text) return;
+    if (!generationId) {
+      toast({ title: "No schedule selected", description: "Generate a schedule first.", variant: "destructive" });
+      return;
+    }
+    if (isLoading) {
+      toast({ title: "Already sending", description: "Wait for the current response to finish." });
+      return;
+    }
     // Starting a new turn: the server re-plans from the live DB, so any
     // un-applied proposals from a previous turn are stale — drop them.
     if (pendingProposals.length) discardChanges();
     setInput("");
     try {
+      console.log("[chat] sendMessage", text);
       await sendMessage({ text });
+      console.log("[chat] sendMessage resolved");
     } catch (err: any) {
-      // Surface as inline error; useChat's error state also catches transport errors.
       console.error("[chat] send failed", err);
+      toast({
+        title: "Couldn't send message",
+        description: err?.message ?? "Network error reaching the AI editor.",
+        variant: "destructive",
+      });
     }
   }
 
