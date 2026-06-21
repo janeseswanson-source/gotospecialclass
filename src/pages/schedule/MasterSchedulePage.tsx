@@ -183,9 +183,22 @@ export default function MasterSchedulePage() {
     else setLoading(false);
   }, [user, selectedSchoolId, schoolLoading]);
 
+  // Load blocks ONLY when the selected generation changes. We intentionally
+  // omit specialists/teachers from the deps: those arrays sometimes get a new
+  // reference from upstream contexts after an optimistic swap, and reloading
+  // here would clobber `setBlocks(candidate)` before the DB write commits.
   useEffect(() => {
     if (selectedGen && specialists.length > 0) loadBlocks(selectedGen);
-  }, [selectedGen, specialists, teachers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedGen]);
+
+  // When specialists/teachers arrive AFTER the first block load, re-map the
+  // existing blocks in place so names/grades fill in — without re-fetching.
+  useEffect(() => {
+    if (!blocks.length) return;
+    setBlocks((prev) => mapBlocks(prev));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [specialists, teachers]);
 
   async function loadGenerations() {
     setLoading(true);
