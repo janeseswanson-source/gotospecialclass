@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildConstraintContext, violations as constraintViolations, describeViolation } from "../_shared/constraints.ts";
+import { anthropicClient, anthropicApiKey, CLAUDE_MODEL, firstToolUse, describeAnthropicError } from "../_shared/anthropic.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -103,8 +104,7 @@ Deno.serve(async (req) => {
       return json(200, { resolved: 0, applied: 0, message: "No conflicts to resolve." });
     }
 
-    const apiKey = Deno.env.get("LOVABLE_API_KEY");
-    if (!apiKey) return json(500, { error: "LOVABLE_API_KEY missing" });
+    if (!anthropicApiKey()) return json(500, { error: "Claude isn't set up yet — add the ANTHROPIC_API_KEY secret to enable AI conflict fixing." });
 
     // ── Compute free slots for no_coverage hints ──
     const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
@@ -329,85 +329,55 @@ Respond with ONLY a JSON object matching:
       summary?: string;
     };
 
-    // Best-effort extraction of a JSON object from a model response that
-    // may be fence-wrapped or have stray prose around it.
-    const parsePlan = (raw: string): Plan | null => {
-      let c = raw.trim().replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
-      try {
-        return JSON.parse(c);
-      } catch {
-        // Fall back to the outermost {...} span.
-        const first = c.indexOf("{");
-        const last = c.lastIndexOf("}");
-        if (first >= 0 && last > first) {
-          try {
-            return JSON.parse(c.slice(first, last + 1));
-          } catch { /* fall through */ }
-        }
-        return null;
-      }
+    // Claude returns the resolution plan as a forced tool call — structured
+    // output with no fragile JSON-from-prose parsing.
+    const RESOLVE_TOOL = {
+      name: "apply_resolution",
+      description: "Apply the schedule changes that resolve the listed conflicts. Only touch regular specialist blocks; prefer moving over deleting.",
+      input_schema: {
+        type: "object",
+        properties: {
+          updates: { type: "array", items: { type: "object", properties: {
+            block_id: { type: "string" }, day_of_week: { type: ["string", "null"] }, start_time: { type: ["string", "null"] },
+            end_time: { type: ["string", "null"] }, specialist_id: { type: ["string", "null"] }, room: { type: ["string", "null"] },
+            week_label: { type: ["string", "null"] }, reason: { type: "string" },
+          }, required: ["block_id", "reason"] } },
+          deletes: { type: "array", items: { type: "object", properties: { block_id: { type: "string" }, reason: { type: "string" } }, required: ["block_id"] } },
+          inserts: { type: "array", items: { type: "object", properties: {
+            day_of_week: { type: "string" }, start_time: { type: "string" }, end_time: { type: "string" },
+            specialist_id: { type: "string" }, teacher_id: { type: "string" }, grade: { type: "string" }, subject: { type: "string" },
+            room: { type: ["string", "null"] }, week_label: { type: ["string", "null"] }, reason: { type: "string" },
+          }, required: ["day_of_week", "start_time", "end_time", "specialist_id", "teacher_id", "grade", "subject"] } },
+          summary: { type: "string" },
+        },
+        required: ["summary"],
+      },
     };
 
-    // Call the gateway with bounded retries. Rate-limit / credit errors are
-    // surfaced immediately (retrying won't help); transient 5xx, network
-    // faults, and unparseable bodies are retried with backoff so a single
-    // flaky response can't sink the whole resolution.
-    const MAX_ATTEMPTS = 3;
     let plan: Plan | null = null;
-    let lastError: { status: number; body: Record<string, unknown> } | null = null;
-
+    const MAX_ATTEMPTS = 2;
+    let lastErr: { status: number; message: string } | null = null;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      let aiResp: Response;
       try {
-        aiResp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-          body: JSON.stringify({
-            model: "google/gemini-2.5-pro",
-            messages: [
-              { role: "system", content: system },
-              { role: "user", content: user },
-            ],
-            response_format: { type: "json_object" },
-          }),
+        const resp = await anthropicClient().messages.create({
+          model: CLAUDE_MODEL,
+          max_tokens: 8000,
+          system,
+          tools: [RESOLVE_TOOL as any],
+          tool_choice: { type: "tool", name: "apply_resolution" },
+          messages: [{ role: "user", content: user }],
         });
-      } catch (netErr: any) {
-        lastError = { status: 502, body: { error: `AI gateway unreachable: ${netErr?.message ?? netErr}` } };
+        plan = (firstToolUse(resp.content as any[], "apply_resolution")?.input ?? null) as Plan | null;
+        if (plan) break;
+      } catch (err) {
+        lastErr = describeAnthropicError(err);
+        if (lastErr.status === 429 || lastErr.status === 402 || lastErr.status === 401) return json(lastErr.status, { error: lastErr.message });
         if (attempt < MAX_ATTEMPTS) { await new Promise((r) => setTimeout(r, 400 * attempt)); continue; }
-        break;
       }
-
-      // Don't retry conditions the caller must act on.
-      if (aiResp.status === 429) return json(429, { error: "AI rate limit exceeded. Try again shortly." });
-      if (aiResp.status === 402) return json(402, { error: "AI credits exhausted. Add credits in Settings → Workspace → Usage." });
-
-      if (!aiResp.ok) {
-        const txt = await aiResp.text();
-        lastError = { status: 502, body: { error: `AI gateway error: ${aiResp.status}`, detail: txt.slice(0, 500) } };
-        if (aiResp.status >= 500 && attempt < MAX_ATTEMPTS) { await new Promise((r) => setTimeout(r, 400 * attempt)); continue; }
-        // 4xx (other than 429/402) won't improve on retry.
-        break;
-      }
-
-      let content = "{}";
-      try {
-        const aiJson = await aiResp.json();
-        content = aiJson?.choices?.[0]?.message?.content ?? "{}";
-      } catch {
-        content = "{}";
-      }
-      console.log(`AI attempt ${attempt} raw content (first 500):`, content.slice(0, 500));
-
-      const parsed = parsePlan(content);
-      if (parsed) { plan = parsed; break; }
-
-      lastError = { status: 502, body: { error: "AI returned non-JSON content", raw: content.slice(0, 500) } };
-      if (attempt < MAX_ATTEMPTS) { await new Promise((r) => setTimeout(r, 400 * attempt)); continue; }
     }
 
     if (!plan) {
-      const err = lastError ?? { status: 502, body: { error: "AI did not return a usable plan" } };
-      return json(err.status, err.body);
+      return json(lastErr?.status ?? 502, { error: lastErr?.message ?? "AI did not return a usable plan" });
     }
 
     const validBlockIds = new Set(blocks.map((b: any) => b.id));

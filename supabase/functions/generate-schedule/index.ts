@@ -1906,13 +1906,34 @@ function runSimulatedAnnealing(
 
   const classStartMin = timeToMinutes(school.start_time ?? "08:00");
 
+  // Big-Group sessions (same specialist + grade + exact slot, different
+  // teachers, same week) are taught TOGETHER. SA must never move one member
+  // independently or the group splits across slots — so we exclude every
+  // combined-group member from the mutation candidate set. Computed once: these
+  // blocks are never mutated, so the object references stay valid across
+  // iterations (move/swap only replace the blocks they touch).
+  const combinedMembers = new Set<Block>();
+  for (const b of currentBlocks) {
+    if (!b.specialist_id || !b.teacher_id) continue;
+    for (const o of currentBlocks) {
+      if (o === b) continue;
+      if (
+        o.specialist_id === b.specialist_id && o.grade === b.grade &&
+        o.day_of_week === b.day_of_week && o.start_time === b.start_time &&
+        o.end_time === b.end_time && o.teacher_id !== b.teacher_id &&
+        (o.week_label ?? null) === (b.week_label ?? null)
+      ) { combinedMembers.add(b); break; }
+    }
+  }
+
   for (let iter = 0; iter < SA_MAX_ITER && T >= SA_T_MIN; iter++) {
     if (performance.now() - t0 > SA_TIME_BUDGET_MS) break;
     iterations++;
 
-    // Only mutate real teaching blocks (not lunch/planning/admin blocks)
+    // Only mutate real teaching blocks (not lunch/planning/admin/combined-group blocks)
     const teachingBlocks = currentBlocks.filter(b =>
-      b.specialist_id && b.teacher_id && b.grade !== "Lunch" && b.grade !== "Planning" && b.grade !== "Makeup"
+      b.specialist_id && b.teacher_id && b.grade !== "Lunch" && b.grade !== "Planning" && b.grade !== "Makeup" &&
+      !combinedMembers.has(b)
     );
     if (teachingBlocks.length < 2) break;
 
@@ -2188,24 +2209,42 @@ export function generateScheduleBlocks(
   weightOverrides?: Partial<Record<keyof ScoreBreakdown, number>>,
 ): SchedulerResult {
   // ─── E: Pre-flight feasibility ────────────────────────────────────
-  // Per-day capacity = Σ specialists working that day × max slots/day.
-  // Demand = grades × specialists (1 session per grade per specialist).
-  // If capacity < demand, no Monte-Carlo run can hit full coverage —
-  // surface an actionable error instead of producing a mediocre schedule.
-  const workingDays = new Set<string>();
-  for (const s of specialists) for (const d of (s.working_days ?? DAYS)) if (DAYS.includes(d)) workingDays.add(d);
-  const totalSpecDayCount = specialists.reduce(
-    (acc, s) => acc + ((s.working_days ?? DAYS).filter((d) => DAYS.includes(d)).length),
-    0,
-  );
-  const requiredPairs = grades.length * specialists.length;
-  if (specialists.length > 0 && grades.length > 0 && totalSpecDayCount < requiredPairs) {
-    throw new Error(
-      `Infeasible schedule: ${specialists.length} specialists × ${totalSpecDayCount} total working-days ` +
-      `cannot cover ${grades.length} grades × ${specialists.length} subjects = ${requiredPairs} required sessions. ` +
-      `Add specialists, expand working days, or enable A/B Week to halve weekly demand.`,
-    );
+  // Capacity is counted in SESSIONS, not specialist-days: a specialist teaches
+  // ~6–7 classes per working day, not one. The previous check compared
+  // specialist-DAY count against (grades × specialists) and wrongly rejected
+  // ordinary K-5 schools as "infeasible". We now estimate real session
+  // capacity vs. real session demand and only flag a genuine shortfall — and
+  // we surface it as an actionable warning rather than throwing, so the user
+  // still gets a best-effort schedule (the solver + no_coverage warnings show
+  // exactly which classes couldn't be covered).
+  const feasStartMin = timeToMinutes(school.start_time ?? "08:00");
+  const feasPeriodLen = (((school.class_duration && school.class_duration > 0) ? school.class_duration : 45) || 45)
+    + (school.passing_time ?? 5);
+  let sessionCapacity = 0;
+  for (const s of specialists) {
+    for (const d of (s.working_days ?? DAYS)) {
+      if (!DAYS.includes(d)) continue;
+      const endMin = getEndMinForDay(d, school);
+      sessionCapacity += Math.max(0, Math.floor((endMin - feasStartMin) / Math.max(1, feasPeriodLen)));
+    }
   }
+  // Demand = one session per (class, specialist). A/B and AA/BB strategies
+  // spread the same coverage across two weeks, halving weekly demand.
+  const feasStrategies: string[] = (school.conflict_strategies && school.conflict_strategies.length > 0)
+    ? school.conflict_strategies
+    : [school.conflict_strategy ?? "standard"];
+  const feasTwoWeek = feasStrategies.includes("ab_week") || feasStrategies.includes("aa_bb_week");
+  const requiredSessions = Math.ceil((teachers.length * specialists.length) / (feasTwoWeek ? 2 : 1));
+  // `feasibilityShortfall` is attached to the warnings later (see below) when
+  // capacity genuinely cannot meet demand. No hard throw — generation proceeds.
+  const feasibilityShortfall = (specialists.length > 0 && teachers.length > 0 && sessionCapacity < requiredSessions)
+    ? {
+        type: "capacity_shortfall",
+        severity: "error" as const,
+        message: `Not enough specialist time to cover every class: about ${sessionCapacity} sessions available per week vs. ${requiredSessions} needed.`,
+        suggestion: "Add a specialist, expand specialist working days, or enable A/B Week to halve weekly demand. The schedule below covers as many classes as it can.",
+      }
+    : null;
 
   // Never borrow planning_minutes (often 200+) as a class length — a null/zero
   // class_duration must fall back to 45, not to the specialist's weekly prep.
@@ -2344,7 +2383,7 @@ export function generateScheduleBlocks(
         chosenStrategy: "standard",
         attemptedStrategies: [{ strategy: "standard", error_count: 0, warning_count: 0 }],
         fallbackReason: null,
-        extraWarnings: [],
+        extraWarnings: feasibilityShortfall ? [feasibilityShortfall] : [],
         preferenceViolations: sa.preferenceViolations,
         monteCarloAttempts: mc.attempts,
         winningScore: sa.score,
@@ -2360,7 +2399,7 @@ export function generateScheduleBlocks(
       chosenStrategy: "standard",
       attemptedStrategies: [{ strategy: "standard", error_count: 0, warning_count: 0 }],
       fallbackReason: null,
-      extraWarnings: [],
+      extraWarnings: feasibilityShortfall ? [feasibilityShortfall] : [],
       preferenceViolations: mc.best.preferenceViolations,
       monteCarloAttempts: mc.attempts,
       winningScore: mc.bestScore,
@@ -2491,6 +2530,7 @@ export function generateScheduleBlocks(
   }
 
   const extraWarnings: Warning[] = [];
+  if (feasibilityShortfall) extraWarnings.push(feasibilityShortfall);
   if (chosenStrategy === "extra_rotation") {
     extraWarnings.push(...validateExtraRotation(baseBlocks, conflictGrades));
   }

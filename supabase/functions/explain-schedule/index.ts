@@ -2,7 +2,8 @@
 // Called from the client after generation/replan when blocks lack ai_explanation.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { generateText } from "npm:ai";
-import { createLovableAiGatewayProvider } from "../_shared/ai-gateway.ts";
+import { anthropicApiKey } from "../_shared/anthropic.ts";
+import { anthropicModel } from "../_shared/anthropic-aisdk.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -30,8 +31,7 @@ Deno.serve(async (req) => {
   const { data: userData, error: userErr } = await supabase.auth.getUser();
   if (userErr || !userData?.user) return json(401, { error: "Unauthorized" });
 
-  const apiKey = Deno.env.get("LOVABLE_API_KEY");
-  if (!apiKey) return json(500, { error: "LOVABLE_API_KEY not configured" });
+  if (!anthropicApiKey()) return json(500, { error: "Claude isn't set up yet — add the ANTHROPIC_API_KEY secret." });
 
   let body: { generation_id?: string };
   try { body = await req.json(); } catch { return json(400, { error: "Invalid JSON body" }); }
@@ -68,8 +68,7 @@ Deno.serve(async (req) => {
     line: `${b.day_of_week} ${String(b.start_time).slice(0, 5)}-${String(b.end_time).slice(0, 5)} | ${b.subject} | Gr ${b.grade ?? "—"} | ${b.specialist_id ? specMap.get(b.specialist_id)?.name ?? "?" : "—"} → ${b.teacher_id ? teachMap.get(b.teacher_id)?.name ?? "?" : "—"}${b.week_label ? ` [W${b.week_label}]` : ""}`,
   }));
 
-  const gateway = createLovableAiGatewayProvider(apiKey);
-  const model = gateway("google/gemini-3-flash-preview");
+  const model = anthropicModel();
 
   const prompt = `You are explaining why each block landed where it did in a K-6 specials schedule.
 For each block id, write ONE short sentence (max 18 words) of teacher-friendly reasoning. Mention things like grade-band fit, teacher availability, balance across days, or rotation week if relevant. Be specific, not generic.

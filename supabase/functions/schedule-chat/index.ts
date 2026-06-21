@@ -6,7 +6,8 @@
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { convertToModelMessages, streamText, stepCountIs, tool, type UIMessage } from "npm:ai";
 import { z } from "npm:zod";
-import { createLovableAiGatewayProvider } from "../_shared/ai-gateway.ts";
+import { anthropicApiKey, CLAUDE_MODEL } from "../_shared/anthropic.ts";
+import { anthropicModel } from "../_shared/anthropic-aisdk.ts";
 import { buildConstraintContext, violations as constraintViolations, describeViolation } from "../_shared/constraints.ts";
 
 const corsHeaders = {
@@ -70,8 +71,7 @@ Deno.serve(async (req) => {
   const { data: userData, error: userErr } = await supabase.auth.getUser();
   if (userErr || !userData?.user) return json(401, { error: "Unauthorized" });
 
-  const apiKey = Deno.env.get("LOVABLE_API_KEY");
-  if (!apiKey) return json(500, { error: "LOVABLE_API_KEY not configured" });
+  if (!anthropicApiKey()) return json(500, { error: "Claude isn't set up yet — add the ANTHROPIC_API_KEY secret to enable the AI editor." });
 
   let body: { generation_id?: string; messages?: UIMessage[] };
   try {
@@ -154,9 +154,7 @@ RULES
 - After each edit, briefly confirm what you PROPOSED. If a tool returns an error, explain and propose an alternative.
 - For complex rewrites that touch many blocks, use bulk_replan. Note: bulk_replan applies immediately (it regenerates into a new schedule version) and is NOT part of the Apply bar — only use it when the user asks for a broad regeneration, not for a couple of edits.`;
 
-  const initialRunId = req.headers.get("X-Lovable-AIG-Run-ID") ?? undefined;
-  const gateway = createLovableAiGatewayProvider(apiKey, initialRunId);
-  const model = gateway("google/gemini-3-flash-preview");
+  const model = anthropicModel(CLAUDE_MODEL);
 
   // ── Human-in-the-loop: tools PROPOSE changes, they don't persist. ──
   // Each mutating tool validates the edit (constraints + overlap) and updates

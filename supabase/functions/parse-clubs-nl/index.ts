@@ -1,7 +1,8 @@
 // Parse a free-text description of clubs/events into structured rows.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { generateText } from "npm:ai";
-import { createLovableAiGatewayProvider } from "../_shared/ai-gateway.ts";
+import { anthropicApiKey } from "../_shared/anthropic.ts";
+import { anthropicModel } from "../_shared/anthropic-aisdk.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -28,8 +29,7 @@ Deno.serve(async (req) => {
   const { data: userData, error: userErr } = await supabase.auth.getUser();
   if (userErr || !userData?.user) return json(401, { error: "Unauthorized" });
 
-  const apiKey = Deno.env.get("LOVABLE_API_KEY");
-  if (!apiKey) return json(500, { error: "LOVABLE_API_KEY not configured" });
+  if (!anthropicApiKey()) return json(500, { error: "Claude isn't set up yet — add the ANTHROPIC_API_KEY secret." });
 
   let body: { description?: string; kind?: "clubs" | "events" };
   try { body = await req.json(); } catch { return json(400, { error: "Invalid JSON body" }); }
@@ -38,8 +38,7 @@ Deno.serve(async (req) => {
   if (!desc) return json(400, { error: "description required" });
   if (desc.length > 5000) return json(400, { error: "description too long (max 5000 chars)" });
 
-  const gateway = createLovableAiGatewayProvider(apiKey);
-  const model = gateway("google/gemini-3-flash-preview");
+  const model = anthropicModel();
 
   const schemaHint = kind === "clubs"
     ? `Each row: { "name": string, "day_of_week": "Mon"|"Tue"|"Wed"|"Thu"|"Fri"|null, "start_time": "HH:MM"|null, "end_time": "HH:MM"|null, "grades": string[] (e.g. ["3","4","5"]), "leader": string|null, "location": string|null }`
