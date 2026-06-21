@@ -1,6 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { shuffle, deriveSeed, mulberry32, type Rng } from "./_random.ts";
-import { scoreSchedule, DEFAULT_WEIGHTS, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
+import { scoreSchedule, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
 import { qualityPercent } from "../_shared/scoring-rubric.ts";
 import { calibrateMonteCarlo, monteCarloRun, MonteCarloBudgetExceededError } from "./_monteCarlo.ts";
 
@@ -477,7 +477,11 @@ export function validatePlanningTime(blocks: Block[], specialists: Specialist[],
     // else fall back to the school default per day × working days.
     const workDayCount = (spec.working_days ?? DAYS).filter((d: string) => DAYS.includes(d)).length || DAYS.length;
     const perDayDefault = spec.planning_minutes ?? school.planning_minutes ?? 0;
-    const required = spec.weekly_planning_minutes ?? (perDayDefault * workDayCount);
+    // Part-time specialists carry their own (usually smaller) weekly planning
+    // guarantee — honor it instead of the full-time figure.
+    const required = (spec.is_part_time && spec.part_time_planning_minutes != null)
+      ? spec.part_time_planning_minutes
+      : (spec.weekly_planning_minutes ?? (perDayDefault * workDayCount));
     if (required > 0 && free < required) {
       warnings.push({
         type: "planning_shortfall",
@@ -2365,6 +2369,7 @@ export function generateScheduleBlocks(
       id: t.id,
       am_pm_preference: t.am_pm_preference,
       day_preference: t.day_preference,
+      weekly_planning_minutes: t.weekly_planning_minutes,
     })),
     grades,
   };

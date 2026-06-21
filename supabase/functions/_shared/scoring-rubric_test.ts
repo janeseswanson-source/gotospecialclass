@@ -27,9 +27,10 @@ Deno.test("qualityPercent: clamps to [0,100]", () => {
   assertEquals(qualityPercent({ errors: -1000 }), 0);
 });
 
-Deno.test("PENALTY_KEYS: the canonical 10-term set", () => {
+Deno.test("PENALTY_KEYS: the canonical term set", () => {
   assertEquals([...PENALTY_KEYS].sort(), [
     "cart_back_to_back", "class_repeats", "contract_min", "errors", "grade_cohesion",
-    "k_grade_after_780", "spec_dayload_stdev", "subject_day_clustering", "subject_gap", "warnings",
+    "k_grade_after_780", "spec_dayload_stdev", "subject_day_clustering", "subject_gap",
+    "teacher_planning", "warnings",
   ]);
 });

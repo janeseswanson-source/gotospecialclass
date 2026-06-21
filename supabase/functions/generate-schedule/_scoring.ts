@@ -35,6 +35,7 @@ export interface ScoreBreakdown {
   contract_min: number;
   subject_gap: number;
   subject_day_clustering: number;
+  teacher_planning: number;
 }
 
 export interface ScoreResult {
@@ -68,7 +69,7 @@ export interface ScoreableInput {
     contractual_minutes_extracted?: ContractExtract | null;
   };
   specialists: Array<{ id: string; subject?: string | null; working_days?: string[] | null }>;
-  teachers: Array<{ id: string; am_pm_preference?: string | null; day_preference?: string | null }>;
+  teachers: Array<{ id: string; am_pm_preference?: string | null; day_preference?: string | null; weekly_planning_minutes?: number | null }>;
   grades: string[];
 }
 
@@ -103,6 +104,10 @@ export const DEFAULT_WEIGHTS: Record<keyof ScoreBreakdown, number> = {
   // Phase 4: verifier-aligned penalties.
   subject_gap: -40,            // per (grade, specialist) pair with zero sessions
   subject_day_clustering: -15, // per duplicate of same subject on same day for same grade
+  // A classroom teacher's contractual planning time is the time their class is
+  // out at specials. Penalise each minute a teacher's weekly specials coverage
+  // falls short of their guaranteed weekly_planning_minutes.
+  teacher_planning: -0.05,
 };
 
 export function scoreSchedule(
@@ -302,6 +307,23 @@ export function scoreSchedule(
   }
   for (const n of subjDayCount.values()) if (n > 1) dayClusterDupes += n - 1;
 
+  // 13. Teacher planning shortfall: each classroom teacher's specials minutes
+  //     (their class out at a specialist = their guaranteed planning time) must
+  //     reach weekly_planning_minutes. Penalise the shortfall in minutes.
+  let teacherPlanningShortfall = 0;
+  const teacherSpecialsMin = new Map<string, number>();
+  for (const b of blocks) {
+    if (!b.specialist_id || !b.teacher_id) continue;
+    if (b.grade === "Lunch" || b.grade === "Planning" || b.grade === "Makeup") continue;
+    teacherSpecialsMin.set(b.teacher_id, (teacherSpecialsMin.get(b.teacher_id) ?? 0) + (timeToMinutes(b.end_time) - timeToMinutes(b.start_time)));
+  }
+  for (const t of input.teachers) {
+    const required = Number(t.weekly_planning_minutes ?? 0);
+    if (required <= 0) continue;
+    const have = teacherSpecialsMin.get(t.id) ?? 0;
+    if (have < required) teacherPlanningShortfall += required - have;
+  }
+
   const breakdown: ScoreBreakdown = {
     errors: errorCount * w.errors,
     warnings: warningCount * w.warnings,
@@ -317,6 +339,7 @@ export function scoreSchedule(
     contract_min: contractShortfallMin * w.contract_min,
     subject_gap: subjectGapPairs * w.subject_gap,
     subject_day_clustering: dayClusterDupes * w.subject_day_clustering,
+    teacher_planning: teacherPlanningShortfall * w.teacher_planning,
   };
 
   const total = Object.values(breakdown).reduce((a, b) => a + b, 0);

@@ -24,10 +24,11 @@ describe("scoringConstants.qualityPercent (parity with edge rubric)", () => {
   it("clamps to [0,100]", () => {
     expect(qualityPercent({ errors: -1000 })).toBe(0);
   });
-  it("canonical 10-term key set", () => {
+  it("canonical key set", () => {
     expect([...PENALTY_KEYS].sort()).toEqual([
       "cart_back_to_back", "class_repeats", "contract_min", "errors", "grade_cohesion",
-      "k_grade_after_780", "spec_dayload_stdev", "subject_day_clustering", "subject_gap", "warnings",
+      "k_grade_after_780", "spec_dayload_stdev", "subject_day_clustering", "subject_gap",
+      "teacher_planning", "warnings",
     ]);
   });
 });

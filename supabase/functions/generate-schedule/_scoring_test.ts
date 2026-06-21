@@ -58,6 +58,35 @@ function block(over: Partial<any> = {}) {
   };
 }
 
+Deno.test("scoreSchedule: teacher_planning penalises specials shortfall vs guarantee", () => {
+  // t1 guaranteed 90 min/wk planning; gets one 30-min specials block → 60 short.
+  const input: ScoreableInput = {
+    ...baseInput,
+    teachers: [{ id: "t1", am_pm_preference: null, day_preference: null, weekly_planning_minutes: 90 }],
+    grades: ["1"],
+  };
+  const result: ScoreableResult = {
+    blocks: [block({ teacher_id: "t1", start_time: "09:00", end_time: "09:30" })],
+    warnings: [], preferenceViolations: [],
+  };
+  const { breakdown } = scoreSchedule(result, input);
+  // 60 min short × −0.05 = −3.
+  assertEquals(Math.round(breakdown.teacher_planning * 100) / 100, -3);
+});
+
+Deno.test("scoreSchedule: teacher_planning is 0 when guarantee is met", () => {
+  const input: ScoreableInput = {
+    ...baseInput,
+    teachers: [{ id: "t1", am_pm_preference: null, day_preference: null, weekly_planning_minutes: 30 }],
+    grades: ["1"],
+  };
+  const result: ScoreableResult = {
+    blocks: [block({ teacher_id: "t1", start_time: "09:00", end_time: "09:30" })],
+    warnings: [], preferenceViolations: [],
+  };
+  assertEquals(scoreSchedule(result, input).breakdown.teacher_planning, 0);
+});
+
 Deno.test("scoreSchedule: errors dominate (−1000 each)", () => {
   const result: ScoreableResult = {
     blocks: [],

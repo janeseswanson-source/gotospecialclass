@@ -17,6 +17,7 @@ export const PENALTY_KEYS = [
   "grade_cohesion",
   "contract_min",
   "spec_dayload_stdev",
+  "teacher_planning",
   "warnings",
   "errors",
 ] as const;
