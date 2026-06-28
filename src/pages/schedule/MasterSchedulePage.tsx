@@ -14,7 +14,7 @@ import { formatTime as formatTimeDisplay, cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import ScheduleGrid, { type BlockData } from "@/components/schedule/ScheduleGrid";
 import ScrabbleTray from "@/components/schedule/ScrabbleTray";
-import EditBlockDialog from "@/components/schedule/EditBlockDialog";
+import BlockInspector from "@/components/schedule/BlockInspector";
 import QuoteBanner from "@/components/schedule/QuoteBanner";
 import { toast } from "@/hooks/use-toast";
 import { analyzeScheduleBlocks, type ScheduleWarning } from "@/lib/strategyFeasibility";
@@ -96,6 +96,7 @@ export default function MasterSchedulePage() {
   const [warningsDismissed, setWarningsDismissed] = useState(false);
   const [resolvingAI, setResolvingAI] = useState(false);
   const [conflictOutcome, setConflictOutcome] = useState<ConflictOutcome | null>(null);
+  const [explainPending, setExplainPending] = useState(false);
   const [showExplain, setShowExplain] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [updatingReview, setUpdatingReview] = useState(false);
@@ -552,6 +553,25 @@ export default function MasterSchedulePage() {
       return false;
     }
     return true;
+  }
+
+  // Power 3: generate AI explanations on demand for the current generation, then
+  // merge them in so the inspector's "why is this here?" fills in live.
+  async function handleRequestExplain() {
+    if (!selectedGen) return;
+    setExplainPending(true);
+    try {
+      await supabase.functions.invoke("explain-schedule", { body: { generation_id: selectedGen } });
+      const { data: refreshed } = await supabase.from("schedule_blocks").select("id, ai_explanation").eq("generation_id", selectedGen);
+      if (refreshed) {
+        const explMap = new Map(refreshed.map((r: { id: string; ai_explanation: string | null }) => [r.id, r.ai_explanation]));
+        setBlocks((prev) => prev.map((b) => ({ ...b, ai_explanation: explMap.get(b.id) ?? b.ai_explanation })));
+      }
+    } catch {
+      toast({ title: "Couldn't generate explanation", description: "Try again in a moment.", variant: "destructive" });
+    } finally {
+      setExplainPending(false);
+    }
   }
 
   // Power 5: the deterministic engine resolves conflicts (smallest blast radius,
@@ -1481,12 +1501,20 @@ export default function MasterSchedulePage() {
         )}
       </div>
 
-      <EditBlockDialog
-        block={editBlock}
-        specialists={specialists}
+      <BlockInspector
+        block={editBlock ? (blocks.find((b) => b.id === editBlock.id) ?? editBlock) : null}
         open={editOpen}
         onOpenChange={setEditOpen}
+        specialists={specialists}
+        locked={editBlock ? lockedIds.has(editBlock.id) : false}
+        conflicted={editBlock ? conflictIds.has(editBlock.id) : false}
+        resolvingConflicts={resolvingAI}
+        explanationPending={explainPending}
         onSave={handleSaveOverride}
+        onToggleLock={toggleLock}
+        onNotesChange={handleNotesChange}
+        onResolveConflicts={handleResolveWithAI}
+        onRequestExplain={handleRequestExplain}
       />
 
       <SpecialistExportModal
