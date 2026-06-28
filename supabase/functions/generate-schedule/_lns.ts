@@ -56,6 +56,11 @@ export interface LNSOptions {
   cooling?: number;
   /** Never-reached wall-clock safety valve (ms). Does not affect output. */
   safetyMs?: number;
+  /** Optional extra objective folded into accept + best-tracking (e.g. the
+   *  Phase-2 minimal-perturbation penalty). Added to the optimizer score; the
+   *  returned `score` stays the pure scoreSchedule total of the best-combined
+   *  candidate. Default: no adjustment (exact legacy behavior). */
+  objectiveAdjust?: (blocks: Block[]) => number;
 }
 
 export interface LNSResult {
@@ -159,8 +164,11 @@ function findFreeSlots(
 
 /** Attempt to recreate `destroyed` sessions on top of `survivors`. Returns the
  *  rebuilt block list, or null if any session could not be legally re-placed
- *  (in which case the round is abandoned and the current state kept). */
-function recreate(
+ *  (in which case the round is abandoned and the current state kept).
+ *
+ *  Exported for reuse by minimal-perturbation replanning (Phase 2): re-placing
+ *  exactly the sessions invalidated by an input change, leaving survivors put. */
+export function recreate(
   destroyed: Block[],
   survivors: Block[],
   specialists: Specialist[],
@@ -231,6 +239,8 @@ export function runLNS(
   const T_START = opts?.tStart ?? 30;
   const COOLING = opts?.cooling ?? 0.97;
   const SAFETY_MS = opts?.safetyMs ?? 30000;
+  // Default no-op ⇒ accept + best-tracking are exactly the pure score (legacy).
+  const adjust = opts?.objectiveAdjust ?? (() => 0);
 
   let currentBlocks = initialResult.blocks.slice();
   let currentScore = initialScore;
@@ -238,6 +248,9 @@ export function runLNS(
 
   let bestBlocks = currentBlocks.slice();
   let bestScore = currentScore;
+  // Best is tracked by the ADJUSTED objective so a minimal-perturbation candidate
+  // of equal pure quality is preferred; bestScore stays the pure score.
+  let bestCombined = currentScore + adjust(currentBlocks);
   let lastImprovementRound = -1;
 
   const classStartMin = timeToMinutes(school.start_time ?? "08:00");
@@ -292,12 +305,16 @@ export function runLNS(
       weightOverrides,
     ).total;
 
-    const delta = candScore - currentScore;
+    // Accept + best-track on the ADJUSTED objective. With the default no-op
+    // adjust this reduces to the pure score (identical to legacy behavior).
+    const candCombined = candScore + adjust(rebuilt);
+    const delta = candCombined - (currentScore + adjust(currentBlocks));
     if (delta > 0 || rng() < Math.exp(delta / T)) {
       currentBlocks = rebuilt;
       currentScore = candScore;
       accepted++;
-      if (candScore > bestScore) {
+      if (candCombined > bestCombined) {
+        bestCombined = candCombined;
         bestScore = candScore;
         bestBlocks = rebuilt.slice();
         lastImprovementRound = r;

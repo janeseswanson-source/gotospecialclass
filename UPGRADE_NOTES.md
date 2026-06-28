@@ -253,3 +253,30 @@ npm run test
   budget can now be safely reduced because background refinement compensates.
   Tested: `refineSchedule` never regresses, stays SSOT-legal, deterministic, and
   improves the complaint-school fixture.
+
+- **Phase 2 (done):** minimal-perturbation replanning. `_perturbation.ts` defines
+  the objective: a teaching block "matches the baseline" iff its exact placement
+  signature (`teacher|specialist|grade|day|start|end|week`) is in the committed
+  baseline; `countMovedBlocks` is the moved count, `perturbationAdjust` the
+  search hook. SA and LNS gained an optional `objectiveAdjust` folded into the
+  ACCEPT comparison (LNS also tracks best by the combined objective). **It is
+  additive and default-off, so SA/LNS output is byte-identical when no baseline
+  is supplied** (characterization + determinism tests still green). The term is
+  **kept entirely out of the public quality-% rubric** — it never touches
+  `scoreSchedule`'s breakdown or `scoring-rubric.ts`; it only biases accept
+  decisions. `refineSchedule` takes an optional `perturbationBaseline`;
+  `replanMinimal(baseline, isDisturbed, ctx)` re-places ONLY the disturbed
+  sessions (survivors locked by reference) and reports `movedFromBaseline`,
+  degrading gracefully to `ok=false` (caller falls back to full regen) when a
+  change can't be absorbed minimally. `refine-schedule` accepts
+  `perturbation_baseline_generation_id` to anchor a refine to a committed version
+  (replan flows), and returns `moved_from_baseline`.
+
+  **Measured:** a 2-session "room closes" disturbance → `replanMinimal` changes ≤2
+  blocks (survivors untouched) vs **102** for a full regenerate, 0 violations; a
+  perturbation-anchored re-solve stays measurably closer to the committed baseline
+  than a free one (61 vs 84 moved on the complaint-school fixture). Backend suite:
+  **122 passed / 0 failed.**
+
+  > Stability metric, not quality: if surfaced to users, `moved_from_baseline` is a
+  > separate, clearly-labeled number — never folded into the displayed quality %.

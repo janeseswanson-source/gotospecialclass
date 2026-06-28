@@ -41,7 +41,14 @@ Deno.serve(async (req) => {
     const { data: { user }, error: userErr } = await supabase.auth.getUser();
     if (userErr || !user) return json(401, { error: "Unauthorized" });
 
-    const body = await req.json() as { generation_id?: string; lns_rounds?: number; sa_iterations?: number };
+    const body = await req.json() as {
+      generation_id?: string;
+      lns_rounds?: number;
+      sa_iterations?: number;
+      /** Optional: anchor the refine to a committed baseline generation so the
+       *  re-solve is minimal-perturbation (Phase 2). Used by replan flows. */
+      perturbation_baseline_generation_id?: string;
+    };
     if (!body?.generation_id) return json(400, { error: "generation_id required" });
 
     const { data: gen, error: genErr } = await supabase
@@ -85,6 +92,17 @@ Deno.serve(async (req) => {
 
     if (persistedBlocks.length === 0) return json(400, { error: "Generation has no blocks to refine" });
 
+    // Optional minimal-perturbation baseline (Phase 2): load the committed
+    // version's blocks so the refine prefers keeping blocks in their slots.
+    let perturbationBaseline: Block[] | undefined;
+    if (body.perturbation_baseline_generation_id && body.perturbation_baseline_generation_id !== body.generation_id) {
+      const { data: baseBlocks } = await supabase
+        .from("schedule_blocks")
+        .select("*")
+        .eq("generation_id", body.perturbation_baseline_generation_id);
+      if (baseBlocks && baseBlocks.length > 0) perturbationBaseline = baseBlocks as Block[];
+    }
+
     // Learned weights (same gate as generate-schedule): only after >= 5 samples.
     const weightProfile = weightProfileRes.data;
     const weightOverrides: Partial<Record<keyof ScoreBreakdown, number>> | undefined =
@@ -97,6 +115,7 @@ Deno.serve(async (req) => {
       lnsRounds: typeof body.lns_rounds === "number" ? body.lns_rounds : 150,
       saMaxIterations: typeof body.sa_iterations === "number" ? body.sa_iterations : 1500,
       weightOverrides,
+      perturbationBaseline,
     });
 
     // Not improved → no new version; just report confidence so the UI can advise.
@@ -106,6 +125,7 @@ Deno.serve(async (req) => {
         generation_id: body.generation_id,
         quality_percent: result.qualityPercent,
         previous_quality_percent: result.previousQualityPercent,
+        moved_from_baseline: result.movedFromBaseline,
         confidence: result.confidence,
       });
     }
@@ -180,6 +200,7 @@ Deno.serve(async (req) => {
       blocks_count: rows.length,
       quality_percent: result.qualityPercent,
       previous_quality_percent: result.previousQualityPercent,
+      moved_from_baseline: result.movedFromBaseline,
       score_breakdown: result.scoreBreakdown,
       confidence: result.confidence,
       sa_iterations: result.saIterations,

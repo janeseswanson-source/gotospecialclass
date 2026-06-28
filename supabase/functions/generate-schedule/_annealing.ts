@@ -64,6 +64,11 @@ export interface SAOptions {
    *  iteration budget it is NEVER reached in normal operation, so it never
    *  changes output. Checked only periodically. Default 30000. */
   safetyMs?: number;
+  /** Optional extra objective folded into the ACCEPT comparison only (e.g. the
+   *  Phase-2 minimal-perturbation penalty). Returns a value ADDED to the
+   *  optimizer score when deciding acceptance; the returned `score` stays the
+   *  pure scoreSchedule total. Default: no adjustment (exact legacy behavior). */
+  objectiveAdjust?: (blocks: Block[]) => number;
 }
 
 export function runSimulatedAnnealing(
@@ -90,6 +95,8 @@ export function runSimulatedAnnealing(
   const SA_COOLING = 0.985;
   const SA_T_MIN = 0.5;
   const SA_SAFETY_MS = opts?.safetyMs ?? 30000;
+  // Default no-op ⇒ accept comparison is exactly the pure score delta (legacy).
+  const adjust = opts?.objectiveAdjust ?? (() => 0);
 
   let currentBlocks = initialResult.blocks.slice();
   let currentViolations = initialResult.preferenceViolations.slice();
@@ -335,7 +342,9 @@ export function runSimulatedAnnealing(
       weightOverrides,
     ).total;
 
-    const delta = candScore - currentScore;
+    // Accept on the ADJUSTED objective (pure score + objectiveAdjust). With the
+    // default no-op adjust this is identical to the pure score delta.
+    const delta = (candScore + adjust(candidateBlocks)) - (currentScore + adjust(currentBlocks));
     if (delta > 0 || rng() < Math.exp(delta / T)) {
       currentBlocks = candidateBlocks;
       currentScore = candScore;
