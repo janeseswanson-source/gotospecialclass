@@ -65,6 +65,10 @@ export interface LNSResult {
   rounds: number;
   accepted: number;
   improvement: number;
+  /** Round index (0-based) at which `bestScore` last improved, or -1 if the
+   *  initial schedule was never beaten. Feeds the convergence indicator
+   *  (Phase 1c): an improvement late in the budget ⇒ "still improving". */
+  lastImprovementRound: number;
 }
 
 const MUTABLE_NON_GRADES = new Set(["Lunch", "Planning", "Makeup"]);
@@ -234,6 +238,7 @@ export function runLNS(
 
   let bestBlocks = currentBlocks.slice();
   let bestScore = currentScore;
+  let lastImprovementRound = -1;
 
   const classStartMin = timeToMinutes(school.start_time ?? "08:00");
   let T = T_START;
@@ -295,6 +300,7 @@ export function runLNS(
       if (candScore > bestScore) {
         bestScore = candScore;
         bestBlocks = rebuilt.slice();
+        lastImprovementRound = r;
       }
     }
     T *= COOLING;
@@ -307,5 +313,6 @@ export function runLNS(
     rounds,
     accepted,
     improvement: bestScore - initialScore,
+    lastImprovementRound,
   };
 }

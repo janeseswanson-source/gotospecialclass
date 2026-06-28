@@ -212,3 +212,20 @@ npm run test
   for a future occupancy-by-week improvement.) Not yet wired into the request
   path — that is the background-refinement step (keeps the inline path under the
   edge CPU budget).
+
+- **Phase 1c (done):** `_confidence.ts` adds a quality-confidence signal the UI can
+  show. Two cheap, honest parts:
+  - **Convergence** (`computeConvergence`) from refinement telemetry
+    (`rounds`, `lastImprovementRound`, now reported by LNS): "still improving" vs.
+    "plateaued/converged" (no improvement in the last 30% of the budget).
+  - **Headroom** (`estimateHeadroom`): a relaxation lower bound on structurally
+    unavoidable soft penalty — session capacity (same per-specialist formula as
+    the generator's feasibility precheck) vs. (grade × specialist) coverage
+    demand. `forcedSubjectGaps = max(0, requiredPairs − capacity)` →
+    `unavoidablePenaltyLB`. Subtracting that floor from the actual penalty bounds
+    the optimality gap from above (`gapQualityPoints`, in public-rubric points).
+  `computeQualityConfidence` combines them into an assessment —
+  `structurally_limited` (add capacity) / `more_headroom` (run another pass) /
+  `near_optimal` (within ~2 quality points of the bound) — plus a recommendation
+  string. It is NOT part of the public quality-% rubric and does not change it.
+  Backend suite: **112 passed / 0 failed.**
