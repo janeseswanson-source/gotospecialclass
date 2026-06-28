@@ -303,3 +303,30 @@ npm run test
   case returns a structured escalation, never a crash or illegal fix. Big-Group
   combined classes are correctly NOT treated as conflicts (SSOT exemption holds).
   Backend suite: **127 passed / 0 failed.**
+
+- **Phase 4 (done):** learnable-weights loop, human-gated. `_weightlearning.ts`
+  does lightweight inverse optimization: from the original (generated) and edited
+  (admin-preferred) score breakdowns — scored with the same weights so
+  `|breakdown_k| ∝ count_k` — it computes a gradient
+  `(edited[k] − original[k]) / w_k` and steps each weight by
+  `lr·|default_k|·sign(gradient)` so the admin's preferred layout would have
+  scored higher. Penalties the admin reduced get a LARGER magnitude; penalties
+  they accepted get a SMALLER one; rewards they increased get more weight. Every
+  weight is clamped to ±50% of its default and hard-constraint terms
+  (errors/warnings) are never reweighted. `update-scoring-weights` is now a real
+  loop with two human-gated actions: **propose** (observe edits → stage a
+  `proposed_weights` proposal; active weights untouched) and **confirm** (copy the
+  proposal into active `weights`, bump `sample_count`, clear the proposal). A
+  weight change is therefore a new EXPLICIT input to future generations, never
+  hidden state. Migration `20260628010000` adds `proposed_weights`/`proposed_at`.
+  **Tested:** edits in each direction produce sane, clamped proposals; repeated
+  consistent samples converge to the ±50% clamp and stop; nothing auto-applies.
+  Full backend: **134 passed / 0 failed**; frontend **27 passed**.
+
+## 6. Final state
+
+All phases 0–4 are merged. Tooling note: edge functions that import the Anthropic
+SDK only type-check with `deno check --node-modules-dir=auto` (the SDK is an npm
+dep); this is a pre-existing local-tooling quirk, not a code issue, and affects
+the untouched functions too. Phase 5 (a CP-SAT worker for a provable optimality
+gap) remains intentionally unstarted, behind a future flag.

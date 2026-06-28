@@ -128,7 +128,7 @@ export interface Specialist {
   plus_rotation?: Record<string, { active?: boolean; startTime?: string; grades?: Array<{ grade: string; startTime?: string; durationMinutes?: number }> }> | null;
 }
 
-interface Teacher {
+export interface Teacher {
   id: string;
   name: string;
   grade: string;
