@@ -229,3 +229,27 @@ npm run test
   `near_optimal` (within ~2 quality points of the bound) — plus a recommendation
   string. It is NOT part of the public quality-% rubric and does not change it.
   Backend suite: **112 passed / 0 failed.**
+
+- **Phase 1 background refinement (done):** `_refine.ts::refineSchedule` is the
+  heavy out-of-request-path pass: SA (larger deterministic budget) then LNS, on a
+  persisted schedule. It is **trust-anchored** — the candidate is re-validated
+  against the actual SSOT (`_shared/constraints.ts::violations`) over the full
+  block set and accepted ONLY if it has zero violations, no new error warnings,
+  and a quality % no lower than the input; otherwise the original is returned
+  untouched. Deterministic (seed from the generation id). Reports the Phase-1c
+  confidence signal. New thin edge function `refine-schedule/` wires DB I/O around
+  it: load a generation → refine → if improved, write a NEW version
+  (`refined_from_generation_id`, added by migration `20260628000000`) atomically
+  (the source version is never mutated); else return the confidence signal so the
+  UI can advise. No LLM involvement — the deterministic engine places + validates.
+
+  **Inline vs background split:** the inline `generate-schedule` path keeps its
+  existing (now-deterministic, bounded) SA so it returns a good schedule fast
+  under the edge CPU ceiling; the NEW heavy lever (LNS + larger SA budgets) lives
+  only in `refine-schedule`, which the client calls after generation. This is the
+  additive, low-risk reading of "move heavy work to background": inline behavior
+  is unchanged (snapshots byte-identical), background adds the improvement. If a
+  very large/contended school ever pressures the inline CPU budget, the inline SA
+  budget can now be safely reduced because background refinement compensates.
+  Tested: `refineSchedule` never regresses, stays SSOT-legal, deterministic, and
+  improves the complaint-school fixture.
