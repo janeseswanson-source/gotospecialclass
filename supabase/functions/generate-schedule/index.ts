@@ -37,6 +37,10 @@ import { OccupancyTracker, type Interval } from "./_occupancy.ts";
 // Re-export so existing importers (tests, other functions) keep `import {
 // OccupancyTracker } from "./index.ts"` working unchanged after the extraction.
 export { OccupancyTracker, type Interval };
+// SA refinement lives in _annealing.ts (Phase 0). The import cycle (it imports
+// leaf helpers back from here) is safe: all cross-references are inside function
+// bodies, evaluated at runtime, never at module init. See _annealing.ts header.
+import { runSimulatedAnnealing } from "./_annealing.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -44,7 +48,7 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
 // Schedule upper grades first — older grades have stricter pull-out
 // constraints and stricter standards-time requirements, so they should
@@ -84,7 +88,7 @@ export function timeToMinutes(t: string): number {
   return h * 60 + m;
 }
 
-function minutesToTime(mins: number): string {
+export function minutesToTime(mins: number): string {
   const h = Math.floor(mins / 60);
   const m = mins % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
@@ -103,7 +107,7 @@ export function schoolCanonicalStep(school: { class_duration?: number | null; pa
 
 // ─── Interfaces ──────────────────────────────────────────────────────
 
-interface Specialist {
+export interface Specialist {
   id: string;
   name: string;
   subject: string;
@@ -197,7 +201,7 @@ interface AssignResult {
   preferenceViolations: PreferenceViolation[];
 }
 
-interface StrategyResult {
+export interface StrategyResult {
   blocks: Block[];
   preferenceViolations: PreferenceViolation[];
 }
@@ -676,7 +680,7 @@ export function validateContractualTeachers(
 // `canonicalStep` is required; callers compute it once from school
 // settings. `defaultSetupTime`/`gradeTimeConfig` are kept on the
 // signature for back-compat with other callers that still pass them.
-function buildTimeSlotsForGrade(
+export function buildTimeSlotsForGrade(
   _grade: string,
   classDuration: number,
   startMin: number,
@@ -765,7 +769,7 @@ function selectRecessConfigsForGrade(recessConfigs: any[], grade?: string | null
 // When `grade` is provided, only the band that matches that grade is used —
 // otherwise multiple band rows would union into one big blackout that wipes
 // out most of the teaching day.
-function getRecessWindowsForDay(
+export function getRecessWindowsForDay(
   day: string,
   school: any,
   recessConfigs: any[],
@@ -1886,293 +1890,10 @@ function getBlockedDayTimeRanges(
   return blocked;
 }
 
-// ─── Simulated Annealing refinement ──────────────────────────────────
-
-function buildOccupancyFromBlocks(
-  baseOccupancy: OccupancyTracker,
-  blocks: Block[],
-): OccupancyTracker {
-  const occ = baseOccupancy.clone();
-  for (const b of blocks) {
-    if (!b.specialist_id) continue;
-    occ.book(b.day_of_week, timeToMinutes(b.start_time), timeToMinutes(b.end_time), b.specialist_id, b.teacher_id);
-  }
-  return occ;
-}
-
-function runSimulatedAnnealing(
-  initialResult: StrategyResult,
-  initialScore: number,
-  scoringInput: ScoreableInput,
-  specialists: Specialist[],
-  grades: string[],
-  school: any,
-  recessConfigs: any[],
-  baseOccupancy: OccupancyTracker,
-  rng: Rng,
-  weightOverrides?: Partial<Record<keyof ScoreBreakdown, number>>,
-): { blocks: Block[]; preferenceViolations: PreferenceViolation[]; score: number; iterations: number; improvement: number } {
-  const SA_MAX_ITER = 1000;
-  const SA_T_START = 50;
-  const SA_COOLING = 0.985;
-  const SA_T_MIN = 0.5;
-  const SA_TIME_BUDGET_MS = 20000;
-
-  let currentBlocks = initialResult.blocks.slice();
-  let currentViolations = initialResult.preferenceViolations.slice();
-  let currentScore = initialScore;
-  let T = SA_T_START;
-  let iterations = 0;
-  const t0 = performance.now();
-
-  const classStartMin = timeToMinutes(school.start_time ?? "08:00");
-
-  // Big-Group sessions (same specialist + grade + exact slot, different
-  // teachers, same week) are taught TOGETHER. SA must never move one member
-  // independently or the group splits across slots — so we exclude every
-  // combined-group member from the mutation candidate set. Computed once: these
-  // blocks are never mutated, so the object references stay valid across
-  // iterations (move/swap only replace the blocks they touch).
-  const combinedMembers = new Set<Block>();
-  for (const b of currentBlocks) {
-    if (!b.specialist_id || !b.teacher_id) continue;
-    for (const o of currentBlocks) {
-      if (o === b) continue;
-      if (
-        o.specialist_id === b.specialist_id && o.grade === b.grade &&
-        o.day_of_week === b.day_of_week && o.start_time === b.start_time &&
-        o.end_time === b.end_time && o.teacher_id !== b.teacher_id &&
-        (o.week_label ?? null) === (b.week_label ?? null)
-      ) { combinedMembers.add(b); break; }
-    }
-  }
-
-  for (let iter = 0; iter < SA_MAX_ITER && T >= SA_T_MIN; iter++) {
-    if (performance.now() - t0 > SA_TIME_BUDGET_MS) break;
-    iterations++;
-
-    // Only mutate real teaching blocks (not lunch/planning/admin/combined-group blocks)
-    const teachingBlocks = currentBlocks.filter(b =>
-      b.specialist_id && b.teacher_id && b.grade !== "Lunch" && b.grade !== "Planning" && b.grade !== "Makeup" &&
-      !combinedMembers.has(b)
-    );
-    if (teachingBlocks.length < 2) break;
-
-    // Choose mutation type: 0 = swap, 1 = move, 2 = anti-cluster shuffle
-    const mutationType = Math.floor(rng() * 3);
-    let candidateBlocks: Block[] | null = null;
-
-    if (mutationType === 0) {
-      // SWAP: pick two blocks with same specialist but different teachers
-      const bySpec: Record<string, Block[]> = {};
-      for (const b of teachingBlocks) {
-        if (!b.specialist_id) continue;
-        (bySpec[b.specialist_id] ??= []).push(b);
-      }
-      const eligibleSpecs = Object.entries(bySpec).filter(([, bs]) => {
-        const uniqueTeachers = new Set(bs.map(b => b.teacher_id)).size;
-        return uniqueTeachers >= 2;
-      });
-      if (eligibleSpecs.length === 0) { T *= SA_COOLING; continue; }
-
-      const [, specBlocks] = eligibleSpecs[Math.floor(rng() * eligibleSpecs.length)];
-      const idxA = Math.floor(rng() * specBlocks.length);
-      let idxB = Math.floor(rng() * (specBlocks.length - 1));
-      if (idxB >= idxA) idxB++;
-      const blockA = specBlocks[idxA];
-      const blockB = specBlocks[idxB];
-      if (blockA.teacher_id === blockB.teacher_id) { T *= SA_COOLING; continue; }
-
-      // Build occupancy without blockA and blockB
-      const testBlocks = currentBlocks.filter(b => b !== blockA && b !== blockB);
-      const occ = buildOccupancyFromBlocks(baseOccupancy, testBlocks);
-
-      // Try swap: A gets B's slot, B gets A's slot
-      const newA: Block = { ...blockA, day_of_week: blockB.day_of_week, start_time: blockB.start_time, end_time: blockB.end_time };
-      const newB: Block = { ...blockB, day_of_week: blockA.day_of_week, start_time: blockA.start_time, end_time: blockA.end_time };
-
-      const aStart = timeToMinutes(newA.start_time);
-      const aEnd = timeToMinutes(newA.end_time);
-      const bStart = timeToMinutes(newB.start_time);
-      const bEnd = timeToMinutes(newB.end_time);
-
-      if (!occ.isSpecialistFree(newA.day_of_week, aStart, aEnd, newA.specialist_id!)) { T *= SA_COOLING; continue; }
-      if (newA.teacher_id && !occ.isTeacherFree(newA.day_of_week, aStart, aEnd, newA.teacher_id)) { T *= SA_COOLING; continue; }
-      if (!occ.isGradeRangeFree(newA.day_of_week, newA.grade, aStart, aEnd)) { T *= SA_COOLING; continue; }
-
-      occ.book(newA.day_of_week, aStart, aEnd, newA.specialist_id!, newA.teacher_id);
-      if (!occ.isSpecialistFree(newB.day_of_week, bStart, bEnd, newB.specialist_id!)) { T *= SA_COOLING; continue; }
-      if (newB.teacher_id && !occ.isTeacherFree(newB.day_of_week, bStart, bEnd, newB.teacher_id)) { T *= SA_COOLING; continue; }
-      if (!occ.isGradeRangeFree(newB.day_of_week, newB.grade, bStart, bEnd)) { T *= SA_COOLING; continue; }
-
-      candidateBlocks = currentBlocks.map(b => b === blockA ? newA : b === blockB ? newB : b);
-    } else if (mutationType === 1) {
-      // MOVE: pick one block and relocate to a free slot for same (specialist, teacher)
-      const blockToMove = teachingBlocks[Math.floor(rng() * teachingBlocks.length)];
-      const spec = specialists.find(s => s.id === blockToMove.specialist_id);
-      if (!spec) { T *= SA_COOLING; continue; }
-
-      const duration = timeToMinutes(blockToMove.end_time) - timeToMinutes(blockToMove.start_time);
-      let workDays = (spec.working_days ?? DAYS).filter(d => DAYS.includes(d));
-      if (workDays.length === 0) { T *= SA_COOLING; continue; }
-
-      // Never manufacture an idle day: if this is the specialist's LAST block
-      // on its day, it may only move within that day, not to another one.
-      const isLastOnDay = !teachingBlocks.some(
-        (b) => b !== blockToMove && b.specialist_id === blockToMove.specialist_id && b.day_of_week === blockToMove.day_of_week,
-      );
-      if (isLastOnDay) workDays = [blockToMove.day_of_week];
-
-      // Build candidate free slots across all working days
-      const testBlocks = currentBlocks.filter(b => b !== blockToMove);
-      const occ = buildOccupancyFromBlocks(baseOccupancy, testBlocks);
-
-      // Candidate starts = the grade's period grid ∪ start times already used
-      // on that day. The union keeps SA's balancing freedom (it can slide into
-      // any existing "row" on any day) while never inventing a NEW off-grid
-      // start time — this keeps the printed grid to a handful of clean rows
-      // instead of dozens of 5-minute-offset ones.
-      const saPassing = school.passing_time ?? 5;
-      const saCanonicalStep = schoolCanonicalStep(school);
-      const saSetup = school.setup_time ?? 15;
-      const saGradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
-      const freeSlots: Array<{ day: string; start: number; end: number }> = [];
-      for (const day of workDays) {
-        const endMin = getEndMinForDay(day, school);
-        const recessWindows = getRecessWindowsForDay(day, school, recessConfigs, blockToMove.grade);
-        const candidateStarts = new Set<number>(
-          buildTimeSlotsForGrade(
-            blockToMove.grade, duration, classStartMin, endMin,
-            saPassing, saSetup, saGradeTimeConfig, recessWindows, saCanonicalStep,
-          ).map((sl) => sl.start),
-        );
-        for (const b of currentBlocks) {
-          if (b.day_of_week === day) candidateStarts.add(timeToMinutes(b.start_time));
-        }
-        for (const s of [...candidateStarts].sort((x, y) => x - y)) {
-          const e = s + duration;
-          if (s < classStartMin || e > endMin) continue;
-          if (recessWindows.some(r => s < r.end && e > r.start)) continue;
-          if (!occ.isSpecialistFree(day, s, e, blockToMove.specialist_id!)) continue;
-          if (blockToMove.teacher_id && !occ.isTeacherFree(day, s, e, blockToMove.teacher_id)) continue;
-          if (!occ.isGradeRangeFree(day, blockToMove.grade, s, e)) continue;
-          freeSlots.push({ day, start: s, end: e });
-          if (freeSlots.length >= 10) break;
-        }
-        if (freeSlots.length >= 10) break;
-      }
-      if (freeSlots.length === 0) { T *= SA_COOLING; continue; }
-
-      const chosen = freeSlots[Math.floor(rng() * freeSlots.length)];
-      // Don't move to the same slot
-      if (chosen.day === blockToMove.day_of_week &&
-          chosen.start === timeToMinutes(blockToMove.start_time)) { T *= SA_COOLING; continue; }
-
-      const newBlock: Block = {
-        ...blockToMove,
-        day_of_week: chosen.day,
-        start_time: minutesToTime(chosen.start),
-        end_time: minutesToTime(chosen.end),
-      };
-      candidateBlocks = currentBlocks.map(b => b === blockToMove ? newBlock : b);
-    } else {
-      // ANTI-CLUSTER SHUFFLE: find a (grade, subject, day) duplicate and
-      // relocate one occurrence to a day that doesn't already have that
-      // subject for the grade. Directly attacks subject_day_clustering.
-      const subjDayMap = new Map<string, Block[]>();
-      const gradeSubjDays = new Map<string, Set<string>>();
-      for (const b of teachingBlocks) {
-        const k = `${b.grade}|${b.subject ?? ""}|${b.day_of_week}`;
-        (subjDayMap.get(k) ?? subjDayMap.set(k, []).get(k)!).push(b);
-        const gk = `${b.grade}|${b.subject ?? ""}`;
-        (gradeSubjDays.get(gk) ?? gradeSubjDays.set(gk, new Set()).get(gk)!).add(b.day_of_week);
-      }
-      const dupGroups: Block[][] = [];
-      for (const g of subjDayMap.values()) if (g.length >= 2) dupGroups.push(g);
-      if (dupGroups.length === 0) { T *= SA_COOLING; continue; }
-
-      const group = dupGroups[Math.floor(rng() * dupGroups.length)];
-      const blockToMove = group[Math.floor(rng() * group.length)];
-      const spec = specialists.find(s => s.id === blockToMove.specialist_id);
-      if (!spec) { T *= SA_COOLING; continue; }
-      // Never strand a specialist on an idle day: if this is the only block
-      // on this day for this specialist, skip — matches the MOVE guard.
-      const isLastOnDay = !teachingBlocks.some(
-        (b) => b !== blockToMove && b.specialist_id === blockToMove.specialist_id && b.day_of_week === blockToMove.day_of_week,
-      );
-      if (isLastOnDay) { T *= SA_COOLING; continue; }
-      const usedDays = gradeSubjDays.get(`${blockToMove.grade}|${blockToMove.subject ?? ""}`) ?? new Set();
-      const duration = timeToMinutes(blockToMove.end_time) - timeToMinutes(blockToMove.start_time);
-      const workDays = (spec.working_days ?? DAYS).filter(d => DAYS.includes(d) && !usedDays.has(d));
-      if (workDays.length === 0) { T *= SA_COOLING; continue; }
-
-
-      const testBlocks = currentBlocks.filter(b => b !== blockToMove);
-      const occ = buildOccupancyFromBlocks(baseOccupancy, testBlocks);
-      const saPassing = school.passing_time ?? 5;
-      const saCanonicalStep = schoolCanonicalStep(school);
-      const saSetup = school.setup_time ?? 15;
-      const saGradeTimeConfig = (school.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) ?? {};
-      const freeSlots: Array<{ day: string; start: number; end: number }> = [];
-      for (const day of workDays) {
-        const endMin = getEndMinForDay(day, school);
-        const recessWindows = getRecessWindowsForDay(day, school, recessConfigs, blockToMove.grade);
-        const candidateStarts = new Set<number>(
-          buildTimeSlotsForGrade(blockToMove.grade, duration, classStartMin, endMin, saPassing, saSetup, saGradeTimeConfig, recessWindows, saCanonicalStep).map(sl => sl.start),
-        );
-        for (const b of currentBlocks) if (b.day_of_week === day) candidateStarts.add(timeToMinutes(b.start_time));
-        for (const s of [...candidateStarts].sort((x, y) => x - y)) {
-          const e = s + duration;
-          if (s < classStartMin || e > endMin) continue;
-          if (recessWindows.some(r => s < r.end && e > r.start)) continue;
-          if (!occ.isSpecialistFree(day, s, e, blockToMove.specialist_id!)) continue;
-          if (blockToMove.teacher_id && !occ.isTeacherFree(day, s, e, blockToMove.teacher_id)) continue;
-          if (!occ.isGradeRangeFree(day, blockToMove.grade, s, e)) continue;
-          freeSlots.push({ day, start: s, end: e });
-          if (freeSlots.length >= 10) break;
-        }
-        if (freeSlots.length >= 10) break;
-      }
-      if (freeSlots.length === 0) { T *= SA_COOLING; continue; }
-      const chosen = freeSlots[Math.floor(rng() * freeSlots.length)];
-      const newBlock: Block = {
-        ...blockToMove,
-        day_of_week: chosen.day,
-        start_time: minutesToTime(chosen.start),
-        end_time: minutesToTime(chosen.end),
-      };
-      candidateBlocks = currentBlocks.map(b => b === blockToMove ? newBlock : b);
-    }
-
-    if (!candidateBlocks) { T *= SA_COOLING; continue; }
-
-    // Score the candidate
-    const candWarnings = computeWarnings(candidateBlocks, specialists, grades);
-    if (strategyFailed(candWarnings)) { T *= SA_COOLING; continue; }
-
-    const candScore = scoreSchedule(
-      { blocks: candidateBlocks, warnings: candWarnings, preferenceViolations: currentViolations },
-      scoringInput,
-      weightOverrides,
-    ).total;
-
-    const delta = candScore - currentScore;
-    if (delta > 0 || rng() < Math.exp(delta / T)) {
-      currentBlocks = candidateBlocks;
-      currentScore = candScore;
-    }
-
-    T *= SA_COOLING;
-  }
-
-  return {
-    blocks: currentBlocks,
-    preferenceViolations: currentViolations,
-    score: currentScore,
-    iterations,
-    improvement: currentScore - initialScore,
-  };
-}
+// ─── Simulated Annealing refinement ────────────────────
+// Extracted to ./_annealing.ts (Phase 0); imported at the top of this file.
+// Kept out of the orchestrator so the search/refinement layer can evolve
+// (Phase 1) without churning generate orchestration.
 
 // ─── XAI: block placement reason ─────────────────────────────────────
 export function computePlacementReason(
