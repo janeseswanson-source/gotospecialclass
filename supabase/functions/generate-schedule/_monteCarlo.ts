@@ -116,6 +116,10 @@ export function calibrateMonteCarlo<T>(
   strategyFn: (rng: Rng) => T,
   seed: number,
   label = "monteCarlo",
+  /** Projected-time ceiling that trips MonteCarloBudgetExceededError. Defaults
+   *  to the 90s background budget; injectable so tests can exercise the gate
+   *  without a multi-second calibration spin. */
+  budgetMs = 90_000,
 ): CalibrationResult<T> {
   const rng = mulberry32(deriveSeed(seed, "calibration"));
   const t0 = performance.now();
@@ -133,7 +137,7 @@ export function calibrateMonteCarlo<T>(
   else iterations = 12;
 
   const projectedMs = calibrationMs * iterations;
-  if (projectedMs > 90_000) {
+  if (projectedMs > budgetMs) {
     throw new MonteCarloBudgetExceededError(calibrationMs, projectedMs);
   }
 

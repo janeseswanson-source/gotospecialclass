@@ -48,22 +48,26 @@ Deno.test("monteCarloRun: rejects iterations < 1", () => {
   assertThrows(() => monteCarloRun(fakeStrategy, fakeScore, { iterations: 0, seed: 1 }));
 });
 
-Deno.test("calibrateMonteCarlo: fast strategy → 200 iterations", () => {
+Deno.test("calibrateMonteCarlo: fast strategy → 80 iterations (current fast tier)", () => {
+  // The CPU-aware tiers were lowered for the ~2s edge ceiling: a fast (≤150ms)
+  // calibration run maps to the 80-iteration tier.
   const cal = calibrateMonteCarlo(fakeStrategy, 123, "fake");
-  assertEquals(cal.iterations, 200);
+  assertEquals(cal.iterations, 80);
   assert(cal.calibrationMs >= 0);
 });
 
-Deno.test("calibrateMonteCarlo: throws budget-exceeded when projected > 60s", () => {
-  // Spin >1.3s per run → calibrationMs * 50 iters > 60_000ms triggers the gate.
+Deno.test("calibrateMonteCarlo: throws budget-exceeded when projected > budget", () => {
+  // Inject a tiny budget so the gate trips deterministically off a fast
+  // calibration run instead of needing a multi-second spin: a ≤150ms run picks
+  // 80 iterations, so any positive calibration time × 80 exceeds a 0ms budget.
   const slow = (_rng: Rng): FakeResult => {
-    const until = performance.now() + 1400;
-    while (performance.now() < until) { /* spin */ }
+    const until = performance.now() + 5;
+    while (performance.now() < until) { /* tiny spin so calibrationMs > 0 */ }
     return { picks: [1] };
   };
   let thrown: unknown = null;
   try {
-    calibrateMonteCarlo(slow, 1, "slow");
+    calibrateMonteCarlo(slow, 1, "slow", /* budgetMs */ 0);
   } catch (e) {
     thrown = e;
   }

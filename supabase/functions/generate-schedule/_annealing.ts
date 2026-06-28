@@ -52,6 +52,20 @@ export function buildOccupancyFromBlocks(
   return occ;
 }
 
+/** Tuning for a simulated-annealing run. All fields are deterministic inputs;
+ *  the same options + same seed ⇒ the same result. */
+export interface SAOptions {
+  /** Deterministic iteration budget (hard cap on the cooling loop). The actual
+   *  count is governed by min(maxIterations, iters-to-reach-T_MIN) — a pure
+   *  function of the config, NOT of wall-clock. Default 1000 (legacy behavior). */
+  maxIterations?: number;
+  /** Wall-clock SAFETY cutoff in ms. This is a last-resort guard against a
+   *  pathological runaway (e.g. a scorer that hangs); for the configured
+   *  iteration budget it is NEVER reached in normal operation, so it never
+   *  changes output. Checked only periodically. Default 30000. */
+  safetyMs?: number;
+}
+
 export function runSimulatedAnnealing(
   initialResult: StrategyResult,
   initialScore: number,
@@ -63,12 +77,19 @@ export function runSimulatedAnnealing(
   baseOccupancy: OccupancyTracker,
   rng: Rng,
   weightOverrides?: Partial<Record<keyof ScoreBreakdown, number>>,
+  opts?: SAOptions,
 ): { blocks: Block[]; preferenceViolations: PreferenceViolation[]; score: number; iterations: number; improvement: number } {
-  const SA_MAX_ITER = 1000;
+  // Phase 1a — DETERMINISM: the iteration budget is a fixed, seeded count
+  // (maxIterations) and the cooling schedule is deterministic, so the same seed
+  // yields the same result. The previous wall-clock budget (SA_TIME_BUDGET_MS)
+  // made the iteration count depend on machine speed — removed. Wall-clock now
+  // only acts as a never-reached safety valve (SA_SAFETY_MS), checked
+  // periodically, that does not change output for in-budget runs.
+  const SA_MAX_ITER = Math.max(0, opts?.maxIterations ?? 1000);
   const SA_T_START = 50;
   const SA_COOLING = 0.985;
   const SA_T_MIN = 0.5;
-  const SA_TIME_BUDGET_MS = 20000;
+  const SA_SAFETY_MS = opts?.safetyMs ?? 30000;
 
   let currentBlocks = initialResult.blocks.slice();
   let currentViolations = initialResult.preferenceViolations.slice();
@@ -100,7 +121,13 @@ export function runSimulatedAnnealing(
   }
 
   for (let iter = 0; iter < SA_MAX_ITER && T >= SA_T_MIN; iter++) {
-    if (performance.now() - t0 > SA_TIME_BUDGET_MS) break;
+    // SAFETY VALVE ONLY (see SAOptions.safetyMs). Checked every 128 iterations
+    // so it cannot act as a fine-grained budget. For the configured iteration
+    // budget this is never reached, so it does not affect output / determinism.
+    if ((iter & 127) === 0 && performance.now() - t0 > SA_SAFETY_MS) {
+      console.warn(`[SA] safety cutoff at iter ${iter}/${SA_MAX_ITER} after ${SA_SAFETY_MS}ms — lower maxIterations for inline use`);
+      break;
+    }
     iterations++;
 
     // Only mutate real teaching blocks (not lunch/planning/admin/combined-group blocks)

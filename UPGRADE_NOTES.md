@@ -161,6 +161,36 @@ npm run test
 
 ## 5. Phase log
 
-- **Phase 0 (in progress):** characterization tests pinning current
-  `score_breakdown` / block count / zero-violation status across `_simulate.ts`
-  fixtures; then decompose the monolith into focused modules, behavior-preserving.
+- **Phase 0 (done):** characterization tests pin `score_breakdown` / block count /
+  chosenStrategy / winningScore / SSOT zero-violation across the standard /
+  ab_week / aa_bb_week / quick_30 / big_group fixtures
+  (`_characterization_{fixtures,test}.ts`). Decomposed the two highest-value
+  seams out of the monolith, behavior-preserving (snapshots byte-identical):
+  - `_occupancy.ts` — `Interval`, `intervalsOverlap`, `OccupancyTracker`.
+  - `_annealing.ts` — `runSimulatedAnnealing`, `buildOccupancyFromBlocks`.
+  index.ts re-exports the moved symbols + exports the leaf helpers SA needs; the
+  index↔_annealing import cycle is safe (all references are inside function
+  bodies). **Deferred (documented):** further splitting the constructive
+  strategies (`_strategies.ts`) and the orchestrator (`_orchestrate.ts`) — Phase 1
+  only touches the now-isolated search layer, so these are lower priority.
+
+- **Phase 1a (done):** SA is now deterministic. `runSimulatedAnnealing` takes
+  `SAOptions { maxIterations, safetyMs }`: the iteration budget is a fixed seeded
+  count and the cooling schedule is deterministic, so same seed + inputs ⇒
+  byte-identical result. The old per-iteration wall-clock budget
+  (`SA_TIME_BUDGET_MS = 20000`, which made the iteration count machine-dependent)
+  is removed; wall-clock survives only as a never-reached safety valve
+  (`safetyMs`, default 30s, checked every 128 iters). Default `maxIterations`
+  (1000) reproduces legacy behavior, so the characterization snapshots stay
+  byte-identical. New `_annealing_test.ts` proves the contract — notably that
+  varying `safetyMs` (5s vs 600s) does not change output. Also fixed the 2 stale
+  `_monteCarlo_test.ts` cases (80-iter fast tier; injectable `budgetMs` so the
+  budget gate is testable without a long spin). **Backend suite: 79 passed, 0
+  failed (was 65/2 at baseline).**
+
+  > Determinism caveat (unchanged, documented): `calibrateMonteCarlo` still times
+  > a calibration run to pick the MC iteration count, so the *number* of MC
+  > restarts is CPU-adaptive. Within one deployment environment this is stable;
+  > across very different machines the MC iteration count (hence the winner) can
+  > differ. This is the intentional CPU-budget mechanism, separate from the SA
+  > wall-clock that Phase 1a fixed. Same-seed determinism holds per environment.
