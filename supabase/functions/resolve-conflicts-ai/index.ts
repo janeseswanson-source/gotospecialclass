@@ -199,6 +199,9 @@ Deno.serve(async (req) => {
       resolved: appliedOptions.length,
       applied,
       escalated: escalations.length,
+      // Ranked legal fixes the engine applied, with their MEASURED blast radius
+      // (power 5): "Relocate this class — affects 1", "Swap two sessions — affects 2".
+      applied_changes: appliedOptions.map((o) => ({ tactic: o.tactic, blast_radius: o.blastRadius, description: o.description })),
       escalations: escalations.map((e) => ({ reason: e.escalation.reason, conflicting_constraints: e.escalation.conflictingConstraints })),
       summary,
       rationale,

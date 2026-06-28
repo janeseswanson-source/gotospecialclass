@@ -29,6 +29,8 @@ import { breakdownToPercent } from "@/lib/optimizerScore";
 import QualityPanel from "@/components/schedule/QualityPanel";
 import RefinementBanner from "@/components/schedule/RefinementBanner";
 import WeightProposal from "@/components/schedule/WeightProposal";
+import ConflictResolver, { type ConflictOutcome } from "@/components/schedule/ConflictResolver";
+import { diffSchedules } from "@/lib/scheduleDiff";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -93,6 +95,7 @@ export default function MasterSchedulePage() {
   const [scheduleWarnings, setScheduleWarnings] = useState<ScheduleWarning[]>([]);
   const [warningsDismissed, setWarningsDismissed] = useState(false);
   const [resolvingAI, setResolvingAI] = useState(false);
+  const [conflictOutcome, setConflictOutcome] = useState<ConflictOutcome | null>(null);
   const [showExplain, setShowExplain] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [updatingReview, setUpdatingReview] = useState(false);
@@ -553,16 +556,20 @@ export default function MasterSchedulePage() {
     return true;
   }
 
+  // Power 5: the deterministic engine resolves conflicts (smallest blast radius,
+  // every option SSOT-legal) and the LLM only narrates. We render the engine's
+  // applied fixes + any escalations, and highlight what moved (power 4 synergy).
   async function handleResolveWithAI() {
     if (!selectedGen) return;
     const errors = scheduleWarnings.filter(w => w.severity === 'error');
-    if (errors.length === 0) {
+    if (errors.length === 0 && conflictIds.size === 0) {
       toast({ title: "No conflicts to resolve" });
       return;
     }
     setResolvingAI(true);
-    // Hard timeout so the spinner can never hang forever if the gateway is
-    // slow or the function never responds. 90s is well above normal latency.
+    setConflictOutcome(null);
+    const before = blocks; // snapshot for the moved-block highlight
+    // Hard timeout so the spinner can never hang forever if the gateway is slow.
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), 90_000);
     try {
@@ -573,46 +580,44 @@ export default function MasterSchedulePage() {
       const resp = await fetch(url, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          generation_id: selectedGen,
-          conflicts: errors.map(w => ({ type: (w as any).type, message: w.message, suggestion: w.suggestion })),
-        }),
+        // The engine detects conflicts from the blocks itself (no client list).
+        body: JSON.stringify({ generation_id: selectedGen }),
         signal: controller.signal,
       });
-      const data: any = await resp.json().catch(() => ({}));
+      const data = await resp.json().catch(() => ({})) as Record<string, unknown>;
       if (!resp.ok || data?.error) {
-        toast({
-          title: "AI resolution failed",
-          description: data?.error ?? `HTTP ${resp.status}`,
-          variant: "destructive",
-        });
+        toast({ title: "Conflict fix failed", description: (data?.error as string) ?? `HTTP ${resp.status}`, variant: "destructive" });
         return;
       }
-      const applied = data?.applied ?? 0;
-      const updates = data?.updates ?? 0;
-      const deletes = data?.deletes ?? 0;
-      const inserts = data?.inserts ?? 0;
-      const summary = data?.summary ?? "";
-      if (applied === 0) {
-        toast({
-          title: "AI couldn't resolve automatically",
-          description: summary || "Try editing manually or adjusting specialists/strategies.",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Schedule updated by AI",
-          description: `${updates} moved, ${deletes} removed, ${inserts} added. ${summary ? summary : ""}`.trim(),
-        });
-      }
+      const outcome: ConflictOutcome = {
+        resolved: typeof data.resolved === "number" ? data.resolved : 0,
+        escalated: typeof data.escalated === "number" ? data.escalated : 0,
+        applied_changes: Array.isArray(data.applied_changes) ? data.applied_changes as ConflictOutcome["applied_changes"] : [],
+        escalations: Array.isArray(data.escalations) ? data.escalations as ConflictOutcome["escalations"] : [],
+        summary: typeof data.summary === "string" ? data.summary : undefined,
+      };
+      setConflictOutcome(outcome);
+
+      // Reload the canonical schedule (warnings + explanations), then highlight
+      // exactly the blocks the engine moved.
+      const { data: rows } = await supabase.from("schedule_blocks").select("*").eq("generation_id", selectedGen);
+      const after = mapBlocks(rows ?? []);
+      const diff = diffSchedules(before, after);
       await loadBlocks(selectedGen);
-    } catch (e: any) {
-      const aborted = e?.name === "AbortError";
+      if (diff.movedIds.length) flagChangedBlocks(diff.movedIds);
+
+      if (outcome.resolved > 0) {
+        toast({ title: "Conflicts resolved", description: `${outcome.resolved} fixed with the smallest possible change.` });
+      } else if (outcome.escalated > 0) {
+        toast({ title: "Some conflicts need your decision", description: "See the details below.", variant: "destructive" });
+      }
+    } catch (e) {
+      const aborted = e instanceof Error && e.name === "AbortError";
       toast({
-        title: aborted ? "AI took too long" : "AI resolution failed",
+        title: aborted ? "Fix took too long" : "Conflict fix failed",
         description: aborted
-          ? "The fix request timed out after 90 seconds. Try again, or edit manually."
-          : (e?.message ?? "Unknown error"),
+          ? "The request timed out after 90 seconds. Try again, or edit manually."
+          : (e instanceof Error ? e.message : "Unknown error"),
         variant: "destructive",
       });
     } finally {
@@ -1219,6 +1224,11 @@ export default function MasterSchedulePage() {
           </div>
         );
       })()}
+
+      {/* ─── Power 5: deterministic conflict-cascade result ─── */}
+      {conflictOutcome && (
+        <ConflictResolver outcome={conflictOutcome} onDismiss={() => setConflictOutcome(null)} />
+      )}
 
       {/* ─── Schedule grid + optional XAI sidebar (7D-4) ─── */}
       <div className={showExplain ? "flex gap-4 items-start" : undefined}>
