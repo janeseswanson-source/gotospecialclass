@@ -3,23 +3,19 @@ import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSchool } from "@/contexts/SchoolContext";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
-import { Undo2, Redo2, Lock, GitCompare, AlertTriangle, X as XIcon, Printer, Sparkles, Loader2, BrainCircuit, Lightbulb, Download, FileText, ChevronDown, LayoutGrid, MessageSquare, Check, RotateCcw, FileSpreadsheet } from "lucide-react";
+import { GitCompare, AlertTriangle, X as XIcon, Sparkles, Loader2, BrainCircuit, Lightbulb, MessageSquare, Check, RotateCcw } from "lucide-react";
 import { exportScheduleXlsx } from "@/lib/exportScheduleXlsx";
 import ScheduleChatPanel from "@/components/schedule/ScheduleChatPanel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatTime as formatTimeDisplay, cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import ScheduleGrid, { type BlockData } from "@/components/schedule/ScheduleGrid";
-import ScrabbleTray from "@/components/schedule/ScrabbleTray";
+import { type BlockData } from "@/components/schedule/ScheduleGrid";
 import BlockInspector from "@/components/schedule/BlockInspector";
 import QuoteBanner from "@/components/schedule/QuoteBanner";
 import { toast } from "@/hooks/use-toast";
 import { analyzeScheduleBlocks, type ScheduleWarning } from "@/lib/strategyFeasibility";
 import { warningMeta } from "@/lib/warningMeta";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import SpecialistExportModal from "./exports/SpecialistExportModal";
 import AdminExportModal from "./exports/AdminExportModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -30,6 +26,8 @@ import QualityPanel from "@/components/schedule/QualityPanel";
 import RefinementBanner from "@/components/schedule/RefinementBanner";
 import WeightProposal from "@/components/schedule/WeightProposal";
 import ConflictResolver, { type ConflictOutcome } from "@/components/schedule/ConflictResolver";
+import ScheduleToolbar from "@/components/schedule/ScheduleToolbar";
+import WeekGrid from "@/components/schedule/WeekGrid";
 import { diffSchedules, diffSummary } from "@/lib/scheduleDiff";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
@@ -51,21 +49,6 @@ const STRATEGY_LABELS: Record<string, string> = {
 };
 const humanizeStrategy = (s?: string | null) =>
   s ? (STRATEGY_LABELS[s] ?? s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())) : "";
-
-function PrintViewButton({ label, disabled, disabledReason }: { label: string; disabled?: boolean; disabledReason?: string }) {
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="h-8 no-print"
-      onClick={() => !disabled && window.print()}
-      disabled={disabled}
-      title={disabled ? disabledReason : undefined}
-    >
-      <Printer className="h-3.5 w-3.5 mr-1.5" /> {label}
-    </Button>
-  );
-}
 
 export default function MasterSchedulePage() {
   const navigate = useNavigate();
@@ -850,161 +833,32 @@ export default function MasterSchedulePage() {
         />
       </div>
       {/* ─── Toolbar ─── */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Master Schedule</h1>
-          <p className="text-sm text-muted-foreground">
-            {selectedSchool?.name ?? 'View, filter, and edit your generated schedule.'}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap no-print">
-          {/* Undo / Redo */}
-          <div className="flex items-center rounded-lg border border-border bg-background p-0.5 gap-0.5">
-            <Button variant="ghost" size="icon" className="h-7 w-7" disabled={!canUndo} onClick={handleUndo} title="Undo (Ctrl+Z)">
-              <Undo2 className="h-3.5 w-3.5" />
-            </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7" disabled={!canRedo} onClick={handleRedo} title="Redo (Ctrl+Shift+Z)">
-              <Redo2 className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-
-          {lockedIds.size > 0 && (
-            <Badge variant="secondary" className="gap-1 h-7">
-              <Lock className="h-3 w-3" /> {lockedIds.size} locked
-            </Badge>
-          )}
-
-          {/* Version tab bar */}
-          {generations.length > 1 && (
-            <div className="flex items-center rounded-lg border border-border bg-background p-0.5 gap-0.5">
-              {generations.map((g) => {
-                const isActive = selectedGen === g.id;
-                const verified = g.verify_quality_score != null && g.verify_quality_score >= 80;
-                const reviewed = !verified && g.verify_quality_score != null && g.verify_issues_found != null && g.verify_issues_found > 0;
-                return (
-                  <button
-                    key={g.id}
-                    type="button"
-                    onClick={() => { setSelectedGen(g.id); setShowDiff(false); }}
-                    className={cn(
-                      'rounded-md px-3 py-1 text-xs font-medium transition-all flex items-center gap-1.5',
-                      isActive
-                        ? 'bg-primary text-primary-foreground shadow-sm'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-                    )}
-                  >
-                    v{g.version}
-                    {verified && (
-                      <span className={cn(
-                        "text-[9px] font-bold px-1 py-px rounded leading-none",
-                        isActive ? "bg-white/25 text-white" : "bg-green-500/15 text-green-700 dark:text-green-400",
-                      )}>✓ AI</span>
-                    )}
-                    {reviewed && (
-                      <span className={cn(
-                        "text-[9px] font-bold px-1 py-px rounded leading-none",
-                        isActive ? "bg-white/25 text-white" : "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-                      )}>{g.verify_issues_found} fixed</span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Compare with */}
-          {generations.length > 1 && (
-            <Select value={diffGenId ?? ""} onValueChange={(v) => v ? loadDiffBlocks(v) : setShowDiff(false)}>
-              <SelectTrigger className="w-40 h-8">
-                <div className="flex items-center gap-1.5">
-                  <GitCompare className="h-3.5 w-3.5 shrink-0" />
-                  <SelectValue placeholder="Compare…" />
-                </div>
-              </SelectTrigger>
-              <SelectContent>
-                {generations.filter(g => g.id !== selectedGen).map((g) => (
-                  <SelectItem key={g.id} value={g.id}>vs v{g.version}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-
-          {/* Density toggle */}
-          <div className="flex items-center rounded-lg border border-border bg-background p-0.5 gap-0.5" title="Row density">
-            <button
-              type="button"
-              onClick={() => setDensity("compact")}
-              className={cn("px-2 py-1 text-[11px] font-medium rounded-md transition-colors", density === "compact" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
-            >Compact</button>
-            <button
-              type="button"
-              onClick={() => setDensity("fine")}
-              className={cn("px-2 py-1 text-[11px] font-medium rounded-md transition-colors", density === "fine" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
-            >Fine</button>
-          </div>
-
-          {/* Edit with AI */}
-          <Button
-            variant={chatOpen ? "secondary" : "default"}
-            size="sm"
-            className="h-8 gap-1.5"
-            onClick={() => setChatOpen((v) => !v)}
-            title="Open AI editor"
-          >
-            <MessageSquare className="h-3.5 w-3.5" />
-            Edit with AI
-          </Button>
-
-          {/* Explain toggle */}
-          <Button
-            variant={showExplain ? "secondary" : "ghost"}
-            size="sm"
-            className="h-8 gap-1.5"
-            onClick={() => setShowExplain(v => !v)}
-            title="Toggle AI Explain panel"
-          >
-            <BrainCircuit className="h-3.5 w-3.5" />
-            Explain
-          </Button>
-
-
-
-
-
-          {/* Export dropdown — disabled while error-severity conflicts exist
-              so a broken schedule can't be exported or printed. */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5"
-                disabled={blockingError.blocked}
-                title={blockingError.blocked ? `Resolve ${blockingError.reason} before exporting` : undefined}
-              >
-                <Download className="h-3.5 w-3.5" />
-                Export
-                <ChevronDown className="h-3 w-3 opacity-60" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem disabled={blockingError.blocked} onClick={() => !blockingError.blocked && setSpecExportOpen(true)}>
-                <FileText className="h-4 w-4 mr-2" /> Specialist Planner (PDF)
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled={blockingError.blocked} onClick={() => !blockingError.blocked && setAdminExportOpen(true)}>
-                <LayoutGrid className="h-4 w-4 mr-2" /> Admin Overview (PDF)
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled={blockingError.blocked || exportingXlsx} onClick={() => !blockingError.blocked && handleExportXlsx()}>
-                {exportingXlsx ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileSpreadsheet className="h-4 w-4 mr-2" />} Branded Spreadsheet (Excel)
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem disabled={blockingError.blocked} onClick={() => !blockingError.blocked && window.print()}>
-                <Printer className="h-4 w-4 mr-2" /> Print Current View
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
+      <ScheduleToolbar
+        schoolName={selectedSchool?.name}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        lockedCount={lockedIds.size}
+        generations={generations}
+        selectedGen={selectedGen}
+        onSelectGen={(id) => { setSelectedGen(id); setShowDiff(false); }}
+        diffGenId={diffGenId}
+        onCompare={loadDiffBlocks}
+        onCloseDiff={() => setShowDiff(false)}
+        density={density}
+        onDensityChange={setDensity}
+        chatOpen={chatOpen}
+        onToggleChat={() => setChatOpen((v) => !v)}
+        showExplain={showExplain}
+        onToggleExplain={() => setShowExplain((v) => !v)}
+        blockingError={blockingError}
+        exportingXlsx={exportingXlsx}
+        onSpecExport={() => setSpecExportOpen(true)}
+        onAdminExport={() => setAdminExportOpen(true)}
+        onExportXlsx={handleExportXlsx}
+        onPrint={() => window.print()}
+      />
 
       {/* ─── Review bar (visible until the user accepts) ─── */}
       {activeGen && activeGen.review_state === "pending" && (
@@ -1274,122 +1128,37 @@ export default function MasterSchedulePage() {
 
       {/* ─── Schedule grid + optional XAI sidebar (7D-4) ─── */}
       <div className={showExplain ? "flex gap-4 items-start" : undefined}>
-        {/* Main content column */}
-        <div className="flex-1 min-w-0 space-y-4">
-          {showWeekSelector && (
-            <div className="flex items-center gap-2 no-print">
-              <span className="text-sm font-medium text-muted-foreground">
-                {isAbStrategy ? "A/B Week rotation:" : isAaBbStrategy ? "AA/BB rotation:" : "Week:"}
-              </span>
-              <Tabs value={weekFilter} onValueChange={setWeekFilter} className="w-auto">
-                <TabsList className="h-8">
-                  {weekOptions.map((opt) => (
-                    <TabsTrigger key={opt.value} value={opt.value} className="text-xs px-3 h-7">
-                      {opt.label}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
-              {!hasWeekLabels && (isAbStrategy || isAaBbStrategy) && (
-                <span className="text-xs text-muted-foreground italic">
-                  (no per-week labels on these blocks — generator may have fallen back to a single-week layout)
-                </span>
-              )}
-            </div>
-          )}
-
-          <Tabs defaultValue="master">
-            <TabsList className="no-print sticky top-0 z-20 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70">
-              <TabsTrigger value="master">Master Grid</TabsTrigger>
-              <TabsTrigger value="specialist">By Specialist</TabsTrigger>
-              <TabsTrigger value="teacher">By Teacher</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="master">
-              {trayBlocks.length > 0 && (
-                <div className="mb-3">
-                  <ScrabbleTray blocks={trayBlocks} onDragStart={handleTrayDragStart} />
-                </div>
-              )}
-
-              <ScheduleGrid
-                blocks={weekFiltered}
-                timeSlots={timeSlots}
-                recessBands={recessBands}
-                conflictIds={conflictIds}
-                liftedIds={trayIds}
-                highlightIds={recentChangedIds}
-                onBlockClick={(b) => { setEditBlock(b); setEditOpen(true); }}
-                onBlockDrop={handleBlockDrop}
-                lockedIds={lockedIds}
-                onToggleLock={toggleLock}
-                notesEditable
-                onNotesChange={handleNotesChange}
-              />
-            </TabsContent>
-
-            <TabsContent value="specialist">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between gap-2 no-print">
-                  <Select value={filterSpecialist} onValueChange={setFilterSpecialist}>
-                    <SelectTrigger className="w-56"><SelectValue placeholder="Select a specialist…" /></SelectTrigger>
-                    <SelectContent>
-                      {specialists.map((s) => <SelectItem key={s.id} value={s.id}>{s.name} ({s.subject})</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <PrintViewButton label="Print Specialist View" disabled={blockingError.blocked} disabledReason={`Resolve ${blockingError.reason} before printing`} />
-                </div>
-                {filterSpecialist === "all" ? (
-                  <div className="flex items-center justify-center rounded-xl border border-dashed border-border bg-card p-16 text-sm text-muted-foreground">
-                    Pick a specialist above to see their week.
-                  </div>
-                ) : (
-                  <ScheduleGrid
-                    blocks={filteredBySpecialist}
-                    timeSlots={timeSlots}
-                    highlightIds={recentChangedIds}
-                    recessBands={recessBands}
-                    conflictIds={conflictIds}
-                    onBlockClick={(b) => { setEditBlock(b); setEditOpen(true); }}
-                    onBlockDrop={handleBlockDrop}
-                    lockedIds={lockedIds}
-                    onToggleLock={toggleLock}
-                    notesEditable
-                    onNotesChange={handleNotesChange}
-                  />
-                )}
-              </div>
-            </TabsContent>
-
-            <TabsContent value="teacher">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between gap-2 no-print">
-                  <Select value={filterTeacher} onValueChange={setFilterTeacher}>
-                    <SelectTrigger className="w-56"><SelectValue placeholder="All Teachers" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Teachers</SelectItem>
-                      {teachers.map((t) => <SelectItem key={t.id} value={t.id}>{t.name} ({t.grade})</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <PrintViewButton label="Print Teacher View" disabled={blockingError.blocked} disabledReason={`Resolve ${blockingError.reason} before printing`} />
-                </div>
-                <ScheduleGrid
-                  blocks={filteredByTeacher}
-                  timeSlots={timeSlots}
-                  highlightIds={recentChangedIds}
-                  recessBands={recessBands}
-                  conflictIds={conflictIds}
-                  onBlockClick={(b) => { setEditBlock(b); setEditOpen(true); }}
-                  onBlockDrop={handleBlockDrop}
-                  lockedIds={lockedIds}
-                  onToggleLock={toggleLock}
-                  notesEditable
-                  onNotesChange={handleNotesChange}
-                />
-              </div>
-            </TabsContent>
-          </Tabs>
-        </div>
+        <WeekGrid
+          showWeekSelector={showWeekSelector}
+          isAbStrategy={isAbStrategy}
+          isAaBbStrategy={isAaBbStrategy}
+          hasWeekLabels={hasWeekLabels}
+          weekOptions={weekOptions}
+          weekFilter={weekFilter}
+          onWeekFilterChange={setWeekFilter}
+          masterBlocks={weekFiltered}
+          specialistBlocks={filteredBySpecialist}
+          teacherBlocks={filteredByTeacher}
+          trayBlocks={trayBlocks}
+          onTrayDragStart={handleTrayDragStart}
+          timeSlots={timeSlots}
+          recessBands={recessBands}
+          conflictIds={conflictIds}
+          trayIds={trayIds}
+          highlightIds={recentChangedIds}
+          lockedIds={lockedIds}
+          onBlockClick={(b) => { setEditBlock(b); setEditOpen(true); }}
+          onBlockDrop={handleBlockDrop}
+          onToggleLock={toggleLock}
+          onNotesChange={handleNotesChange}
+          specialists={specialists}
+          teachers={teachers}
+          filterSpecialist={filterSpecialist}
+          onFilterSpecialist={setFilterSpecialist}
+          filterTeacher={filterTeacher}
+          onFilterTeacher={setFilterTeacher}
+          blockingError={blockingError}
+        />
 
 
         {/* ─── XAI Explain sidebar ─── */}

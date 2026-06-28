@@ -1,0 +1,195 @@
+// ScheduleToolbar — extracted from MasterSchedulePage so the page is a thinner
+// orchestrator. Pure presentation + callbacks: undo/redo, the version tab bar,
+// version compare, row density, Edit-with-AI / Explain toggles, and the export
+// menu. No data fetching or legality decisions live here.
+
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import {
+  Undo2, Redo2, Lock, GitCompare, MessageSquare, BrainCircuit, Download, FileText,
+  ChevronDown, LayoutGrid, FileSpreadsheet, Printer, Loader2,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+
+export interface ToolbarGeneration {
+  id: string;
+  version: number;
+  verify_quality_score?: number | null;
+  verify_issues_found?: number | null;
+}
+
+interface ScheduleToolbarProps {
+  schoolName?: string | null;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
+  lockedCount: number;
+  generations: ToolbarGeneration[];
+  selectedGen: string;
+  onSelectGen: (id: string) => void;
+  diffGenId: string | null;
+  onCompare: (id: string) => void;
+  onCloseDiff: () => void;
+  density: "compact" | "fine";
+  onDensityChange: (d: "compact" | "fine") => void;
+  chatOpen: boolean;
+  onToggleChat: () => void;
+  showExplain: boolean;
+  onToggleExplain: () => void;
+  blockingError: { blocked: boolean; reason: string };
+  exportingXlsx: boolean;
+  onSpecExport: () => void;
+  onAdminExport: () => void;
+  onExportXlsx: () => void;
+  onPrint: () => void;
+}
+
+export default function ScheduleToolbar(props: ScheduleToolbarProps) {
+  const {
+    schoolName, canUndo, canRedo, onUndo, onRedo, lockedCount, generations, selectedGen,
+    onSelectGen, diffGenId, onCompare, onCloseDiff, density, onDensityChange, chatOpen,
+    onToggleChat, showExplain, onToggleExplain, blockingError, exportingXlsx,
+    onSpecExport, onAdminExport, onExportXlsx, onPrint,
+  } = props;
+
+  return (
+    <div className="flex items-start justify-between gap-4 flex-wrap">
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">Master Schedule</h1>
+        <p className="text-sm text-muted-foreground">
+          {schoolName ?? "View, filter, and edit your generated schedule."}
+        </p>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap no-print">
+        {/* Undo / Redo */}
+        <div className="flex items-center rounded-lg border border-border bg-background p-0.5 gap-0.5">
+          <Button variant="ghost" size="icon" className="h-7 w-7" disabled={!canUndo} onClick={onUndo} title="Undo (Ctrl+Z)" aria-label="Undo">
+            <Undo2 className="h-3.5 w-3.5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7" disabled={!canRedo} onClick={onRedo} title="Redo (Ctrl+Shift+Z)" aria-label="Redo">
+            <Redo2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+
+        {lockedCount > 0 && (
+          <Badge variant="secondary" className="gap-1 h-7">
+            <Lock className="h-3 w-3" /> {lockedCount} locked
+          </Badge>
+        )}
+
+        {/* Version tab bar */}
+        {generations.length > 1 && (
+          <div className="flex items-center rounded-lg border border-border bg-background p-0.5 gap-0.5" role="tablist" aria-label="Schedule versions">
+            {generations.map((g) => {
+              const isActive = selectedGen === g.id;
+              const verified = g.verify_quality_score != null && g.verify_quality_score >= 80;
+              const reviewed = !verified && g.verify_quality_score != null && g.verify_issues_found != null && g.verify_issues_found > 0;
+              return (
+                <button
+                  key={g.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => onSelectGen(g.id)}
+                  className={cn(
+                    "rounded-md px-3 py-1 text-xs font-medium transition-all flex items-center gap-1.5",
+                    isActive ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                  )}
+                >
+                  v{g.version}
+                  {verified && (
+                    <span className={cn("text-[9px] font-bold px-1 py-px rounded leading-none", isActive ? "bg-white/25 text-white" : "bg-green-500/15 text-green-700 dark:text-green-400")}>✓ AI</span>
+                  )}
+                  {reviewed && (
+                    <span className={cn("text-[9px] font-bold px-1 py-px rounded leading-none", isActive ? "bg-white/25 text-white" : "bg-amber-500/15 text-amber-700 dark:text-amber-400")}>{g.verify_issues_found} fixed</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Compare with */}
+        {generations.length > 1 && (
+          <Select value={diffGenId ?? ""} onValueChange={(v) => (v ? onCompare(v) : onCloseDiff())}>
+            <SelectTrigger className="w-40 h-8">
+              <div className="flex items-center gap-1.5">
+                <GitCompare className="h-3.5 w-3.5 shrink-0" />
+                <SelectValue placeholder="Compare…" />
+              </div>
+            </SelectTrigger>
+            <SelectContent>
+              {generations.filter((g) => g.id !== selectedGen).map((g) => (
+                <SelectItem key={g.id} value={g.id}>vs v{g.version}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {/* Density toggle */}
+        <div className="flex items-center rounded-lg border border-border bg-background p-0.5 gap-0.5" title="Row density">
+          <button
+            type="button"
+            onClick={() => onDensityChange("compact")}
+            aria-pressed={density === "compact"}
+            className={cn("px-2 py-1 text-[11px] font-medium rounded-md transition-colors", density === "compact" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
+          >Compact</button>
+          <button
+            type="button"
+            onClick={() => onDensityChange("fine")}
+            aria-pressed={density === "fine"}
+            className={cn("px-2 py-1 text-[11px] font-medium rounded-md transition-colors", density === "fine" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
+          >Fine</button>
+        </div>
+
+        {/* Edit with AI */}
+        <Button variant={chatOpen ? "secondary" : "default"} size="sm" className="h-8 gap-1.5" onClick={onToggleChat} title="Open AI editor">
+          <MessageSquare className="h-3.5 w-3.5" />
+          Edit with AI
+        </Button>
+
+        {/* Explain toggle */}
+        <Button variant={showExplain ? "secondary" : "ghost"} size="sm" className="h-8 gap-1.5" onClick={onToggleExplain} title="Toggle AI Explain panel">
+          <BrainCircuit className="h-3.5 w-3.5" />
+          Explain
+        </Button>
+
+        {/* Export dropdown — disabled while error-severity conflicts exist so a
+            broken schedule can't be exported or printed. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5"
+              disabled={blockingError.blocked}
+              title={blockingError.blocked ? `Resolve ${blockingError.reason} before exporting` : undefined}
+            >
+              <Download className="h-3.5 w-3.5" />
+              Export
+              <ChevronDown className="h-3 w-3 opacity-60" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem disabled={blockingError.blocked} onClick={() => !blockingError.blocked && onSpecExport()}>
+              <FileText className="h-4 w-4 mr-2" /> Specialist Planner (PDF)
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={blockingError.blocked} onClick={() => !blockingError.blocked && onAdminExport()}>
+              <LayoutGrid className="h-4 w-4 mr-2" /> Admin Overview (PDF)
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={blockingError.blocked || exportingXlsx} onClick={() => !blockingError.blocked && onExportXlsx()}>
+              {exportingXlsx ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileSpreadsheet className="h-4 w-4 mr-2" />} Branded Spreadsheet (Excel)
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled={blockingError.blocked} onClick={() => !blockingError.blocked && onPrint()}>
+              <Printer className="h-4 w-4 mr-2" /> Print Current View
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  );
+}

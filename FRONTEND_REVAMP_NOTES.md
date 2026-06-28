@@ -141,13 +141,18 @@ MasterSchedulePage as edits removed `as any`).
 Pure tested helpers: `scoreSummary.ts`, `scheduleDiff.ts`, `weightProposal.ts`,
 `conflictOptions.ts` (4 new test files, 36 new assertions).
 
-### Remaining structural work (documented, not yet done)
-- Extract `ScheduleToolbar` (undo/redo, version tabs, compare, density, primary
-  actions, export menu) and a `WeekGrid` wrapper from the page so
-  `MasterSchedulePage` becomes a thin orchestrator. The page already composes 5
-  focused components + the existing `ScheduleGrid`/cells/`ScheduleChatPanel`; the
-  toolbar + tab/grid orchestration are the last big blocks still inline.
-- Optional: a `preview` mode on `resolve-conflicts-ai` so the UI can show the
+### Decomposition (done)
+`MasterSchedulePage` now composes focused components and is closer to a thin
+orchestrator: `ScheduleToolbar` (undo/redo, version tabs, compare, density,
+Edit-with-AI / Explain, export menu) and `WeekGrid` (A/B week selector +
+Master/Specialist/Teacher tabs + conflict tray + per-view print) were extracted,
+moving ~270 lines of JSX out and removing the dead `PrintViewButton` + unused
+imports. The page composes: `ScheduleToolbar`, `QualityPanel`, `RefinementBanner`,
+`WeightProposal`, `ConflictResolver`, `WeekGrid`, `BlockInspector`,
+`ScheduleChatPanel` (+ export modals). tsc clean, `vite build` OK, 50 tests pass.
+
+### Remaining (optional, documented)
+- A `preview` mode on `resolve-conflicts-ai` so the UI can show the
   ranked options BEFORE applying (pick-one-of-N), rather than the current
   auto-apply-smallest + narrate. The deterministic engine already returns ranked
   options; this is a small edge addition.
