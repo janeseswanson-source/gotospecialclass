@@ -194,3 +194,21 @@ npm run test
   > across very different machines the MC iteration count (hence the winner) can
   > differ. This is the intentional CPU-budget mechanism, separate from the SA
   > wall-clock that Phase 1a fixed. Same-seed determinism holds per environment.
+
+- **Phase 1b (done):** `_lns.ts` adds Large Neighborhood Search (ruin-and-recreate)
+  as a refinement layer that escapes the local optima single-move SA gets stuck
+  in. Each round DESTROYS a coherent subset (one specialist's week / one weekday /
+  one grade's rotation) and RECREATES exactly those sessions via the same
+  occupancy-validated slot enumeration the strategies use; accepts via Metropolis
+  but **returns the best-seen** schedule, so quality is monotonic (result ≥ input).
+  Invariants preserved and **tested**: Big-Group combined members are never
+  destroyed (never split); idle-day guard (`activeDays(before) ⊆ activeDays(after)`
+  per specialist, == SA's last-block guard); zero error-severity warnings on every
+  accepted rebuild; deterministic (seed-only; `safetyMs` proven not to affect
+  output). Measured on the post-generation schedules: **standard (complaint
+  school) +15, quick_30 +20, big_group +20; ab_week / aa_bb_week unchanged (never
+  worse); 0 SSOT violations on all five.** (A/B-week recreate is conservative
+  because occupancy ignores `week_label` — same limitation SA already has; noted
+  for a future occupancy-by-week improvement.) Not yet wired into the request
+  path — that is the background-refinement step (keeps the inline path under the
+  edge CPU budget).
