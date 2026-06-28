@@ -118,4 +118,38 @@ Pure, tested helpers (no UI):
 ---
 
 ## 5. Build log
-(updated per component)
+
+All seven engine powers are now visible and usable; every prior capability is
+preserved (generate, version switch, filters, drag/drop move + swap, lock, notes,
+AI chat, all exports, print). Verification: full app `tsc` clean, `vite build`
+succeeds, **50 frontend tests pass**, new files lint-clean (the monolith's
+pre-existing `no-explicit-any` baseline is unchanged — actually reduced 31→23 in
+MasterSchedulePage as edits removed `as any`).
+
+### Delivered
+
+| Power | What ships | Reads |
+|---|---|---|
+| 1 confidence | `QualityPanel` calm hero headline | `generation.quality_confidence` (now threaded onto the row) → `confidenceCopy` |
+| 2 human quality | `QualityPanel` "what's working / what it cost" | `score_breakdown` → `scoreSummary`; headline % via `breakdownToPercent` |
+| 3 explainability | `BlockInspector` side sheet (why + edit + lock + notes + per-block fix); removed `EditBlockDialog` | `placement_reason`/`ai_explanation`; on-demand `explain-schedule` |
+| 4 minimal perturbation | identity-aware `scheduleDiff` in version-compare + replan ("Only N moved" + highlight); drag/drop already glows moved + undo | two block sets → `diffSchedules`/`diffSummary`; `replan-subgraph` |
+| 5 conflict cascade | `ConflictResolver` shows ranked applied fixes (measured blast radius) + structured escalations | `resolve-conflicts-ai` `{resolved, applied_changes[], escalations[], summary}` (engine resolves, LLM narrates) |
+| 6 background refinement | `RefinementBanner` non-blocking "Improving…" then dismissible "+X ready — Review"; never auto-swaps; Review opens diff vs parent | `refine-schedule`; `refined_from_generation_id` |
+| 7 learnable weights | `WeightProposal` plain-language Apply/Dismiss (Apply = confirm path); heavily-edited now `action:"propose"` | `scoring_weight_profiles.proposed_weights` → `describeWeightProposal` |
+
+Pure tested helpers: `scoreSummary.ts`, `scheduleDiff.ts`, `weightProposal.ts`,
+`conflictOptions.ts` (4 new test files, 36 new assertions).
+
+### Remaining structural work (documented, not yet done)
+- Extract `ScheduleToolbar` (undo/redo, version tabs, compare, density, primary
+  actions, export menu) and a `WeekGrid` wrapper from the page so
+  `MasterSchedulePage` becomes a thin orchestrator. The page already composes 5
+  focused components + the existing `ScheduleGrid`/cells/`ScheduleChatPanel`; the
+  toolbar + tab/grid orchestration are the last big blocks still inline.
+- Optional: a `preview` mode on `resolve-conflicts-ai` so the UI can show the
+  ranked options BEFORE applying (pick-one-of-N), rather than the current
+  auto-apply-smallest + narrate. The deterministic engine already returns ranked
+  options; this is a small edge addition.
+- Optional: retire the legacy "Explain" sidebar now that `BlockInspector` covers
+  per-block "why", and fold the cell's inline notes/lock fully into the inspector.
