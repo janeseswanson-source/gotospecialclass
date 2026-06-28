@@ -280,3 +280,26 @@ npm run test
 
   > Stability metric, not quality: if surfaced to users, `moved_from_baseline` is a
   > separate, clearly-labeled number — never folded into the displayed quality %.
+
+- **Phase 3 (done):** deterministic blast-radius conflict cascade. `_conflict.ts`
+  is a pure engine: `detectConflicts` finds REAL conflicts from the blocks via the
+  SSOT (not by parsing warning text); `resolveConflict(conflict, blocks, ctx)`
+  tries tactics in increasing-perturbation order — **relocate** (same day, then
+  any working day), **swap** two same-specialist sessions, **add_session** (for
+  no_coverage) — validates EVERY candidate against the SSOT, and returns a ranked
+  list of legal options with their **measured** blast radius (the Phase-2 moved
+  count — computed, not hardcoded "1, 2–5, 10–50"). When nothing is legal it
+  **escalates**: the irreducible reason (the most common blocking constraint), the
+  conflicting constraints, and the least-bad options. `resolveConflictsDeterministic`
+  applies the smallest-radius option iteratively until conflict-free.
+  `resolve-conflicts-ai` is refactored so the **engine resolves and the LLM only
+  narrates** — it inverts the old "LLM proposes placements → engine validates"
+  flow: now the engine produces SSOT-legal, applied changes (by real block id) and
+  the LLM writes the rationale/summary (best-effort; deterministic summary if no
+  API key). The LLM never invents or selects placements outside the engine's legal
+  set. **Tested:** a forced double-book yields ranked legal options ordered by real
+  blast radius (relocate before swap), each SSOT-legal and conflict-clearing; the
+  batch resolver clears detected conflicts deterministically; the unresolvable
+  case returns a structured escalation, never a crash or illegal fix. Big-Group
+  combined classes are correctly NOT treated as conflicts (SSOT exemption holds).
+  Backend suite: **127 passed / 0 failed.**
