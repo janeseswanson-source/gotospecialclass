@@ -30,7 +30,7 @@ import QualityPanel from "@/components/schedule/QualityPanel";
 import RefinementBanner from "@/components/schedule/RefinementBanner";
 import WeightProposal from "@/components/schedule/WeightProposal";
 import ConflictResolver, { type ConflictOutcome } from "@/components/schedule/ConflictResolver";
-import { diffSchedules } from "@/lib/scheduleDiff";
+import { diffSchedules, diffSummary } from "@/lib/scheduleDiff";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -337,14 +337,12 @@ export default function MasterSchedulePage() {
     setShowDiff(true);
   }
 
-  // Diff computation
+  // Diff computation (power 4): identity-aware, so a moved class reads as MOVED,
+  // not removed+added — the minimal-perturbation promise made visible.
   const diffData = useMemo(() => {
     if (!showDiff || !diffBlocks.length) return null;
-    const currentKeys = new Set(blocks.map(b => `${b.day_of_week}:${b.start_time}:${b.subject}:${b.grade}`));
-    const prevKeys = new Set(diffBlocks.map(b => `${b.day_of_week}:${b.start_time}:${b.subject}:${b.grade}`));
-    const added = blocks.filter(b => !prevKeys.has(`${b.day_of_week}:${b.start_time}:${b.subject}:${b.grade}`));
-    const removed = diffBlocks.filter(b => !currentKeys.has(`${b.day_of_week}:${b.start_time}:${b.subject}:${b.grade}`));
-    return { added: added.length, removed: removed.length, total: blocks.length };
+    const d = diffSchedules(diffBlocks, blocks);
+    return { ...d, total: blocks.length, summary: diffSummary(d) };
   }, [showDiff, blocks, diffBlocks]);
 
   const recessBands = useMemo(() => buildRecessBands(recessConfig, recessBandLabels), [recessConfig, recessBandLabels]);
@@ -658,25 +656,36 @@ export default function MasterSchedulePage() {
   async function handleReplan() {
     if (!replanSuggestion || !selectedGen) return;
     setReplanLoading(true);
+    const before = blocks; // snapshot to show how LITTLE changed (power 4)
     try {
       const { data, error } = await supabase.functions.invoke('replan-subgraph', {
         body: { generation_id: selectedGen, scope: { specialist_ids: [replanSuggestion.specialistId] } },
       });
       if (error) throw error;
-      if ((data as any)?.error) throw new Error((data as any).error);
+      const resp = data as { error?: string; new_generation_id?: string; message?: string };
+      if (resp?.error) throw new Error(resp.error);
       setReplanSuggestion(null);
       // Replan creates a NEW version (the current one is left intact). If nothing
       // matched the scope, no version is created — just inform the user.
-      if (!(data as any)?.new_generation_id) {
-        toast({ title: "Nothing to replan", description: (data as any)?.message ?? "No matching slots were found." });
+      if (!resp?.new_generation_id) {
+        toast({ title: "Nothing to replan", description: resp?.message ?? "No matching slots were found." });
         return;
       }
-      toast({ title: "Replan complete", description: `${replanSuggestion.specialistName}'s slots were replanned into a new version.` });
-      // Refresh the version list and switch to the newest version (the replan
-      // result); loadGenerations selects the highest version.
-      await loadGenerations();
-    } catch (e: any) {
-      toast({ title: "Replan failed", description: e?.message ?? "Unknown error", variant: "destructive" });
+      const newGenId = resp.new_generation_id;
+      // Minimal-perturbation made visible: diff the new version against the one
+      // it replanned, and highlight exactly what moved.
+      const { data: rows } = await supabase.from("schedule_blocks").select("*").eq("generation_id", newGenId);
+      const after = mapBlocks(rows ?? []);
+      const diff = diffSchedules(before, after);
+      await loadGenerations(); // refresh list + switch to the newest (the replan)
+      setSelectedGen(newGenId);
+      if (diff.movedIds.length) flagChangedBlocks(diff.movedIds);
+      toast({
+        title: "Replanned",
+        description: `${replanSuggestion.specialistName}'s slots were replanned. ${diffSummary(diff)}`,
+      });
+    } catch (e) {
+      toast({ title: "Replan failed", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" });
     } finally {
       setReplanLoading(false);
     }
@@ -1079,16 +1088,29 @@ export default function MasterSchedulePage() {
 
 
       {showDiff && diffData && (
-        <div className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 no-print">
-          <GitCompare className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm text-muted-foreground">
-            <span className="font-medium text-success">+{diffData.added} added</span>
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 no-print">
+          <GitCompare className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="text-sm text-foreground">{diffData.summary}</span>
+          <span className="text-xs text-muted-foreground">
+            <span className="font-medium text-primary">{diffData.moved} moved</span>
             {" · "}
-            <span className="font-medium text-destructive">-{diffData.removed} removed</span>
+            <span className="font-medium text-success">+{diffData.added}</span>
             {" · "}
-            <span className="font-medium text-foreground">{diffData.total} total blocks</span>
+            <span className="font-medium text-destructive">−{diffData.removed}</span>
+            {" · "}
+            {diffData.unchanged} unchanged
           </span>
-          <Button variant="ghost" size="sm" className="ml-auto" onClick={() => { setShowDiff(false); setDiffGenId(null); }}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto h-7 text-xs"
+            disabled={!diffData.moved}
+            onClick={() => diffData.movedIds.length && flagChangedBlocks(diffData.movedIds)}
+            title="Highlight the blocks that moved"
+          >
+            Highlight changes
+          </Button>
+          <Button variant="ghost" size="sm" className="h-7" onClick={() => { setShowDiff(false); setDiffGenId(null); }}>
             Close
           </Button>
         </div>
