@@ -150,6 +150,7 @@ Deno.serve(async (req) => {
         generated_at: new Date().toISOString(),
         score_breakdown: result.scoreBreakdown,
         winning_score: result.score,
+        quality_confidence: result.confidence,
         refined_from_generation_id: body.generation_id,
       })
       .select("id")

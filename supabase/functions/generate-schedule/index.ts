@@ -33,6 +33,7 @@ import { shuffle, deriveSeed, mulberry32, type Rng } from "./_random.ts";
 import { scoreSchedule, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
 import { qualityPercent } from "../_shared/scoring-rubric.ts";
 import { calibrateMonteCarlo, monteCarloRun, MonteCarloBudgetExceededError } from "./_monteCarlo.ts";
+import { computeQualityConfidence } from "./_confidence.ts";
 import { OccupancyTracker, type Interval } from "./_occupancy.ts";
 // Re-export so existing importers (tests, other functions) keep `import {
 // OccupancyTracker } from "./index.ts"` working unchanged after the extraction.
@@ -2678,6 +2679,19 @@ const __serveHandler = async (req: Request): Promise<Response> => {
           ...contractSubjectWarnings,
           ...contractTeacherWarnings,
         ];
+        // Confidence signal (power 1): compute from the headroom (capacity) + a
+        // convergence proxy off the inline SA telemetry, and persist so the UI
+        // can read it. The fuller signal comes from background refine-schedule.
+        const qualityConfidence = computeQualityConfidence({
+          breakdown: schedulerResult!.scoreBreakdown,
+          specialists,
+          gradeCount: grades.length,
+          school,
+          refinement: {
+            rounds: schedulerResult!.saIterations,
+            lastImprovementRound: schedulerResult!.saImprovement > 0 ? schedulerResult!.saIterations - 1 : -1,
+          },
+        });
         await supabase.from("schedule_generations").update({
           warnings,
           chosen_strategy: schedulerResult!.chosenStrategy,
@@ -2688,6 +2702,7 @@ const __serveHandler = async (req: Request): Promise<Response> => {
           score_breakdown: schedulerResult!.scoreBreakdown,
           sa_iterations: schedulerResult!.saIterations,
           sa_improvement: schedulerResult!.saImprovement,
+          quality_confidence: qualityConfidence,
         }).eq("id", generation.id);
         await supabase.from("activity_log").insert({
           user_id: userId,
