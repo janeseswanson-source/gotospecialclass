@@ -1,0 +1,108 @@
+// QualityPanel — powers 1 (confidence signal) + 2 (quality in human terms).
+//
+// The first thing an administrator sees: a calm headline that states, in plain
+// language, how good this schedule is and whether it's worth refining further,
+// plus a readable "what's working / what it cost" summary. The headline % still
+// comes from the shared rubric (breakdownToPercent) — we lead with meaning.
+
+import { useMemo } from "react";
+import { cn } from "@/lib/utils";
+import { CheckCircle2, Sparkles, AlertTriangle, TrendingUp, Loader2 } from "lucide-react";
+import { scoreSummary, confidenceCopy, type ConfidenceTone } from "@/lib/scoreSummary";
+
+interface QualityPanelProps {
+  breakdown: Record<string, number> | null | undefined;
+  confidence: Record<string, any> | null | undefined;
+  /** True while background refinement may still be computing the signal. */
+  refining?: boolean;
+}
+
+const TONE: Record<ConfidenceTone, { ring: string; text: string; chip: string; Icon: typeof Sparkles }> = {
+  good: { ring: "border-success/40 bg-success/5", text: "text-success", chip: "bg-success/15 text-success", Icon: CheckCircle2 },
+  info: { ring: "border-primary/40 bg-primary/5", text: "text-primary", chip: "bg-primary/15 text-primary", Icon: TrendingUp },
+  warn: { ring: "border-amber-500/40 bg-amber-50/60 dark:bg-amber-950/20", text: "text-amber-700 dark:text-amber-400", chip: "bg-amber-500/15 text-amber-700 dark:text-amber-400", Icon: AlertTriangle },
+};
+
+export default function QualityPanel({ breakdown, confidence, refining }: QualityPanelProps) {
+  const summary = useMemo(() => scoreSummary(breakdown), [breakdown]);
+  const copy = useMemo(() => confidenceCopy(confidence), [confidence]);
+  const tone = copy.tone;
+  const t = TONE[tone];
+  const Icon = t.Icon;
+
+  const pct = summary.percent;
+  const pctColor = pct == null ? "text-muted-foreground" : pct >= 95 ? "text-success" : pct >= 85 ? "text-amber-600 dark:text-amber-400" : "text-destructive";
+
+  return (
+    <section
+      aria-label="Schedule quality"
+      className={cn("rounded-2xl border p-5 sm:p-6 no-print", t.ring)}
+    >
+      <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:gap-6">
+        {/* Confidence hero (power 1) */}
+        <div className="flex items-start gap-3 sm:max-w-sm">
+          <div className={cn("mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl", t.chip)}>
+            <Icon className="h-5 w-5" aria-hidden />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h2 className={cn("text-lg font-semibold leading-tight", t.text)}>
+                {copy.assessment === "unknown" && refining ? "Checking quality…" : copy.headline}
+              </h2>
+              {refining && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden />}
+            </div>
+            {copy.detail && <p className="mt-1 text-sm text-muted-foreground">{copy.detail}</p>}
+          </div>
+        </div>
+
+        {/* Headline % (power 2 lead-in) */}
+        <div className="flex items-center gap-2 sm:ml-auto sm:flex-col sm:items-end sm:gap-0.5">
+          <span className={cn("text-3xl font-bold tabular-nums leading-none", pctColor)}>
+            {pct != null ? `${pct}%` : "—"}
+          </span>
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">quality</span>
+        </div>
+      </div>
+
+      {/* What's working / what it cost (power 2) */}
+      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+        <div>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">What's working</h3>
+          {summary.working.length === 0 ? (
+            <p className="text-sm text-muted-foreground">—</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {summary.working.slice(0, 5).map((w, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+                  <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" aria-hidden />
+                  <span>{w}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <div>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">What it cost</h3>
+          {summary.costs.length === 0 ? (
+            <p className="flex items-start gap-2 text-sm text-foreground">
+              <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" aria-hidden />
+              <span>Nothing — this schedule has no soft-quality trade-offs.</span>
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {summary.costs.slice(0, 5).map((c, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-foreground">
+                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                  <span>{c.label}</span>
+                </li>
+              ))}
+              {summary.costs.length > 5 && (
+                <li className="text-xs italic text-muted-foreground">+ {summary.costs.length - 5} more</li>
+              )}
+            </ul>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
