@@ -8,11 +8,11 @@
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
 import { CheckCircle2, Sparkles, AlertTriangle, TrendingUp, Loader2 } from "lucide-react";
-import { scoreSummary, confidenceCopy, type ConfidenceTone } from "@/lib/scoreSummary";
+import { scoreSummary, confidenceCopy, type ConfidenceTone, type QualityConfidence } from "@/lib/scoreSummary";
 
 interface QualityPanelProps {
   breakdown: Record<string, number> | null | undefined;
-  confidence: Record<string, any> | null | undefined;
+  confidence: QualityConfidence | null | undefined;
   /** True while background refinement may still be computing the signal. */
   refining?: boolean;
 }

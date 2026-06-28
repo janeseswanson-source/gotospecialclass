@@ -113,7 +113,7 @@ export interface ConfidenceCopy {
   assessment: "near_optimal" | "more_headroom" | "structurally_limited" | "unknown";
 }
 
-interface QualityConfidence {
+export interface QualityConfidence {
   assessment?: string;
   recommendation?: string;
   gapQualityPoints?: number;

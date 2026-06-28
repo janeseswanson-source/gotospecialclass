@@ -26,6 +26,9 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds, computeConflictPairs, computeAutoFit, parseTime, swapPlacements } from "@/lib/scheduleGrid";
 import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
 import { breakdownToPercent } from "@/lib/optimizerScore";
+import QualityPanel from "@/components/schedule/QualityPanel";
+import RefinementBanner from "@/components/schedule/RefinementBanner";
+import WeightProposal from "@/components/schedule/WeightProposal";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -125,6 +128,19 @@ export default function MasterSchedulePage() {
   const manualEditCountRef = useRef(0);
   const heavilyEditedFiredRef = useRef(false);
 
+  // Learnable-weights profile (power 7): active weights + any staged proposal.
+  const [weightProfile, setWeightProfile] = useState<{ weights: Record<string, number> | null; proposed_weights: Record<string, number> | null } | null>(null);
+  const loadWeightProfile = useCallback(async () => {
+    if (!selectedSchoolId) return;
+    const { data } = await supabase
+      .from("scoring_weight_profiles")
+      .select("*")
+      .eq("school_id", selectedSchoolId)
+      .maybeSingle();
+    const row = data as any;
+    setWeightProfile(row ? { weights: row.weights ?? null, proposed_weights: row.proposed_weights ?? null } : null);
+  }, [selectedSchoolId]);
+
   // Diff view
   const [diffGenId, setDiffGenId] = useState<string | null>(null);
   const [diffBlocks, setDiffBlocks] = useState<BlockData[]>([]);
@@ -181,7 +197,7 @@ export default function MasterSchedulePage() {
 
   useEffect(() => {
     if (!user || schoolLoading) return;
-    if (selectedSchoolId) loadGenerations();
+    if (selectedSchoolId) { loadGenerations(); loadWeightProfile(); }
     else setLoading(false);
   }, [user, selectedSchoolId, schoolLoading]);
 
@@ -506,9 +522,11 @@ export default function MasterSchedulePage() {
         await supabase.from('schedule_generations')
           .update({ feedback_signal: 'heavily_edited' })
           .eq('id', selectedGen);
+        // Phase-4 propose: this STAGES a clamped weight proposal (does not apply).
+        // Refresh the profile so the human-gated WeightProposal surfaces it.
         supabase.functions.invoke('update-scoring-weights', {
-          body: { school_id: selectedSchoolId, generation_id: selectedGen },
-        }).catch(() => {});
+          body: { school_id: selectedSchoolId, generation_id: selectedGen, action: 'propose' },
+        }).then(() => loadWeightProfile()).catch(() => {});
       }
 
       // Suggest replan when specialist changed
@@ -607,6 +625,30 @@ export default function MasterSchedulePage() {
     () => (generations.find((g: any) => g.id === selectedGen) as any) ?? null,
     [generations, selectedGen],
   );
+
+  // Power 6: gate background refinement to a fresh version that is pending review,
+  // is not itself a refinement, and has no refined child yet (so it runs once).
+  const refinedChildParentIds = useMemo(
+    () => new Set(generations.map((g: any) => g.refined_from_generation_id).filter(Boolean)),
+    [generations],
+  );
+  const enableRefine = !!activeGen && activeGen.review_state === "pending"
+    && !activeGen.refined_from_generation_id && !refinedChildParentIds.has(selectedGen);
+
+  // When the admin reviews a refined version: switch to it and show the diff vs
+  // the version it improved (power 4 + 6 synergy) — they compare, then accept.
+  async function handleReviewRefined(newGenId: string) {
+    const { data } = await supabase
+      .from("schedule_generations")
+      .select("*")
+      .eq("school_id", selectedSchoolId!)
+      .order("version", { ascending: false });
+    const rows = (data ?? []) as any[];
+    setGenerations(rows);
+    setSelectedGen(newGenId);
+    const parentId = rows.find((g) => g.id === newGenId)?.refined_from_generation_id;
+    if (parentId) loadDiffBlocks(parentId);
+  }
 
   async function handleReplan() {
     if (!replanSuggestion || !selectedGen) return;
@@ -972,6 +1014,30 @@ export default function MasterSchedulePage() {
       )}
 
 
+
+      {/* ─── Power 1+2: confidence hero + human quality summary ─── */}
+      {activeGen && (
+        <QualityPanel
+          breakdown={(activeGen.score_breakdown as Record<string, number> | null) ?? null}
+          confidence={activeGen.quality_confidence ?? null}
+          refining={enableRefine}
+        />
+      )}
+
+      {/* ─── Power 6: background refinement (quietly gets better) ─── */}
+      <RefinementBanner
+        generationId={selectedGen || null}
+        enabled={enableRefine}
+        onReviewRefined={handleReviewRefined}
+      />
+
+      {/* ─── Power 7: learnable-weights proposal (human-gated) ─── */}
+      <WeightProposal
+        schoolId={selectedSchoolId ?? null}
+        activeWeights={weightProfile?.weights ?? null}
+        proposedWeights={weightProfile?.proposed_weights ?? null}
+        onResolved={loadWeightProfile}
+      />
 
       {(() => {
         if (!activeGen?.chosen_strategy) return null;

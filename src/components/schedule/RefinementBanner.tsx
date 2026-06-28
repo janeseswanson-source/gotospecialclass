@@ -47,7 +47,10 @@ export default function RefinementBanner({ generationId, enabled, onReviewRefine
       .invoke("refine-schedule", { body: { generation_id: generationId } })
       .then(({ data, error }) => {
         if (cancelled) return;
-        const d = data as any;
+        const d = data as {
+          improved?: boolean; generation_id?: string; error?: string;
+          quality_percent?: number; previous_quality_percent?: number; moved_from_baseline?: number;
+        } | null;
         if (error || d?.error) { setStatus("error"); return; }
         if (d?.improved && d?.generation_id) {
           setInfo({

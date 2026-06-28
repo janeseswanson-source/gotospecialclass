@@ -36,11 +36,12 @@ export default function WeightProposal({ schoolId, activeWeights, proposedWeight
       const { data, error } = await supabase.functions.invoke("update-scoring-weights", {
         body: { school_id: schoolId, action: "confirm" },
       });
-      if (error || (data as any)?.error) throw new Error((data as any)?.error ?? error?.message ?? "Failed");
+      const d = data as { applied?: boolean; error?: string } | null;
+      if (error || d?.error) throw new Error(d?.error ?? error?.message ?? "Failed");
       toast({ title: "Preferences updated", description: "Future schedules will use your tweaks. You can change this anytime in Setup." });
       onResolved();
-    } catch (e: any) {
-      toast({ title: "Couldn't apply", description: e?.message ?? "Unknown error", variant: "destructive" });
+    } catch (e) {
+      toast({ title: "Couldn't apply", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" });
     } finally {
       setBusy(null);
     }
@@ -53,6 +54,7 @@ export default function WeightProposal({ schoolId, activeWeights, proposedWeight
       // Clear the staged proposal so it stops surfacing. Cast: the proposed_*
       // columns post-date the locally-generated Supabase types (regenerated via
       // Lovable on deploy); the codebase already treats these rows loosely.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await supabase.from("scoring_weight_profiles").update({ proposed_weights: null, proposed_at: null } as any).eq("school_id", schoolId);
     } catch {
       // Non-fatal — hide locally regardless.
