@@ -1,5 +1,25 @@
 # Lovable deploy prompt
 
+## Latest update — schedule quality (no new migrations)
+
+The newest commits make schedules reach the true achievable ceiling (AB/AA-BB Week
+now hit **100%**; see `SCHEDULE_QUALITY_NOTES.md`). They change ENGINE CODE and the
+client only — **no new database migrations, no new secrets**.
+
+> Please redeploy the `generate-schedule`, `refine-schedule`, `resolve-conflicts-ai`
+> and `update-scoring-weights` edge functions (each carries the shared engine under
+> its own `_engine/` folder — deploy those folders too) and the frontend, from
+> `main`. No migrations to run this time; the columns from the previous deploy are
+> already in place.
+
+Note: the engine is duplicated into each function's `_engine/` copy (Lovable can't
+import across function dirs). Those copies are kept in sync by
+`scripts/sync-engine.sh` and are already committed — just deploy what's in `main`.
+
+---
+
+
+
 The `scheduler-upgrade` + `frontend-revamp` work adds **3 database migrations** (new
 columns only — no destructive changes), updates/adds **4 edge functions**, and
 needs the **Supabase TypeScript types regenerated** so the frontend sees the new
