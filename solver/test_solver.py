@@ -114,8 +114,37 @@ def test_fixed_biggroup_session_is_honored():
                for b in sol["blocks"]), "fixed Big-Group session not honored"
 
 
+def test_overlapping_busy_intervals_stay_feasible():
+    # A PLUS block grazing a lunch block produces OVERLAPPING busy spans for one
+    # specialist. As mandatory no-overlap intervals that would be instantly
+    # INFEASIBLE — the solver must MERGE them. (Regression: a real school had a
+    # PLUS block 620-665 overlapping lunch 660-690 → the whole model went
+    # INFEASIBLE, so generate-cpsat fell back to the metaheuristic every time.)
+    days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    starts = [480, 540, 600]
+    classes = [{"teacher_id": f"t{n}", "grade": "1", "planning_minutes": 90} for n in range(3)]
+    specs = [{"id": "pe", "subject": "PE", "working_days": days, "grades": None, "duration": 45}]
+    spec = {
+        "classes": classes, "specialists": specs,
+        "slots_by_grade": {"1": _grid(days, starts)},
+        "week_labels": [None], "time_limit_s": 10,
+        "busy": [
+            {"specialist_id": "pe", "day": "Mon", "start": 540, "end": 585},
+            {"specialist_id": "pe", "day": "Mon", "start": 580, "end": 610},  # overlaps the above
+        ],
+    }
+    sol = solve(spec)
+    assert sol["status"] in ("OPTIMAL", "FEASIBLE"), sol["status"]
+    _assert_legal(sol, spec)
+    # PE must not be scheduled inside the merged busy span 540-610 on Mon.
+    for b in sol["blocks"]:
+        if b["specialist_id"] == "pe" and b["day"] == "Mon":
+            assert not (b["start"] < 610 and 540 < b["end"]), f"scheduled over merged busy: {b}"
+
+
 if __name__ == "__main__":
     test_small_solvable_is_optimal_and_clean()
     test_capacity_wall_is_respected_and_proven()
     test_fixed_biggroup_session_is_honored()
+    test_overlapping_busy_intervals_stay_feasible()
     print("all solver tests passed")
