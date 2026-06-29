@@ -969,7 +969,9 @@ export type Database = {
           id: string
           manual_edit_count: number | null
           monte_carlo_attempts: number | null
+          quality_confidence: Json | null
           quote: string | null
+          refined_from_generation_id: string | null
           review_state: string
           sa_improvement: number | null
           sa_iterations: number | null
@@ -994,7 +996,9 @@ export type Database = {
           id?: string
           manual_edit_count?: number | null
           monte_carlo_attempts?: number | null
+          quality_confidence?: Json | null
           quote?: string | null
+          refined_from_generation_id?: string | null
           review_state?: string
           sa_improvement?: number | null
           sa_iterations?: number | null
@@ -1019,7 +1023,9 @@ export type Database = {
           id?: string
           manual_edit_count?: number | null
           monte_carlo_attempts?: number | null
+          quality_confidence?: Json | null
           quote?: string | null
+          refined_from_generation_id?: string | null
           review_state?: string
           sa_improvement?: number | null
           sa_iterations?: number | null
@@ -1034,6 +1040,13 @@ export type Database = {
           winning_score?: number | null
         }
         Relationships: [
+          {
+            foreignKeyName: "schedule_generations_refined_from_generation_id_fkey"
+            columns: ["refined_from_generation_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_generations"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "schedule_generations_school_id_fkey"
             columns: ["school_id"]
@@ -1230,6 +1243,8 @@ export type Database = {
           created_at: string
           id: string
           last_updated: string | null
+          proposed_at: string | null
+          proposed_weights: Json | null
           sample_count: number
           school_id: string
           weights: Json
@@ -1238,6 +1253,8 @@ export type Database = {
           created_at?: string
           id?: string
           last_updated?: string | null
+          proposed_at?: string | null
+          proposed_weights?: Json | null
           sample_count?: number
           school_id: string
           weights?: Json
@@ -1246,6 +1263,8 @@ export type Database = {
           created_at?: string
           id?: string
           last_updated?: string | null
+          proposed_at?: string | null
+          proposed_weights?: Json | null
           sample_count?: number
           school_id?: string
           weights?: Json
