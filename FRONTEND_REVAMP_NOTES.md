@@ -151,10 +151,21 @@ imports. The page composes: `ScheduleToolbar`, `QualityPanel`, `RefinementBanner
 `WeightProposal`, `ConflictResolver`, `WeekGrid`, `BlockInspector`,
 `ScheduleChatPanel` (+ export modals). tsc clean, `vite build` OK, 50 tests pass.
 
-### Remaining (optional, documented)
-- A `preview` mode on `resolve-conflicts-ai` so the UI can show the
-  ranked options BEFORE applying (pick-one-of-N), rather than the current
-  auto-apply-smallest + narrate. The deterministic engine already returns ranked
-  options; this is a small edge addition.
-- Optional: retire the legacy "Explain" sidebar now that `BlockInspector` covers
-  per-block "why", and fold the cell's inline notes/lock fully into the inspector.
+### Optional follow-ups (now done)
+- **Pick-one-of-N conflict fixes (done):** `resolve-conflicts-ai` gained
+  `mode: "preview" | "apply"` (default `"auto"` unchanged). `preview` returns the
+  engine's ranked legal options for one conflict (by block id, or the first
+  detected) without applying; `apply` applies a chosen option's moves, gated by an
+  SSOT-mirror conflict-count check (the fix must strictly reduce conflicts).
+  `ConflictFixPicker` renders the ranked options in `BlockInspector` when a block
+  is double-booked — "Moved the class · affects 1 (recommended)" / "Swapped two
+  sessions · affects 2", each applied in one click, with the escalation shown when
+  nothing is legal. "Or auto-fix every conflict" remains as a fallback.
+- **Retire the Explain sidebar (done):** removed the `showExplain` toggle + the
+  XAI `<aside>`; per-block "why" now lives in `BlockInspector`, and the AI
+  verify-schedule review (`verify_summary`/`verify_quality_score`) is folded into
+  `QualityPanel` as a subtle "AI review" footer so nothing unique is lost.
+
+### Still optional (not done)
+- Fold the grid cell's inline notes/lock controls fully into `BlockInspector`
+  (they currently coexist; harmless, just slight duplication).
