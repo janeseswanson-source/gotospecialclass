@@ -205,7 +205,21 @@ def _solve(spec: Spec) -> Solution:
                     pair_vars.setdefault((t, sid, w), []).append(b)
 
     # Pre-occupied intervals (PLUS rotations, specialist lunch) block the
-    # specialist/teacher: add them as MANDATORY intervals into the no-overlap pool.
+    # specialist/teacher. These are GIVEN facts and may themselves overlap (e.g. a
+    # PLUS block grazing a lunch block), so we MERGE overlapping spans per
+    # specialist/teacher before adding them as MANDATORY no-overlap intervals —
+    # two overlapping mandatory intervals would make the whole model INFEASIBLE.
+    def _merge(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        out: list[list[int]] = []
+        for s, e in sorted(spans):
+            if out and s <= out[-1][1]:
+                out[-1][1] = max(out[-1][1], e)
+            else:
+                out.append([s, e])
+        return [(s, e) for s, e in out]
+
+    spec_busy: dict[str, list[tuple[int, int]]] = {}
+    teacher_busy: dict[str, list[tuple[int, int]]] = {}
     for bz in spec.busy:
         day = bz.get("day")
         if day not in DAY_INDEX:
@@ -216,9 +230,15 @@ def _solve(spec: Spec) -> Solution:
             continue
         sid = bz.get("specialist_id")
         if sid and sid in spec_intervals:
-            spec_intervals[sid].append(model.NewIntervalVar(gs, ge - gs, ge, f"busyS_{sid}_{gs}"))
+            spec_busy.setdefault(sid, []).append((gs, ge))
         tid = bz.get("teacher_id")
         if tid and tid in teacher_intervals:
+            teacher_busy.setdefault(tid, []).append((gs, ge))
+    for sid, spans in spec_busy.items():
+        for gs, ge in _merge(spans):
+            spec_intervals[sid].append(model.NewIntervalVar(gs, ge - gs, ge, f"busyS_{sid}_{gs}"))
+    for tid, spans in teacher_busy.items():
+        for gs, ge in _merge(spans):
             teacher_intervals[tid].append(model.NewIntervalVar(gs, ge - gs, ge, f"busyT_{tid}_{gs}"))
 
     # Hard: no specialist / no class double-booked (interval no-overlap).
