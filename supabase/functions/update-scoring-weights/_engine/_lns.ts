@@ -308,10 +308,11 @@ function reassignClassDistinct(
       const dur = specClassDuration(cand, baseDuration);
       const slots = findFreeSlots(grade, dur, cand.id, teacherId, workDays, working, occ, school, recessConfigs, classStartMin, 16);
       if (slots.length === 0) continue;
-      // Clustering-aware: avoid a day where this grade already has cand.subject
-      // (so reassigning to fix a repeat doesn't create a same-day duplicate).
+      // Clustering-aware (WEEK-BLIND, matching the scorer): avoid a day where this
+      // grade already has cand.subject in ANY week, so reassigning to fix a repeat
+      // doesn't create a same-day duplicate.
       const clusteredDays = new Set(
-        working.filter((b) => b.grade === grade && b.subject === cand.subject).map((b) => b.day_of_week),
+        [...survivors, ...placed].filter((b) => b.grade === grade && b.subject === cand.subject).map((b) => b.day_of_week),
       );
       const clean = slots.filter((s) => !clusteredDays.has(s.day));
       const pickFrom = clean.length > 0 ? clean : slots;
@@ -367,10 +368,13 @@ function declusterOnce(
   rng: Rng,
   accept: (cand: Block[]) => boolean,
 ): boolean {
+  // Group WEEK-BLIND to match the scorer's (grade|subject|day) clustering key, so
+  // we also catch cross-week duplicates (e.g. Art on Friday in BOTH A and B weeks,
+  // which the rubric penalizes even though they're different weeks).
   const byKey = new Map<string, Block[]>();
   for (const b of current) {
     if (!isMutable(b, combined)) continue;
-    const k = `${b.grade}|${b.subject ?? ""}|${b.day_of_week}|${b.week_label ?? ""}`;
+    const k = `${b.grade}|${b.subject ?? ""}|${b.day_of_week}`;
     (byKey.get(k) ?? byKey.set(k, []).get(k)!).push(b);
   }
   for (const group of byKey.values()) {
@@ -379,8 +383,10 @@ function declusterOnce(
       const survivors = current.filter((b) => b !== blk);
       const W = blk.week_label ?? null;
       const working = survivors.filter((b) => weeksCoincide(b.week_label ?? null, W));
+      // Clean days = days where this (grade, subject) appears in NO week (week-blind),
+      // so the relocate actually lowers the week-blind clustering count.
       const usedDays = new Set(
-        working.filter((b) => b.grade === blk.grade && b.subject === blk.subject).map((b) => b.day_of_week),
+        survivors.filter((b) => b.grade === blk.grade && b.subject === blk.subject).map((b) => b.day_of_week),
       );
       const occ = buildWeekOccupancy(baseOccupancy, survivors, W);
       const duration = timeToMinutes(blk.end_time) - timeToMinutes(blk.start_time);
