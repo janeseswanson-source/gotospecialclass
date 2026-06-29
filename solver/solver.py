@@ -82,6 +82,9 @@ class Spec:
     slots_by_grade: dict[str, list[Slot]]
     week_labels: list[Optional[str]] = field(default_factory=lambda: [None])
     fixed: list[FixedSession] = field(default_factory=list)
+    # Pre-occupied intervals (PLUS rotations, specialist lunch) that block a
+    # specialist and/or teacher from being scheduled at that time.
+    busy: list[dict] = field(default_factory=list)  # {specialist_id?, teacher_id?, day, start, end}
     weights: Weights = field(default_factory=Weights)
     time_limit_s: float = 30.0
     num_workers: int = 8
@@ -127,6 +130,7 @@ def _spec_from_dict(d: dict) -> Spec:
         slots_by_grade=slots,
         week_labels=d.get("week_labels") or [None],
         fixed=fixed,
+        busy=d.get("busy", []),
         weights=weights,
         time_limit_s=d.get("time_limit_s", 30.0),
         num_workers=d.get("num_workers", 8),
@@ -199,6 +203,23 @@ def _solve(spec: Spec) -> Solution:
                     spec_intervals[sid].append(iv)
                     teacher_intervals[t].append(iv)
                     pair_vars.setdefault((t, sid, w), []).append(b)
+
+    # Pre-occupied intervals (PLUS rotations, specialist lunch) block the
+    # specialist/teacher: add them as MANDATORY intervals into the no-overlap pool.
+    for bz in spec.busy:
+        day = bz.get("day")
+        if day not in DAY_INDEX:
+            continue
+        gs = DAY_INDEX[day] * 1440 + int(bz["start"])
+        ge = DAY_INDEX[day] * 1440 + int(bz["end"])
+        if ge <= gs:
+            continue
+        sid = bz.get("specialist_id")
+        if sid and sid in spec_intervals:
+            spec_intervals[sid].append(model.NewIntervalVar(gs, ge - gs, ge, f"busyS_{sid}_{gs}"))
+        tid = bz.get("teacher_id")
+        if tid and tid in teacher_intervals:
+            teacher_intervals[tid].append(model.NewIntervalVar(gs, ge - gs, ge, f"busyT_{tid}_{gs}"))
 
     # Hard: no specialist / no class double-booked (interval no-overlap).
     for ivs in spec_intervals.values():

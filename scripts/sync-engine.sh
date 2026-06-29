@@ -18,7 +18,7 @@ FILES=(
   _occupancy.ts _perturbation.ts _random.ts _refine.ts _scoring.ts
   _weightlearning.ts _simulate.ts
 )
-CONSUMERS=(refine-schedule resolve-conflicts-ai update-scoring-weights)
+CONSUMERS=(refine-schedule resolve-conflicts-ai update-scoring-weights generate-cpsat)
 
 for c in "${CONSUMERS[@]}"; do
   dest="supabase/functions/$c/_engine"
