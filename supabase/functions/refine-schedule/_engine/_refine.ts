@@ -27,7 +27,7 @@ import {
 import { scoreSchedule, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
 import { OccupancyTracker } from "./_occupancy.ts";
 import { runSimulatedAnnealing } from "./_annealing.ts";
-import { runLNS, recreate } from "./_lns.ts";
+import { runLNS, recreate, directedRepair, type RepairContext } from "./_lns.ts";
 import { computeQualityConfidence, type QualityConfidence } from "./_confidence.ts";
 import { buildPerturbationBaseline, countMovedBlocks, perturbationAdjust, DEFAULT_PERTURBATION_WEIGHT } from "./_perturbation.ts";
 import { mulberry32, deriveSeed, type Rng } from "./_random.ts";
@@ -179,9 +179,17 @@ export function refineSchedule(blocks: Block[], ctx: RefineContext, opts?: Refin
   );
   const previousQualityPercent = qualityPercent(originalScored.breakdown as unknown as Record<string, number>);
 
-  // SA first (local polish), then LNS (escape local optima). Both deterministic.
+  // Pipeline: directed repair (greedy descent on assignment penalties) →
+  // SA (timing polish) → LNS (escape local optima) → directed repair again
+  // (clean up anything the stochastic passes disturbed). The directed repair is
+  // the workhorse for class_repeats / clustering; SA+LNS handle timing/balance.
+  const repairCtx: RepairContext = { scoringInput, specialists, grades, school, recessConfigs, baseOccupancy, weightOverrides };
+  const scoreTotal = (bs: Block[]): number =>
+    scoreSchedule({ blocks: bs, warnings: computeWarnings(bs, specialists, grades), preferenceViolations }, scoringInput, weightOverrides).total;
+
+  const repaired0 = directedRepair(original.blocks, repairCtx, mulberry32(deriveSeed(seed, "rep0")));
   const sa = runSimulatedAnnealing(
-    original, originalScored.total, scoringInput, specialists, grades, school, recessConfigs,
+    { blocks: repaired0, preferenceViolations }, scoreTotal(repaired0), scoringInput, specialists, grades, school, recessConfigs,
     baseOccupancy, mulberry32(deriveSeed(seed, "sa")), weightOverrides, { maxIterations: saMaxIterations, objectiveAdjust },
   );
   const afterSA: StrategyResult = { blocks: sa.blocks, preferenceViolations: sa.preferenceViolations };
@@ -189,8 +197,7 @@ export function refineSchedule(blocks: Block[], ctx: RefineContext, opts?: Refin
     afterSA, sa.score, scoringInput, specialists, grades, school, recessConfigs,
     baseOccupancy, mulberry32(deriveSeed(seed, "lns")), weightOverrides, { rounds: lnsRounds, objectiveAdjust },
   );
-
-  const candidateBlocks = lns.blocks;
+  const candidateBlocks = directedRepair(lns.blocks, repairCtx, mulberry32(deriveSeed(seed, "rep1")));
   const candWarnings = computeWarnings(candidateBlocks, specialists, grades);
   const candScored = scoreSchedule(
     { blocks: candidateBlocks, warnings: candWarnings, preferenceViolations },

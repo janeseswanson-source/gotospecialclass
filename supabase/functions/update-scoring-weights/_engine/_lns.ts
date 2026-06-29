@@ -41,6 +41,9 @@ import {
   buildTimeSlotsForGrade,
   computeWarnings,
   strategyFailed,
+  weeksCoincide,
+  canSpecialistTeachGradeOnDay,
+  specClassDuration,
   type Block,
   type Specialist,
   type StrategyResult,
@@ -211,6 +214,126 @@ export function recreate(
   return working;
 }
 
+// ─── Reassignment operator (drives class_repeats to its floor) ───────────────
+//
+// The destroy/recreate above re-places sessions but KEEPS each session's
+// specialist, so it can never change WHICH specialist a class sees — meaning the
+// class_repeats penalty is frozen the instant the schedule is constructed. This
+// operator is the missing piece: it re-places one class's sessions onto DISTINCT
+// specialists, so a class that wrongly sees one specialist twice (and misses
+// another) is repaired toward "each session a different specialist".
+
+/** Week-aware occupancy: like buildOccupancyFromBlocks, but only books blocks
+ *  whose week coincides with `week` (so an A-week placement isn't blocked by a
+ *  B-week session). Half-open intervals; same rules the SSOT mirrors. */
+function buildWeekOccupancy(base: OccupancyTracker, blocks: Block[], week: string | null): OccupancyTracker {
+  const occ = base.clone();
+  for (const b of blocks) {
+    if (!b.specialist_id) continue;
+    if (!weeksCoincide(b.week_label ?? null, week)) continue;
+    occ.book(b.day_of_week, timeToMinutes(b.start_time), timeToMinutes(b.end_time), b.specialist_id, b.teacher_id);
+  }
+  return occ;
+}
+
+/** Teacher ids whose class currently sees some specialist more than once
+ *  (i.e. has an avoidable/structural repeat) — the targets for reassignment. */
+function classesWithRepeats(blocks: Block[]): string[] {
+  const perClass = new Map<string, Map<string, number>>();
+  for (const b of blocks) {
+    if (!b.teacher_id || !b.specialist_id) continue;
+    const m = perClass.get(b.teacher_id) ?? perClass.set(b.teacher_id, new Map()).get(b.teacher_id)!;
+    m.set(b.specialist_id, (m.get(b.specialist_id) ?? 0) + 1);
+  }
+  const out: string[] = [];
+  for (const [tid, m] of perClass) {
+    for (const n of m.values()) if (n > 1) { out.push(tid); break; }
+  }
+  return out;
+}
+
+/** Re-place one class's `classSessions` onto DISTINCT specialists (where legal),
+ *  leaving `survivors` untouched. Returns the rebuilt full block list, or null if
+ *  any session cannot be legally placed (round abandoned). Week-aware + grade-
+ *  rotation aware; every placement is occupancy-legal. */
+function reassignClassDistinct(
+  classSessions: Block[],
+  survivors: Block[],
+  specialists: Specialist[],
+  baseOccupancy: OccupancyTracker,
+  school: any,
+  recessConfigs: any[],
+  classStartMin: number,
+  rng: Rng,
+): Block[] | null {
+  if (classSessions.length === 0) return null;
+  const teacherId = classSessions[0].teacher_id!;
+  const grade = classSessions[0].grade;
+
+  // Deterministic session order (week, then current slot).
+  const sessions = [...classSessions].sort((a, b) =>
+    (a.week_label ?? "").localeCompare(b.week_label ?? "") ||
+    a.day_of_week.localeCompare(b.day_of_week) ||
+    a.start_time.localeCompare(b.start_time));
+
+  // Seeded specialist order; distinct (unused-for-this-class) specialists are
+  // always tried before any the class already sees, so we maximize distinctness.
+  const specOrder = specialists
+    .map((s, i) => ({ s, k: (rng() * 1e9) >>> 0, i }))
+    .sort((a, z) => (a.k - z.k) || (a.i - z.i))
+    .map((x) => x.s);
+
+  // Seed "already seen" with the specialists this class keeps in surviving
+  // sessions (e.g. Big-Group blocks), so we don't re-introduce a repeat there.
+  const usedSpecs = new Set<string>();
+  for (const b of survivors) {
+    if (b.teacher_id === teacherId && b.specialist_id) usedSpecs.add(b.specialist_id);
+  }
+
+  const placed: Block[] = [];
+  for (const sess of sessions) {
+    const W = sess.week_label ?? null;
+    const baseDuration = timeToMinutes(sess.end_time) - timeToMinutes(sess.start_time);
+    const working = [...survivors, ...placed].filter((b) => weeksCoincide(b.week_label ?? null, W));
+    const occ = buildWeekOccupancy(baseOccupancy, [...survivors, ...placed], W);
+
+    const candidates = [
+      ...specOrder.filter((s) => !usedSpecs.has(s.id)),
+      ...specOrder.filter((s) => usedSpecs.has(s.id)),
+    ];
+    let placedThis = false;
+    for (const cand of candidates) {
+      const workDays = (cand.working_days ?? DAYS).filter((d) => DAYS.includes(d) && canSpecialistTeachGradeOnDay(cand, grade, d));
+      if (workDays.length === 0) continue;
+      const dur = specClassDuration(cand, baseDuration);
+      const slots = findFreeSlots(grade, dur, cand.id, teacherId, workDays, working, occ, school, recessConfigs, classStartMin, 16);
+      if (slots.length === 0) continue;
+      // Clustering-aware: avoid a day where this grade already has cand.subject
+      // (so reassigning to fix a repeat doesn't create a same-day duplicate).
+      const clusteredDays = new Set(
+        working.filter((b) => b.grade === grade && b.subject === cand.subject).map((b) => b.day_of_week),
+      );
+      const clean = slots.filter((s) => !clusteredDays.has(s.day));
+      const pickFrom = clean.length > 0 ? clean : slots;
+      const chosen = pickFrom[Math.floor(rng() * pickFrom.length)];
+      placed.push({
+        ...sess,
+        specialist_id: cand.id,
+        subject: cand.subject,
+        day_of_week: chosen.day,
+        start_time: minutesToTime(chosen.start),
+        end_time: minutesToTime(chosen.end),
+        room: cand.location ?? sess.room ?? null,
+      });
+      usedSpecs.add(cand.id);
+      placedThis = true;
+      break;
+    }
+    if (!placedThis) return null;
+  }
+  return [...survivors, ...placed];
+}
+
 /** True if no specialist lost an active working-day (idle-day guard). */
 function idleDayGuardOk(before: Block[], after: Block[]): boolean {
   const a = activeDaysBySpecialist(before);
@@ -220,6 +343,110 @@ function idleDayGuardOk(before: Block[], after: Block[]): boolean {
     for (const d of daysBefore) if (!daysAfter.has(d)) return false;
   }
   return true;
+}
+
+// ─── Directed greedy repair (deterministic descent on the dominant penalties) ─
+//
+// Random LNS plateaus on the structured ASSIGNMENT penalties (class_repeats,
+// subject_day_clustering). This pass instead applies the single highest-value
+// TARGETED move repeatedly until none improves: (1) reassign a repeating class
+// onto distinct specialists, (2) move a same-day subject duplicate to a clean
+// day. Every accepted move is SSOT-legal, Big-Group/idle-day safe, and strictly
+// improves the score — so it converges to a local optimum far better than random
+// search, and is the workhorse that actually drives quality toward the ceiling.
+
+/** Same-day (grade, subject) duplicates → relocate one to a day without that
+ *  subject for the grade, keeping its specialist/teacher (a de-cluster move). */
+function declusterOnce(
+  current: Block[],
+  combined: Set<Block>,
+  baseOccupancy: OccupancyTracker,
+  school: any,
+  recessConfigs: any[],
+  classStartMin: number,
+  rng: Rng,
+  accept: (cand: Block[]) => boolean,
+): boolean {
+  const byKey = new Map<string, Block[]>();
+  for (const b of current) {
+    if (!isMutable(b, combined)) continue;
+    const k = `${b.grade}|${b.subject ?? ""}|${b.day_of_week}|${b.week_label ?? ""}`;
+    (byKey.get(k) ?? byKey.set(k, []).get(k)!).push(b);
+  }
+  for (const group of byKey.values()) {
+    if (group.length < 2) continue;
+    for (const blk of group) {
+      const survivors = current.filter((b) => b !== blk);
+      const W = blk.week_label ?? null;
+      const working = survivors.filter((b) => weeksCoincide(b.week_label ?? null, W));
+      const usedDays = new Set(
+        working.filter((b) => b.grade === blk.grade && b.subject === blk.subject).map((b) => b.day_of_week),
+      );
+      const occ = buildWeekOccupancy(baseOccupancy, survivors, W);
+      const duration = timeToMinutes(blk.end_time) - timeToMinutes(blk.start_time);
+      const workDays = DAYS.filter((d) => !usedDays.has(d));
+      const slots = findFreeSlots(blk.grade, duration, blk.specialist_id!, blk.teacher_id, workDays, working, occ, school, recessConfigs, classStartMin, 12);
+      if (slots.length === 0) continue;
+      const chosen = slots[Math.floor(rng() * slots.length)];
+      const moved: Block = { ...blk, day_of_week: chosen.day, start_time: minutesToTime(chosen.start), end_time: minutesToTime(chosen.end) };
+      const cand = survivors.concat([moved]);
+      if (accept(cand)) return true;
+    }
+  }
+  return false;
+}
+
+export interface RepairContext {
+  scoringInput: ScoreableInput;
+  specialists: Specialist[];
+  grades: string[];
+  school: any;
+  recessConfigs: any[];
+  baseOccupancy: OccupancyTracker;
+  weightOverrides?: Partial<Record<keyof ScoreBreakdown, number>>;
+}
+
+/** Greedy descent: reassign repeating classes onto distinct specialists and
+ *  de-cluster same-day duplicates until no targeted move improves the score.
+ *  Deterministic given `rng`. Returns the improved (or unchanged) block list. */
+export function directedRepair(blocks: Block[], ctx: RepairContext, rng: Rng, maxRounds = 60): Block[] {
+  const { scoringInput, specialists, grades, school, recessConfigs, baseOccupancy, weightOverrides } = ctx;
+  const classStartMin = timeToMinutes(school.start_time ?? "08:00");
+  let current = blocks.slice();
+  const scoreOf = (bs: Block[]): number =>
+    scoreSchedule({ blocks: bs, warnings: computeWarnings(bs, specialists, grades), preferenceViolations: [] }, scoringInput, weightOverrides).total;
+  let curScore = scoreOf(current);
+
+  // Accept a candidate only if legal, idle-day-safe, and strictly better.
+  const accept = (cand: Block[]): boolean => {
+    if (!idleDayGuardOk(current, cand)) return false;
+    const w = computeWarnings(cand, specialists, grades);
+    if (strategyFailed(w)) return false;
+    const s = scoreSchedule({ blocks: cand, warnings: w, preferenceViolations: [] }, scoringInput, weightOverrides).total;
+    if (s > curScore + 1e-9) { current = cand; curScore = s; return true; }
+    return false;
+  };
+
+  for (let round = 0; round < maxRounds; round++) {
+    let improved = false;
+    const combined = findCombinedMembers(current);
+
+    // 1. Reassign each repeating class onto distinct specialists.
+    for (const tid of classesWithRepeats(current.filter((b) => isMutable(b, combined)))) {
+      const classSessions = current.filter((b) => isMutable(b, combined) && b.teacher_id === tid);
+      if (classSessions.length === 0) continue;
+      const classSet = new Set(classSessions);
+      const survivors = current.filter((b) => !classSet.has(b));
+      const rebuilt = reassignClassDistinct(classSessions, survivors, specialists, baseOccupancy, school, recessConfigs, classStartMin, rng);
+      if (rebuilt && accept(rebuilt)) improved = true;
+    }
+
+    // 2. De-cluster same-day subject duplicates.
+    if (declusterOnce(current, combined, baseOccupancy, school, recessConfigs, classStartMin, rng, accept)) improved = true;
+
+    if (!improved) break;
+  }
+  return current;
 }
 
 export function runLNS(
@@ -270,28 +497,39 @@ export function runLNS(
     const mutable = currentBlocks.filter((b) => isMutable(b, combined));
     if (mutable.length < 2) break;
 
-    // Choose a destroy operator (seeded): 0=specialist, 1=weekday, 2=grade.
-    const op = Math.floor(rng() * 3);
-    let destroyed: Block[];
-    if (op === 0) {
-      const specs = [...new Set(mutable.map((b) => b.specialist_id!))];
-      const target = specs[Math.floor(rng() * specs.length)];
-      destroyed = mutable.filter((b) => b.specialist_id === target);
-    } else if (op === 1) {
-      const days = [...new Set(mutable.map((b) => b.day_of_week))];
-      const target = days[Math.floor(rng() * days.length)];
-      destroyed = mutable.filter((b) => b.day_of_week === target);
+    // Choose an operator (seeded): 0=destroy specialist, 1=destroy weekday,
+    // 2=destroy grade, 3=REASSIGN a repeating class onto distinct specialists.
+    const op = Math.floor(rng() * 4);
+    let rebuilt: Block[] | null;
+    if (op === 3) {
+      // Reassignment: only operator that changes which specialist a class sees.
+      const repeatClasses = classesWithRepeats(mutable);
+      if (repeatClasses.length === 0) { T *= COOLING; continue; }
+      const target = repeatClasses[Math.floor(rng() * repeatClasses.length)];
+      const classSessions = mutable.filter((b) => b.teacher_id === target);
+      const classSet = new Set(classSessions);
+      const survivors = currentBlocks.filter((b) => !classSet.has(b));
+      rebuilt = reassignClassDistinct(classSessions, survivors, specialists, baseOccupancy, school, recessConfigs, classStartMin, rng);
     } else {
-      const gs = [...new Set(mutable.map((b) => b.grade))];
-      const target = gs[Math.floor(rng() * gs.length)];
-      destroyed = mutable.filter((b) => b.grade === target);
+      let destroyed: Block[];
+      if (op === 0) {
+        const specs = [...new Set(mutable.map((b) => b.specialist_id!))];
+        const target = specs[Math.floor(rng() * specs.length)];
+        destroyed = mutable.filter((b) => b.specialist_id === target);
+      } else if (op === 1) {
+        const days = [...new Set(mutable.map((b) => b.day_of_week))];
+        const target = days[Math.floor(rng() * days.length)];
+        destroyed = mutable.filter((b) => b.day_of_week === target);
+      } else {
+        const gs = [...new Set(mutable.map((b) => b.grade))];
+        const target = gs[Math.floor(rng() * gs.length)];
+        destroyed = mutable.filter((b) => b.grade === target);
+      }
+      if (destroyed.length === 0) { T *= COOLING; continue; }
+      const destroyedSet = new Set(destroyed);
+      const survivors = currentBlocks.filter((b) => !destroyedSet.has(b));
+      rebuilt = recreate(destroyed, survivors, specialists, baseOccupancy, school, recessConfigs, classStartMin, rng);
     }
-    if (destroyed.length === 0) { T *= COOLING; continue; }
-
-    const destroyedSet = new Set(destroyed);
-    const survivors = currentBlocks.filter((b) => !destroyedSet.has(b));
-
-    const rebuilt = recreate(destroyed, survivors, specialists, baseOccupancy, school, recessConfigs, classStartMin, rng);
     if (!rebuilt) { T *= COOLING; continue; }
 
     // Idle-day guard + hard-constraint gate (SSOT mirror).

@@ -246,7 +246,7 @@ export function strategyFailed(warnings: Warning[]): boolean {
 // Two blocks can only conflict if they run in weeks that actually
 // coincide. A null/"all" label means "every week", so it overlaps any
 // week; otherwise the labels must match (A vs B never collide).
-function weeksCoincide(a: string | null | undefined, b: string | null | undefined): boolean {
+export function weeksCoincide(a: string | null | undefined, b: string | null | undefined): boolean {
   const na = a ?? null;
   const nb = b ?? null;
   if (na === null || nb === null || na === "all" || nb === "all") return true;
@@ -820,7 +820,7 @@ export function getRecessWindowsForDay(
 }
 
 // ─── Check if specialist can teach a grade on a day (grade rotation) ─
-function canSpecialistTeachGradeOnDay(
+export function canSpecialistTeachGradeOnDay(
   spec: Specialist,
   grade: string,
   day: string,
@@ -878,7 +878,7 @@ function needsCartBuffer(
 // ─── Core assignment loop ────────────────────────────────────────────
 /** A specialist's own class length when set (e.g. 30-min K sessions), else the
  *  grade/school default. Mirrors the school-level guard: 0/null → fallback. */
-function specClassDuration(spec: Specialist, fallback: number): number {
+export function specClassDuration(spec: Specialist, fallback: number): number {
   return (spec.class_duration != null && spec.class_duration > 0) ? spec.class_duration : fallback;
 }
 
