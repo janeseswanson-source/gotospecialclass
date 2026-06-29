@@ -124,6 +124,32 @@ export interface QualityConfidenceInput {
   refinement: ConvergenceInput;
 }
 
+// Maps each soft penalty to a plain-language name + the input change that lifts
+// its ceiling, so a below-100% result can say WHY and WHAT to do about it.
+const COST_ADVICE: Array<{ key: string; label: string; advice: string; structural: boolean }> = [
+  { key: "teacher_planning", label: "teacher planning time", advice: "give classes more time at specials (add a session or use longer class blocks)", structural: true },
+  { key: "contract_min", label: "contractual minutes", advice: "add specials sessions to meet the required minutes", structural: true },
+  { key: "class_repeats", label: "a class repeating a specialist", advice: "add a specialist so each session is a different one (or reduce weekly sessions)", structural: true },
+  { key: "subject_gap", label: "grades missing a specialist", advice: "add a specialist or expand working days", structural: true },
+  { key: "subject_day_clustering", label: "subjects doubling up on a day", advice: "usually fixable — another refinement pass should spread them", structural: false },
+  { key: "k_grade_after_780", label: "Kindergarten late in the day", advice: "free up morning slots so K can move earlier", structural: false },
+  { key: "grade_cohesion", label: "a grade's specials spread thin", advice: "group each grade's specials onto fewer days", structural: false },
+  { key: "cart_back_to_back", label: "rushed cart moves", advice: "give cart specialists a buffer between rooms", structural: false },
+  { key: "spec_dayload_stdev", label: "slightly uneven specialist day-loads", advice: "minor — balance is already close", structural: false },
+];
+
+/** The largest-magnitude remaining soft penalty + how to address it (or null). */
+function dominantCost(breakdown: Record<string, number> | null | undefined) {
+  let top: typeof COST_ADVICE[number] | null = null;
+  let topMag = 0;
+  for (const c of COST_ADVICE) {
+    const v = breakdown?.[c.key];
+    const mag = typeof v === "number" && Number.isFinite(v) ? Math.abs(v) : 0;
+    if (mag > topMag) { topMag = mag; top = c; }
+  }
+  return topMag > 0.5 ? top : null;
+}
+
 export function computeQualityConfidence(input: QualityConfidenceInput): QualityConfidence {
   const convergence = computeConvergence(input.refinement);
   const headroom = estimateHeadroom({
@@ -135,6 +161,7 @@ export function computeQualityConfidence(input: QualityConfidenceInput): Quality
   const currentPenalty = penaltyMagnitude(input.breakdown);
   const optimalityGapUB = Math.max(0, currentPenalty - headroom.unavoidablePenaltyLB);
   const gapQualityPoints = optimalityGapUB / 4;
+  const dominant = dominantCost(input.breakdown);
 
   let assessment: Assessment;
   let recommendation: string;
@@ -142,15 +169,24 @@ export function computeQualityConfidence(input: QualityConfidenceInput): Quality
     assessment = "structurally_limited";
     recommendation = `Capacity covers only ${headroom.sessionCapacity} of ${headroom.requiredPairs} grade×specialist pairs; ` +
       `at least ${headroom.forcedSubjectGaps} cannot be scheduled. Add a specialist, expand working days, or enable A/B Week.`;
-  } else if (convergence.stillImproving) {
-    assessment = "more_headroom";
-    recommendation = "The score was still improving when the budget ran out — another refinement pass is likely to help.";
   } else if (gapQualityPoints <= NEAR_OPTIMAL_POINTS) {
     assessment = "near_optimal";
-    recommendation = `Converged within ~${gapQualityPoints.toFixed(1)} quality points of the structural bound — this is near-optimal.`;
+    recommendation = `This is within ~${gapQualityPoints.toFixed(1)} quality points of the best possible — essentially optimal.`;
+  } else if (convergence.stillImproving) {
+    assessment = "more_headroom";
+    recommendation = dominant
+      ? `Still improving — another refinement pass should keep reducing ${dominant.label}.`
+      : "Still improving — another refinement pass is likely to help.";
+  } else if (dominant && dominant.structural) {
+    // Converged and the binding trade-off is a capacity/assignment wall — honest:
+    // more compute won't help; an input change will.
+    assessment = "structurally_limited";
+    recommendation = `This is the best layout for your current inputs. The remaining trade-off is ${dominant.label} — to improve it, ${dominant.advice}.`;
   } else {
     assessment = "more_headroom";
-    recommendation = `Converged, but ~${gapQualityPoints.toFixed(1)} quality points of soft penalty may still be removable — another refinement pass could help.`;
+    recommendation = dominant
+      ? `Converged; the main remaining trade-off is ${dominant.label} — ${dominant.advice}.`
+      : `Converged with ~${gapQualityPoints.toFixed(1)} quality points of removable penalty left.`;
   }
 
   return { assessment, recommendation, convergence, headroom, currentPenalty, optimalityGapUB, gapQualityPoints };

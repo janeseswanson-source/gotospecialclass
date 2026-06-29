@@ -82,12 +82,25 @@ Deno.test("quality confidence: near-optimal when converged + tiny gap", () => {
   assertEquals(qc.gapQualityPoints, 1);
 });
 
-Deno.test("quality confidence: more headroom when still improving", () => {
+Deno.test("quality confidence: more headroom when still improving with a real gap", () => {
   const specialists = Array.from({ length: 5 }, () => ({ working_days: DAYS, class_duration: 45 }));
+  // A non-structural penalty well above the near-optimal threshold (40/4 = 10 pts).
   const qc = computeQualityConfidence({
-    breakdown: { subject_day_clustering: -4 },
+    breakdown: { subject_day_clustering: -40 },
     specialists, gradeCount: 6, school,
     refinement: { rounds: 100, lastImprovementRound: 98 }, // still improving
   });
   assertEquals(qc.assessment, "more_headroom");
+});
+
+Deno.test("quality confidence: converged at a capacity wall is structurally limited", () => {
+  const specialists = Array.from({ length: 5 }, () => ({ working_days: DAYS, class_duration: 45 }));
+  // Converged (no recent improvement) with teacher_planning as the binding cost.
+  const qc = computeQualityConfidence({
+    breakdown: { teacher_planning: -114 },
+    specialists, gradeCount: 6, school,
+    refinement: { rounds: 100, lastImprovementRound: 5 },
+  });
+  assertEquals(qc.assessment, "structurally_limited");
+  assert(qc.recommendation.includes("planning"));
 });
