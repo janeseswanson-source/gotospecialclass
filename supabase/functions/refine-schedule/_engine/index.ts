@@ -31,7 +31,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { shuffle, deriveSeed, mulberry32, type Rng } from "./_random.ts";
 import { scoreSchedule, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
-import { qualityPercent } from "../_shared/scoring-rubric.ts";
+import { qualityPercent } from "../../_shared/scoring-rubric.ts";
 import { calibrateMonteCarlo, monteCarloRun, MonteCarloBudgetExceededError } from "./_monteCarlo.ts";
 import { computeQualityConfidence } from "./_confidence.ts";
 import { OccupancyTracker, type Interval } from "./_occupancy.ts";

@@ -31,8 +31,8 @@ import { runLNS, recreate } from "./_lns.ts";
 import { computeQualityConfidence, type QualityConfidence } from "./_confidence.ts";
 import { buildPerturbationBaseline, countMovedBlocks, perturbationAdjust, DEFAULT_PERTURBATION_WEIGHT } from "./_perturbation.ts";
 import { mulberry32, deriveSeed, type Rng } from "./_random.ts";
-import { qualityPercent } from "../_shared/scoring-rubric.ts";
-import { buildConstraintContext, violations, type ConstraintBlock } from "../_shared/constraints.ts";
+import { qualityPercent } from "../../_shared/scoring-rubric.ts";
+import { buildConstraintContext, violations, type ConstraintBlock } from "../../_shared/constraints.ts";
 
 export interface RefineTeacher {
   id: string;

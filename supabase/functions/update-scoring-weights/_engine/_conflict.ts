@@ -33,7 +33,7 @@ import {
   type ConstraintBlock,
   type ConstraintContext,
   type ViolationCode,
-} from "../_shared/constraints.ts";
+} from "../../_shared/constraints.ts";
 import { buildPerturbationBaseline, countMovedBlocks } from "./_perturbation.ts";
 
 export interface ConflictTeacher {

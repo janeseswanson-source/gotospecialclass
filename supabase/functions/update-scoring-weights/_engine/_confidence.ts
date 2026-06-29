@@ -14,8 +14,8 @@
 // refinement pass" vs. "structurally limited — add capacity", honestly and
 // cheaply. It is NOT part of the public quality-% rubric and does not touch it.
 
-import { timeToMinutes, getEndMinForDay } from "../_shared/constraints.ts";
-import { penaltyMagnitude } from "../_shared/scoring-rubric.ts";
+import { timeToMinutes, getEndMinForDay } from "../../_shared/constraints.ts";
+import { penaltyMagnitude } from "../../_shared/scoring-rubric.ts";
 import { DEFAULT_WEIGHTS } from "./_scoring.ts";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
