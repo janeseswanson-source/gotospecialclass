@@ -17,7 +17,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { breakdownToPercent } from "@/lib/optimizerScore";
 
 export interface GenProgress {
-  phase: "search" | "refine" | "polish";
+  phase: "cpsat" | "search" | "refine" | "polish";
   attempt: number;        // search attempt / refine pass / polish round (1-based)
   attempts: number;       // total attempts allowed (for a progress bar)
   currentQuality: number; // quality of the candidate just produced/refined
@@ -30,6 +30,7 @@ export interface BestScheduleResult {
   quality: number;
   attemptsRun: number;
   reachedTarget: boolean;
+  usedCPSAT: boolean;       // true if the proven-optimal CP-SAT solver produced the baseline
 }
 
 export interface BestScheduleOptions {
@@ -66,6 +67,31 @@ export async function generateBestSchedule(opts: BestScheduleOptions): Promise<B
   let best: { generationId: string; quality: number } | null = null;
   let attempt = 0;
   let lastError: string | null = null;
+  let usedCPSAT = false;
+
+  // ── CP-SAT phase: try the off-platform, provably-optimal OR-Tools solver first.
+  // When configured + reachable it returns a schedule that is OPTIMAL against the
+  // soft rubric (clustering/class_repeats/subject_gap driven to their true floor),
+  // already re-validated against the SSOT server-side. We seed it as the baseline;
+  // the metaheuristic below can only replace it with something strictly better
+  // (e.g. an A/B two-week layout the single-week model doesn't yet cover). If the
+  // solver isn't configured the function returns 503 and we silently fall back.
+  try {
+    if (!signal?.aborted) {
+      const { data, error } = await supabase.functions.invoke("generate-cpsat", {
+        body: { school_id: schoolId },
+      });
+      const d = data as any;
+      if (!error && d?.generation_id && typeof d?.quality_percent === "number") {
+        best = { generationId: d.generation_id, quality: d.quality_percent };
+        usedCPSAT = true;
+        onProgress?.({
+          phase: "cpsat", attempt: 1, attempts: 1,
+          currentQuality: d.quality_percent, bestQuality: d.quality_percent, elapsedMs: Date.now() - start,
+        });
+      }
+    }
+  } catch { /* solver is optional; fall back to the metaheuristic */ }
 
   // ── Search phase: best-of-N independent generations ──
   while (attempt < maxAttempts && Date.now() - start < timeBudgetMs) {
@@ -157,5 +183,5 @@ export async function generateBestSchedule(opts: BestScheduleOptions): Promise<B
     if (applied === 0) break; // nothing left to fix
   }
 
-  return { generationId: best.generationId, quality: best.quality, attemptsRun: attempt, reachedTarget };
+  return { generationId: best.generationId, quality: best.quality, attemptsRun: attempt, reachedTarget, usedCPSAT };
 }

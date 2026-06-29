@@ -1726,7 +1726,7 @@ function generateEventPlanningBlocks(
 }
 
 // ─── Admin Rotation / PLC blocks ─────────────────────────────────────
-function generateAdminRotationBlocks(
+export function generateAdminRotationBlocks(
   generationId: string,
   school: any,
 ): Block[] {
@@ -1809,7 +1809,7 @@ export function generatePlusRotationBlocks(
 }
 
 // ─── Specialist lunch block reservation ──────────────────────────────
-function reserveSpecialistLunchBlocks(
+export function reserveSpecialistLunchBlocks(
   generationId: string,
   specialists: Specialist[],
   recessConfigs: any[],
