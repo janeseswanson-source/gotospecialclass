@@ -12,9 +12,9 @@
 // (errors/warnings) are never reweighted. Nothing is auto-applied.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { proposeWeightDeltas } from "../generate-schedule/_weightlearning.ts";
-import { scoreSchedule, DEFAULT_WEIGHTS, type ScoreableInput, type ScoreBreakdown } from "../generate-schedule/_scoring.ts";
-import { computeWarnings, type Block, type Specialist, type Teacher } from "../generate-schedule/index.ts";
+import { proposeWeightDeltas } from "./_engine/_weightlearning.ts";
+import { scoreSchedule, DEFAULT_WEIGHTS, type ScoreableInput, type ScoreBreakdown } from "./_engine/_scoring.ts";
+import { computeWarnings, type Block, type Specialist, type Teacher } from "./_engine/index.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

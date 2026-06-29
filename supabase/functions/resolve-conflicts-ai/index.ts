@@ -16,8 +16,8 @@ import {
   type ConflictContext,
   type ResolveOption,
   type ConflictEscalation,
-} from "../generate-schedule/_conflict.ts";
-import type { Block, Specialist } from "../generate-schedule/index.ts";
+} from "./_engine/_conflict.ts";
+import type { Block, Specialist } from "./_engine/index.ts";
 import { anthropicClient, anthropicApiKey, CLAUDE_MODEL, firstToolUse, describeAnthropicError } from "../_shared/anthropic.ts";
 
 const corsHeaders = {
