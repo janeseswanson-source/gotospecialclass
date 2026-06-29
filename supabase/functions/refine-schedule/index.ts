@@ -11,9 +11,9 @@
 // No LLM involvement: this is the deterministic engine placing + validating.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { refineSchedule, type RefineTeacher } from "../generate-schedule/_refine.ts";
-import { computePlacementReason, type Block, type Specialist } from "../generate-schedule/index.ts";
-import type { ScoreBreakdown } from "../generate-schedule/_scoring.ts";
+import { refineSchedule, type RefineTeacher } from "./_engine/_refine.ts";
+import { computePlacementReason, type Block, type Specialist } from "./_engine/index.ts";
+import type { ScoreBreakdown } from "./_engine/_scoring.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",

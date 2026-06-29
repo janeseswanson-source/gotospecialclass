@@ -1,42 +1,38 @@
-## Plan
+## Deploy frontend-revamp backend changes
 
-### Goal
-Stop the “failed generation” / CPU Time exceeded loop while still aiming for the best schedule possible.
+The three migration files exist locally but haven't been applied to the live database, and the new/updated edge functions need redeployment. Plan below.
 
-### What I found
-- The latest backend log still shows `CPU Time exceeded` in `generate-schedule`.
-- Even with only 4 outer attempts, one attempt already runs Monte Carlo up to 400 iterations per strategy plus scoring/annealing, so CPU can be exhausted before the save finishes.
-- The screenshot’s “No Coverage” messages are schedule-quality warnings from the last saved schedule, not the root crash. The root crash is the generation function being killed before it can reliably persist results.
+### 1. Apply 3 additive migrations (single combined migration call)
 
-### Implementation steps
-1. **Make the first request reliable**
-   - Change `generate-schedule` so the user click only runs a fast, bounded generation pass that always keeps enough CPU headroom to save blocks and metadata.
-   - Cap Monte Carlo iterations much lower for the interactive path.
-   - Remove the outer best-of-4 loop from the synchronous request path.
-   - Save the best available candidate before running expensive warning/quality work when needed.
+All `ADD COLUMN IF NOT EXISTS` — safe and reversible:
 
-2. **Add true best-of-20 as background refinement**
-   - After the fast schedule is saved, launch a non-blocking background refinement with `EdgeRuntime.waitUntil`.
-   - Run up to 20 candidate attempts there, always tracking the highest score.
-   - If a better schedule is found, save it as a newer generation version or update the generation metadata safely.
-   - If background refinement gets killed, the user still has the first saved schedule instead of a failed generation.
+- `schedule_generations.refined_from_generation_id uuid` → FK to `schedule_generations(id)` ON DELETE SET NULL (background-refinement lineage).
+- `scoring_weight_profiles.proposed_weights jsonb` + `proposed_at timestamptz` (staged weight proposals, human-gated).
+- `schedule_generations.quality_confidence jsonb` (engine confidence signal for QualityPanel).
 
-3. **Surface generation state clearly in the UI**
-   - Show the first generated version immediately.
-   - If refinement is still running, show a clear “Optimizing best schedule…” status rather than a failure toast.
-   - Refresh/select the improved generation once the background best-of-20 version is saved.
+No RLS/policy changes — both tables already have member-scoped policies covering the new columns.
 
-4. **Fix the “No Coverage” outcome after generation succeeds**
-   - Treat “no coverage for every grade” as a generation-quality failure only if there truly are no instructional specialist blocks.
-   - Prefer A/B or standard fallback automatically when the selected strategy produces coverage gaps for all grades.
-   - Keep warnings visible when capacity is genuinely short, but don’t let a crash create a misleading empty/partial schedule.
+### 2. Regenerate Supabase TypeScript types
 
-5. **Verify backend and chat**
-   - Redeploy `generate-schedule` after the changes.
-   - Check edge logs for absence of `CPU Time exceeded`.
-   - Test AI Edit chat logs separately if it still returns silence, but avoid mixing that into generation persistence unless the logs show the same cause.
+Approving the migration triggers regeneration of `src/integrations/supabase/types.ts` so `quality_confidence`, `refined_from_generation_id`, `proposed_weights`, and `proposed_at` are typed on the client. The existing frontend casts continue to work; no code changes required.
 
-### Technical notes
-- The reason a 20-generation loop cannot safely run inside one Edge Function request is CPU time, not wait time. Wall-clock waiting is okay; CPU-heavy local optimization is what gets killed.
-- The safe pattern is: save a valid first result quickly, then do heavier optimization asynchronously and never let it block the user’s saved schedule.
-- The existing UI/export stacked-cell work can stay; this plan focuses on generation reliability and schedule quality.
+### 3. Redeploy 4 edge functions
+
+The shared modules under `supabase/functions/generate-schedule/` (`_annealing`, `_occupancy`, `_lns`, `_confidence`, `_refine`, `_perturbation`, `_conflict`, `_weightlearning`, `_scoring`) are imported by the others and ship together when their folder is deployed:
+
+- `generate-schedule` — finalize() now persists `quality_confidence`.
+- `refine-schedule` — NEW background SA+LNS pass that writes a strictly-better version linked via `refined_from_generation_id`.
+- `resolve-conflicts-ai` — deterministic resolver with `mode: "preview" | "apply"`.
+- `update-scoring-weights` — `action: "propose" | "confirm"` (staged, never auto-applied).
+
+`refine-schedule` and `update-scoring-weights` validate the JWT inside the function, so no `supabase/config.toml` changes needed (defaults already match). No new secrets required.
+
+### Verification after deploy
+
+- `\d schedule_generations` and `\d scoring_weight_profiles` show the new columns.
+- Generate a schedule → confirm `quality_confidence` is populated.
+- Call `refine-schedule` with a generation_id → confirm it returns `improved: true/false` without 500s.
+
+### Out of scope
+
+No solver, SSOT validator, scoring-rubric, or UI behavior changes in this deploy — purely backend rollout of work already in the repo.
