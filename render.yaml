@@ -1,0 +1,21 @@
+# Render Blueprint — one-click deploy of the CP-SAT solver service.
+#
+# In Render: New + → Blueprint → pick the gotospecialclass repo → Apply.
+# Render reads this file and provisions the service with everything below already
+# set, including an auto-generated SOLVER_API_KEY (view it under the service's
+# Environment tab to copy into the Supabase CPSAT_SOLVER_KEY secret).
+services:
+  - type: web
+    name: cpsat-solver
+    runtime: docker
+    rootDir: solver          # build context = the solver/ folder (its Dockerfile)
+    plan: free               # 512 MB; bump to "starter" if it ever OOMs
+    healthCheckPath: /health
+    autoDeploy: true         # redeploy automatically when solver/ changes on the branch
+    envVars:
+      - key: SOLVER_API_KEY  # auto-generated strong secret; copy into Supabase
+        generateValue: true
+      - key: SOLVER_MAX_TIME_S
+        value: "120"
+      - key: SOLVER_NUM_WORKERS
+        value: "4"           # modest parallelism to stay comfortable on the free tier
