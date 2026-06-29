@@ -161,7 +161,23 @@ Deno.serve(async (req) => {
 
     // Fixed blocks the final schedule must also carry (parity with
     // generate-schedule, which bundles lunch + plus + admin into every generation).
-    const fixedBlocks: Block[] = [...adminBlocks, ...plusBlocks, ...lunchBlocks];
+    // A specialist's admin-set PLUS rotation can overlap their computed lunch
+    // window (a real data tension). Persisting BOTH makes the scorer's double-book
+    // check fire a -1000 "specialist double-booked" ERROR (which alone zeroes the
+    // quality). So drop any fixed block that overlaps a higher-priority fixed block
+    // for the same specialist: admin > PLUS > lunch. Teaching already routes around
+    // the merged busy span, so this only trims a redundant lunch reservation.
+    const fixedPriority = (b: Block): number =>
+      b.subject === "PLC/Admin" ? 3 : (b.subject ?? "").includes("PLUS") ? 2 : 1;
+    const fixedBlocks: Block[] = [];
+    for (const fb of [...adminBlocks, ...plusBlocks, ...lunchBlocks].sort((a, b) => fixedPriority(b) - fixedPriority(a))) {
+      if (!fb.specialist_id) { fixedBlocks.push(fb); continue; }
+      const fs = timeToMinutes(fb.start_time) ?? 0, fe = timeToMinutes(fb.end_time) ?? 0;
+      const clash = fixedBlocks.some((k) =>
+        k.specialist_id === fb.specialist_id && k.day_of_week === fb.day_of_week &&
+        (timeToMinutes(k.start_time) ?? 0) < fe && fs < (timeToMinutes(k.end_time) ?? 0));
+      if (!clash) fixedBlocks.push(fb);
+    }
 
     // ── SSOT re-validation (the trust anchor): validate each CP-SAT teaching block
     // against the FULL set (incl. fixed blocks); drop any illegal one. Fixed blocks
