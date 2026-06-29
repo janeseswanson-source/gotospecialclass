@@ -178,6 +178,13 @@ def _solve(spec: Spec) -> Solution:
     # once per pair" and coverage terms.
     pair_vars: dict[tuple, list] = {}
 
+    # Multi-week (A/B, AA-BB): give each week its own slice of the global timeline
+    # so a specialist teaching at Mon 9:00 in week A does NOT clash with Mon 9:00 in
+    # week B. WEEK_SPAN > a full week keeps the slices disjoint. For the single-week
+    # "standard" strategy there is one label and the offset is 0 (unchanged).
+    WEEK_SPAN = 7 * 1440
+    week_idx = {w: i for i, w in enumerate(spec.week_labels)}
+
     for c in spec.classes:
         t = c["teacher_id"]
         grade = c["grade"]
@@ -189,6 +196,7 @@ def _solve(spec: Spec) -> Solution:
             dur = s.get("duration") or 45
             work = set(s.get("working_days") or list(DAY_INDEX.keys()))
             for w in spec.week_labels:
+                woff = week_idx[w] * WEEK_SPAN
                 for si, slot in enumerate(slots):
                     if slot.day not in work:
                         continue
@@ -199,10 +207,13 @@ def _solve(spec: Spec) -> Solution:
                     key = (t, sid, w, si)
                     b = model.NewBoolVar(f"x_{t}_{sid}_{w}_{si}")
                     present[key] = b
-                    iv = model.NewOptionalIntervalVar(slot.gstart, slot.gend - slot.gstart, slot.gend, b, f"iv_{t}_{sid}_{w}_{si}")
+                    iv = model.NewOptionalIntervalVar(slot.gstart + woff, slot.gend - slot.gstart, slot.gend + woff, b, f"iv_{t}_{sid}_{w}_{si}")
                     spec_intervals[sid].append(iv)
                     teacher_intervals[t].append(iv)
-                    pair_vars.setdefault((t, sid, w), []).append(b)
+                    # KEY: one session per (class, specialist) across ALL weeks — the
+                    # rotation spreads over week A/B, halving weekly load. class_repeats
+                    # stays 0; teacher_planning is week-blind so both weeks count.
+                    pair_vars.setdefault((t, sid), []).append(b)
 
     # Pre-occupied intervals (PLUS rotations, specialist lunch) block the
     # specialist/teacher. These are GIVEN facts and may themselves overlap (e.g. a
@@ -234,12 +245,18 @@ def _solve(spec: Spec) -> Solution:
         tid = bz.get("teacher_id")
         if tid and tid in teacher_intervals:
             teacher_busy.setdefault(tid, []).append((gs, ge))
+    # Busy spans repeat every week, so block them in EACH week's timeline slice.
+    n_weeks = len(spec.week_labels)
     for sid, spans in spec_busy.items():
         for gs, ge in _merge(spans):
-            spec_intervals[sid].append(model.NewIntervalVar(gs, ge - gs, ge, f"busyS_{sid}_{gs}"))
+            for wi in range(n_weeks):
+                off = wi * WEEK_SPAN
+                spec_intervals[sid].append(model.NewIntervalVar(gs + off, ge - gs, ge + off, f"busyS_{sid}_{gs}_{wi}"))
     for tid, spans in teacher_busy.items():
         for gs, ge in _merge(spans):
-            teacher_intervals[tid].append(model.NewIntervalVar(gs, ge - gs, ge, f"busyT_{tid}_{gs}"))
+            for wi in range(n_weeks):
+                off = wi * WEEK_SPAN
+                teacher_intervals[tid].append(model.NewIntervalVar(gs + off, ge - gs, ge + off, f"busyT_{tid}_{gs}_{wi}"))
 
     # Hard: no specialist / no class double-booked (interval no-overlap).
     for ivs in spec_intervals.values():
@@ -250,11 +267,12 @@ def _solve(spec: Spec) -> Solution:
             model.AddNoOverlap(ivs)
 
     # Hard: each (class, specialist, week) pair scheduled at most once.
-    # placed[(t,s,w)] = 1 iff that pair is scheduled (for coverage objective).
+    # placed[(t,s)] = 1 iff that (class, specialist) pair is scheduled (once, in any
+    # week) — the coverage/teacher_planning unit.
     placed: dict[tuple, cp_model.IntVar] = {}
     for key, vars_ in pair_vars.items():
-        p = model.NewBoolVar(f"placed_{key[0]}_{key[1]}_{key[2]}")
-        model.Add(sum(vars_) == p)  # at most one, and p reflects whether placed
+        p = model.NewBoolVar(f"placed_{key[0]}_{key[1]}")
+        model.Add(sum(vars_) == p)  # at most one across all weeks; p = whether placed
         placed[key] = p
 
     # Fixed (Big-Group) sessions: force the matching placement on.
@@ -306,10 +324,9 @@ def _solve(spec: Spec) -> Solution:
             if not _can_teach(s, grade_by_teacher[t]):
                 continue
             dur = s.get("duration") or 45
-            for w in spec.week_labels:
-                key = (t, s["id"], w)
-                if key in placed:
-                    terms.append(dur * placed[key])
+            key = (t, s["id"])  # one session per pair (any week); week-blind like the scorer
+            if key in placed:
+                terms.append(dur * placed[key])
         got = sum(terms) if terms else 0
         short = model.NewIntVar(0, required, f"plan_short_{t}")
         model.Add(short >= required - got)
