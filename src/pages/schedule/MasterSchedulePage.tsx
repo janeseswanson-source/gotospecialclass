@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSchool } from "@/contexts/SchoolContext";
 import { Button } from "@/components/ui/button";
-import { GitCompare, AlertTriangle, X as XIcon, Sparkles, Loader2, BrainCircuit, Lightbulb, MessageSquare, Check, RotateCcw } from "lucide-react";
+import { GitCompare, AlertTriangle, X as XIcon, Sparkles, Loader2, MessageSquare, Check, RotateCcw } from "lucide-react";
 import { exportScheduleXlsx } from "@/lib/exportScheduleXlsx";
 import ScheduleChatPanel from "@/components/schedule/ScheduleChatPanel";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -80,7 +80,6 @@ export default function MasterSchedulePage() {
   const [resolvingAI, setResolvingAI] = useState(false);
   const [conflictOutcome, setConflictOutcome] = useState<ConflictOutcome | null>(null);
   const [explainPending, setExplainPending] = useState(false);
-  const [showExplain, setShowExplain] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [updatingReview, setUpdatingReview] = useState(false);
   const [specExportOpen, setSpecExportOpen] = useState(false);
@@ -858,8 +857,6 @@ export default function MasterSchedulePage() {
         onDensityChange={setDensity}
         chatOpen={chatOpen}
         onToggleChat={() => setChatOpen((v) => !v)}
-        showExplain={showExplain}
-        onToggleExplain={() => setShowExplain((v) => !v)}
         blockingError={blockingError}
         exportingXlsx={exportingXlsx}
         onSpecExport={() => setSpecExportOpen(true)}
@@ -917,6 +914,7 @@ export default function MasterSchedulePage() {
           breakdown={(activeGen.score_breakdown as Record<string, number> | null) ?? null}
           confidence={activeGen.quality_confidence ?? null}
           refining={enableRefine}
+          verifyReview={{ score: activeGen.verify_quality_score ?? null, summary: activeGen.verify_summary ?? null }}
         />
       )}
 
@@ -1134,9 +1132,8 @@ export default function MasterSchedulePage() {
         <ConflictResolver outcome={conflictOutcome} onDismiss={() => setConflictOutcome(null)} />
       )}
 
-      {/* ─── Schedule grid + optional XAI sidebar (7D-4) ─── */}
-      <div className={showExplain ? "flex gap-4 items-start" : undefined}>
-        <WeekGrid
+      {/* ─── Schedule grid (hero) ─── */}
+      <WeekGrid
           showWeekSelector={showWeekSelector}
           isAbStrategy={isAbStrategy}
           isAaBbStrategy={isAaBbStrategy}
@@ -1167,116 +1164,6 @@ export default function MasterSchedulePage() {
           onFilterTeacher={setFilterTeacher}
           blockingError={blockingError}
         />
-
-
-        {/* ─── XAI Explain sidebar ─── */}
-        {showExplain && (
-          <aside className="w-72 shrink-0 space-y-3 sticky top-4 no-print">
-            {/* Schedule Insights */}
-            <div className="rounded-xl border border-border bg-card p-4 space-y-2">
-              <div className="flex items-center gap-2">
-                <BrainCircuit className="h-4 w-4 text-primary shrink-0" />
-                <h3 className="text-sm font-semibold">Schedule Insights</h3>
-              </div>
-              {activeGen?.verify_summary && (
-                <p className="text-xs text-foreground">{activeGen.verify_summary}</p>
-              )}
-              {activeGen?.verify_quality_score != null && (
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">AI Quality:</span>
-                  <span className={cn(
-                    "text-xs font-bold",
-                    activeGen.verify_quality_score >= 80 ? "text-success" :
-                    activeGen.verify_quality_score >= 60 ? "text-amber-600 dark:text-amber-400" : "text-destructive",
-                  )}>
-                    {activeGen.verify_quality_score}/100
-                  </span>
-                </div>
-              )}
-              {activeGen?.chosen_strategy && (
-                <p className="text-xs text-muted-foreground">
-                  Strategy: <span className="font-medium text-foreground">{humanizeStrategy(activeGen.chosen_strategy)}</span>
-                </p>
-              )}
-              {activeGen?.winning_score != null && (() => {
-                const pct = breakdownToPercent(activeGen.score_breakdown as Record<string, number> | null);
-                const color = pct == null
-                  ? "text-foreground"
-                  : pct >= 95 ? "text-success"
-                  : pct >= 85 ? "text-amber-600 dark:text-amber-400"
-                  : "text-destructive";
-                return (
-                  <p className="text-xs text-muted-foreground">
-                    Optimizer score:{" "}
-                    <span className={cn("font-bold", color)}>
-                      {pct != null ? `${pct}%` : Math.round(activeGen.winning_score)}
-                    </span>
-                    {pct != null && (
-                      <span className="text-muted-foreground/70"> · raw {Math.round(activeGen.winning_score)}</span>
-                    )}
-                  </p>
-                );
-              })()}
-              {!activeGen && (
-                <p className="text-xs text-muted-foreground">Select a generation to see insights.</p>
-              )}
-            </div>
-
-            {/* Block Explanation */}
-            <div className="rounded-xl border border-border bg-card p-4 space-y-2">
-              <div className="flex items-center gap-2">
-                <Lightbulb className="h-4 w-4 text-amber-500 shrink-0" />
-                <h3 className="text-sm font-semibold">Block Explanation</h3>
-              </div>
-              {editBlock ? (
-                <>
-                  <p className="text-xs font-medium text-foreground">
-                    {[editBlock.subject, editBlock.grade && `Gr. ${editBlock.grade}`, editBlock.day_of_week].filter(Boolean).join(' · ')}
-                  </p>
-                  <p className="text-xs text-foreground leading-relaxed">
-                    {editBlock.ai_explanation ?? editBlock.placement_reason ?? "No explanation recorded for this block."}
-                  </p>
-                </>
-              ) : (
-                <p className="text-xs text-muted-foreground">Click any block to see why it was placed there.</p>
-              )}
-            </div>
-
-            {/* Strategy Rationale */}
-            {activeGen && (
-              <div className="rounded-xl border border-border bg-card p-4 space-y-2">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4 text-primary shrink-0" />
-                  <h3 className="text-sm font-semibold">Strategy Rationale</h3>
-                </div>
-                {(() => {
-                  const attempted: Array<{ strategy: string; error_count: number }> =
-                    Array.isArray(activeGen.attempted_strategies) ? activeGen.attempted_strategies : [];
-                  const first = attempted[0];
-                  const chosen = activeGen.chosen_strategy;
-                  const fellBack = first && first.strategy !== chosen;
-                  return (
-                    <div className="space-y-1">
-                      <p className="text-xs text-foreground">
-                        Used <span className="font-medium">{humanizeStrategy(chosen)}</span>
-                        {fellBack && (
-                          <> — fell back from <span className="font-medium">{humanizeStrategy(first.strategy)}</span></>
-                        )}.
-                      </p>
-                      {activeGen.fallback_reason && (
-                        <p className="text-xs text-muted-foreground">{activeGen.fallback_reason}</p>
-                      )}
-                      {attempted.length > 1 && (
-                        <p className="text-xs text-muted-foreground">{attempted.length} strategies evaluated.</p>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
-          </aside>
-        )}
-      </div>
 
       <BlockInspector
         block={editBlock ? (blocks.find((b) => b.id === editBlock.id) ?? editBlock) : null}

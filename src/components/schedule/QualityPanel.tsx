@@ -7,7 +7,7 @@
 
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Sparkles, AlertTriangle, TrendingUp, Loader2 } from "lucide-react";
+import { CheckCircle2, Sparkles, AlertTriangle, TrendingUp, Loader2, BrainCircuit } from "lucide-react";
 import { scoreSummary, confidenceCopy, type ConfidenceTone, type QualityConfidence } from "@/lib/scoreSummary";
 
 interface QualityPanelProps {
@@ -15,6 +15,8 @@ interface QualityPanelProps {
   confidence: QualityConfidence | null | undefined;
   /** True while background refinement may still be computing the signal. */
   refining?: boolean;
+  /** Optional AI verify-schedule review (folded in from the retired Explain sidebar). */
+  verifyReview?: { score: number | null; summary: string | null };
 }
 
 const TONE: Record<ConfidenceTone, { ring: string; text: string; chip: string; Icon: typeof Sparkles }> = {
@@ -23,7 +25,7 @@ const TONE: Record<ConfidenceTone, { ring: string; text: string; chip: string; I
   warn: { ring: "border-amber-500/40 bg-amber-50/60 dark:bg-amber-950/20", text: "text-amber-700 dark:text-amber-400", chip: "bg-amber-500/15 text-amber-700 dark:text-amber-400", Icon: AlertTriangle },
 };
 
-export default function QualityPanel({ breakdown, confidence, refining }: QualityPanelProps) {
+export default function QualityPanel({ breakdown, confidence, refining, verifyReview }: QualityPanelProps) {
   const summary = useMemo(() => scoreSummary(breakdown), [breakdown]);
   const copy = useMemo(() => confidenceCopy(confidence), [confidence]);
   const tone = copy.tone;
@@ -103,6 +105,22 @@ export default function QualityPanel({ breakdown, confidence, refining }: Qualit
           )}
         </div>
       </div>
+
+      {/* AI verify-schedule review (folded in from the retired Explain sidebar) */}
+      {verifyReview && (verifyReview.summary || verifyReview.score != null) && (
+        <div className="mt-4 flex items-start gap-2 border-t border-border/60 pt-3">
+          <BrainCircuit className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" aria-hidden />
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">AI review:</span>{" "}
+            {verifyReview.summary ?? "Reviewed."}
+            {verifyReview.score != null && (
+              <span className={cn("ml-1 font-semibold", verifyReview.score >= 80 ? "text-success" : verifyReview.score >= 60 ? "text-amber-600 dark:text-amber-400" : "text-destructive")}>
+                ({verifyReview.score}/100)
+              </span>
+            )}
+          </p>
+        </div>
+      )}
     </section>
   );
 }

@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
-  Undo2, Redo2, Lock, GitCompare, MessageSquare, BrainCircuit, Download, FileText,
+  Undo2, Redo2, Lock, GitCompare, MessageSquare, Download, FileText,
   ChevronDown, LayoutGrid, FileSpreadsheet, Printer, Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -37,8 +37,6 @@ interface ScheduleToolbarProps {
   onDensityChange: (d: "compact" | "fine") => void;
   chatOpen: boolean;
   onToggleChat: () => void;
-  showExplain: boolean;
-  onToggleExplain: () => void;
   blockingError: { blocked: boolean; reason: string };
   exportingXlsx: boolean;
   onSpecExport: () => void;
@@ -51,7 +49,7 @@ export default function ScheduleToolbar(props: ScheduleToolbarProps) {
   const {
     schoolName, canUndo, canRedo, onUndo, onRedo, lockedCount, generations, selectedGen,
     onSelectGen, diffGenId, onCompare, onCloseDiff, density, onDensityChange, chatOpen,
-    onToggleChat, showExplain, onToggleExplain, blockingError, exportingXlsx,
+    onToggleChat, blockingError, exportingXlsx,
     onSpecExport, onAdminExport, onExportXlsx, onPrint,
   } = props;
 
@@ -149,12 +147,6 @@ export default function ScheduleToolbar(props: ScheduleToolbarProps) {
         <Button variant={chatOpen ? "secondary" : "default"} size="sm" className="h-8 gap-1.5" onClick={onToggleChat} title="Open AI editor">
           <MessageSquare className="h-3.5 w-3.5" />
           Edit with AI
-        </Button>
-
-        {/* Explain toggle */}
-        <Button variant={showExplain ? "secondary" : "ghost"} size="sm" className="h-8 gap-1.5" onClick={onToggleExplain} title="Toggle AI Explain panel">
-          <BrainCircuit className="h-3.5 w-3.5" />
-          Explain
         </Button>
 
         {/* Export dropdown — disabled while error-severity conflicts exist so a
