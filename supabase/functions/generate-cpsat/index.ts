@@ -117,6 +117,16 @@ Deno.serve(async (req) => {
       slots_by_grade[grade] = out;
     }
 
+    // Honor the school's configured conflict-resolution strategy. A/B and AA-BB
+    // spread the rotation across two alternating weeks, halving weekly specialist
+    // load so every class fits (teacher_planning is week-blind, so both weeks count
+    // toward each teacher's planning target). Anything else = single rotation week.
+    const strategies: string[] = (school.conflict_strategies && school.conflict_strategies.length > 0)
+      ? school.conflict_strategies
+      : [school.conflict_strategy ?? "standard"];
+    const twoWeek = strategies.includes("ab_week") || strategies.includes("aa_bb_week");
+    const weekLabels: (string | null)[] = twoWeek ? ["A", "B"] : [null];
+
     const spec = {
       classes: teachers.map((t) => ({ teacher_id: t.id, grade: t.grade, planning_minutes: t.weekly_planning_minutes ?? 0 })),
       specialists: specialists.map((s) => ({
@@ -124,7 +134,7 @@ Deno.serve(async (req) => {
         duration: (s.class_duration && s.class_duration > 0) ? s.class_duration : defaultDur,
       })),
       slots_by_grade,
-      week_labels: [null],
+      week_labels: weekLabels,
       busy,
       time_limit_s: typeof time_limit_s === "number" ? time_limit_s : 60,
       weights: { coverage: 40, cluster: 15, k_late: 20, full_week: 100, k_late_threshold: 780 },

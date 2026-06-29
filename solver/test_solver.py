@@ -142,9 +142,40 @@ def test_overlapping_busy_intervals_stay_feasible():
             assert not (b["start"] < 610 and 540 < b["end"]), f"scheduled over merged busy: {b}"
 
 
+def test_ab_week_spreads_rotation_across_two_weeks():
+    # One specialist, 5 days × 1 slot = 5 specialist-slots/week. 8 classes (each a
+    # DISTINCT grade, so spreading never forces week-blind clustering) each need that
+    # specialist. Single week fits only 5 (capacity); A/B fits all 8 by spreading
+    # across two weeks, each (class,specialist) once total, no per-week double-book.
+    days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    gs = [str(n) for n in range(8)]
+    classes = [{"teacher_id": f"t{n}", "grade": gs[n], "planning_minutes": 45} for n in range(8)]
+    specs = [{"id": "pe", "subject": "PE", "working_days": days, "grades": None, "duration": 45}]
+    slots = {g: [{"day": d, "start": 480, "end": 525} for d in days] for g in gs}
+    base = solve({"classes": classes, "specialists": specs, "slots_by_grade": slots, "week_labels": [None], "time_limit_s": 10})
+    ab = solve({"classes": classes, "specialists": specs, "slots_by_grade": slots, "week_labels": ["A", "B"], "time_limit_s": 10})
+    assert base["coverage_placed"] == 5, base["coverage_placed"]
+    assert ab["coverage_placed"] == 8, ab["coverage_placed"]
+    # No per-week double-booking, and no class sees the specialist twice.
+    seen = {}
+    by_week = {}
+    for b in ab["blocks"]:
+        by_week.setdefault(b["week_label"], []).append(b)
+        k = (b["teacher_id"], b["specialist_id"])
+        seen[k] = seen.get(k, 0) + 1
+        assert seen[k] == 1, f"class repeats specialist across weeks: {k}"
+    for wk, blocks in by_week.items():
+        for i in range(len(blocks)):
+            for j in range(i + 1, len(blocks)):
+                a, c = blocks[i], blocks[j]
+                if a["specialist_id"] == c["specialist_id"] and _overlaps(a, c):
+                    raise AssertionError(f"week {wk} specialist double-book: {a} vs {c}")
+
+
 if __name__ == "__main__":
     test_small_solvable_is_optimal_and_clean()
     test_capacity_wall_is_respected_and_proven()
     test_fixed_biggroup_session_is_honored()
     test_overlapping_busy_intervals_stay_feasible()
+    test_ab_week_spreads_rotation_across_two_weeks()
     print("all solver tests passed")
