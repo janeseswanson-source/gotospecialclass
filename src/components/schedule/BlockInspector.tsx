@@ -22,6 +22,7 @@ import { Lightbulb, Lock, AlertTriangle, Loader2, Sparkles } from "lucide-react"
 import { getSubjectAccentTextClass } from "@/lib/subjectColors";
 import { cn } from "@/lib/utils";
 import type { BlockData } from "./ScheduleGrid";
+import ConflictFixPicker from "./ConflictFixPicker";
 
 interface Specialist { id: string; name: string; subject: string; }
 
@@ -33,18 +34,21 @@ interface BlockInspectorProps {
   locked: boolean;
   conflicted: boolean;
   resolvingConflicts?: boolean;
+  /** Current generation id, for the per-block conflict fix picker (power 5). */
+  generationId?: string | null;
   /** True until AI explanations have been backfilled for the generation. */
   explanationPending?: boolean;
   onSave: (blockId: string, updates: { specialist_id?: string; room?: string; subject?: string }) => void;
   onToggleLock: (blockId: string) => void;
   onNotesChange: (blockId: string, notes: string) => Promise<boolean>;
   onResolveConflicts: () => void;
+  onConflictFixed: (changedIds: string[]) => void;
   onRequestExplain: () => void;
 }
 
 export default function BlockInspector({
-  block, open, onOpenChange, specialists, locked, conflicted, resolvingConflicts,
-  explanationPending, onSave, onToggleLock, onNotesChange, onResolveConflicts, onRequestExplain,
+  block, open, onOpenChange, specialists, locked, conflicted, resolvingConflicts, generationId,
+  explanationPending, onSave, onToggleLock, onNotesChange, onResolveConflicts, onConflictFixed, onRequestExplain,
 }: BlockInspectorProps) {
   const [specialistId, setSpecialistId] = useState("");
   const [room, setRoom] = useState("");
@@ -89,18 +93,24 @@ export default function BlockInspector({
         <div className="mt-5 space-y-5">
           {/* Conflict action (power 5 entry from a block) */}
           {conflicted && (
-            <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+            <div className="space-y-2.5 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-foreground">This block is double-booked.</p>
-                  <p className="text-xs text-muted-foreground">Let the scheduler fix it with the smallest possible change.</p>
-                  <Button size="sm" className="mt-2 h-8 gap-1.5" onClick={onResolveConflicts} disabled={resolvingConflicts}>
+                <p className="text-sm font-medium text-foreground">This block is double-booked.</p>
+              </div>
+              {/* Pick-one-of-N: the engine's ranked legal fixes (power 5). */}
+              {generationId
+                ? <ConflictFixPicker generationId={generationId} blockId={block.id} onApplied={onConflictFixed} />
+                : (
+                  <Button size="sm" className="h-8 gap-1.5" onClick={onResolveConflicts} disabled={resolvingConflicts}>
                     {resolvingConflicts ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="h-3.5 w-3.5" aria-hidden />}
                     Fix conflicts
                   </Button>
-                </div>
-              </div>
+                )}
+              <Button variant="ghost" size="sm" className="h-7 gap-1.5 text-xs text-muted-foreground" onClick={onResolveConflicts} disabled={resolvingConflicts}>
+                {resolvingConflicts ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Sparkles className="h-3.5 w-3.5" aria-hidden />}
+                Or auto-fix every conflict
+              </Button>
             </div>
           )}
 

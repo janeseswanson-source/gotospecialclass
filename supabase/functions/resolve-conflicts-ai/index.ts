@@ -50,8 +50,19 @@ Deno.serve(async (req) => {
     const { data: claimsData, error: claimsErr } = await supabase.auth.getClaims(token);
     if (claimsErr || !claimsData?.claims) return json(401, { error: "Unauthorized" });
 
-    const body = (await req.json()) as { generation_id?: string };
+    const body = (await req.json()) as {
+      generation_id?: string;
+      // mode: "auto" (default) detects + resolves everything by smallest radius;
+      // "preview" returns the ranked legal options for one conflict WITHOUT
+      // applying (pick-one-of-N); "apply" applies a chosen option's moves.
+      mode?: "auto" | "preview" | "apply";
+      /** preview: the offending block to resolve (defaults to the first conflict). */
+      block_id?: string;
+      /** apply: the chosen option's move ops (from a prior preview). */
+      changes?: Array<{ op: "move"; block_id: string; day_of_week: string; start_time: string; end_time: string }>;
+    };
     if (!body?.generation_id) return json(400, { error: "generation_id required" });
+    const mode = body.mode ?? "auto";
 
     const { data: gen, error: genErr } = await supabase
       .from("schedule_generations")
@@ -92,6 +103,70 @@ Deno.serve(async (req) => {
       end_time: b.end_time, subject: b.subject, specialist_id: b.specialist_id, teacher_id: b.teacher_id,
       grade: b.grade, room: b.room, week_label: b.week_label,
     } as any));
+
+    // ── PREVIEW: return ranked legal options for ONE conflict, without applying.
+    // The engine produced them and each passed the SSOT; the UI shows them as
+    // pick-one-of-N. Only "move" ops are offered here (relocate/swap); coverage
+    // gaps are handled by auto/replan, not this picker.
+    if (mode === "preview") {
+      let conflict: Conflict | null = null;
+      if (body.block_id) conflict = { kind: "double_book", blockId: body.block_id };
+      else conflict = detectConflicts(working, ctx)[0] ?? null;
+      if (!conflict) return json(200, { mode: "preview", options: [], message: "No conflicts to resolve." });
+
+      const outcome = resolveConflict(conflict, working, ctx);
+      const target = working.find((b) => (b as any).id === conflict!.blockId) as any;
+      const targetDesc = target
+        ? { block_id: target.id, subject: target.subject, grade: target.grade, day_of_week: target.day_of_week, start_time: target.start_time, end_time: target.end_time }
+        : null;
+      const options = outcome.options
+        .map((o, i) => ({
+          id: i, tactic: o.tactic, blast_radius: o.blastRadius, description: o.description,
+          changes: o.changes
+            .filter((c) => c.op === "move" && c.blockId)
+            .map((c) => ({ op: "move" as const, block_id: c.blockId as string, day_of_week: c.to.day_of_week, start_time: dbTime(c.to.start_time), end_time: dbTime(c.to.end_time) })),
+        }))
+        .filter((o) => o.changes.length > 0)
+        .slice(0, 6);
+
+      if (options.length > 0) return json(200, { mode: "preview", target: targetDesc, options });
+      return json(200, {
+        mode: "preview", target: targetDesc, options: [],
+        escalation: outcome.escalation
+          ? { reason: outcome.escalation.reason, conflicting_constraints: outcome.escalation.conflictingConstraints }
+          : { reason: "No legal fix exists for this conflict without breaking another rule.", conflicting_constraints: [] },
+      });
+    }
+
+    // ── APPLY: apply a chosen option's moves, gated by the SSOT-mirror conflict
+    // count (the fix must strictly reduce conflicts, else it's rejected). This
+    // guards against the schedule having changed since the preview.
+    if (mode === "apply") {
+      const changes = Array.isArray(body.changes) ? body.changes : [];
+      if (changes.length === 0) return json(400, { error: "No changes to apply." });
+      const beforeConflicts = detectConflicts(working, ctx).length;
+      for (const ch of changes) {
+        if (ch.op !== "move" || !ch.block_id) continue;
+        const wb = working.find((b) => (b as any).id === ch.block_id) as any;
+        if (wb) { wb.day_of_week = ch.day_of_week; wb.start_time = ch.start_time; wb.end_time = ch.end_time; }
+      }
+      const afterConflicts = detectConflicts(working, ctx).length;
+      if (afterConflicts >= beforeConflicts) {
+        // Return 200 with a flag (not 4xx) so the client reads it cleanly.
+        return json(200, { mode: "apply", applied: 0, rejected: true, message: "That fix would not resolve the conflict (the schedule may have changed). Pick another option." });
+      }
+      let applied = 0;
+      const errors: string[] = [];
+      for (const ch of changes) {
+        if (ch.op !== "move" || !ch.block_id) continue;
+        const { error } = await supabase.from("schedule_blocks")
+          .update({ day_of_week: ch.day_of_week, start_time: ch.start_time, end_time: ch.end_time, is_override: true })
+          .eq("id", ch.block_id);
+        if (error) errors.push(error.message); else applied++;
+      }
+      await supabase.from("schedule_generations").update({ warnings: [] }).eq("id", body.generation_id);
+      return json(200, { mode: "apply", resolved: 1, applied, errors });
+    }
 
     // ── Deterministic cascade: detect → resolve smallest-radius → apply ──
     type AppliedChange =

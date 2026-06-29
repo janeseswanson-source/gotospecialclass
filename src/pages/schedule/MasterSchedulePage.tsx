@@ -557,6 +557,14 @@ export default function MasterSchedulePage() {
     }
   }
 
+  // Power 5 (pick-one-of-N): after the user applies a chosen fix from the block
+  // inspector, reload the canonical schedule and highlight what moved.
+  async function handleConflictFixApplied(changedIds: string[]) {
+    if (!selectedGen) return;
+    await loadBlocks(selectedGen);
+    if (changedIds.length) flagChangedBlocks(changedIds);
+  }
+
   // Power 5: the deterministic engine resolves conflicts (smallest blast radius,
   // every option SSOT-legal) and the LLM only narrates. We render the engine's
   // applied fixes + any escalations, and highlight what moved (power 4 synergy).
@@ -1278,11 +1286,13 @@ export default function MasterSchedulePage() {
         locked={editBlock ? lockedIds.has(editBlock.id) : false}
         conflicted={editBlock ? conflictIds.has(editBlock.id) : false}
         resolvingConflicts={resolvingAI}
+        generationId={selectedGen || null}
         explanationPending={explainPending}
         onSave={handleSaveOverride}
         onToggleLock={toggleLock}
         onNotesChange={handleNotesChange}
         onResolveConflicts={handleResolveWithAI}
+        onConflictFixed={handleConflictFixApplied}
         onRequestExplain={handleRequestExplain}
       />
 
