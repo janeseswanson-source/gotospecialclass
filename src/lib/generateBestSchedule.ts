@@ -38,8 +38,8 @@ export interface BestScheduleOptions {
   maxAttempts?: number;     // hard cap on search invocations (default 8)
   timeBudgetMs?: number;    // overall wall-clock budget (default 8 min)
   polishRounds?: number;    // max Claude polish passes on the winner (default 3)
-  refinePasses?: number;    // max deterministic refine passes (default 40)
-  refineStaleLimit?: number;// stop refining after this many no-improvement passes (default 4)
+  refinePasses?: number;    // max deterministic refine passes (default 80)
+  refineStaleLimit?: number;// stop refining after this many no-improvement passes (default 12)
   onProgress?: (p: GenProgress) => void;
   signal?: AbortSignal;     // optional cancel
 }
@@ -56,8 +56,8 @@ export async function generateBestSchedule(opts: BestScheduleOptions): Promise<B
     maxAttempts = 8,
     timeBudgetMs = 8 * 60 * 1000,
     polishRounds = 3,
-    refinePasses = 40,
-    refineStaleLimit = 4,
+    refinePasses = 80,
+    refineStaleLimit = 12,
     onProgress,
     signal,
   } = opts;
