@@ -1,11 +1,10 @@
 ## Plan
 
-1. **Store secrets** via `secrets--set_secret` (values provided, no user form needed):
-   - `CPSAT_SOLVER_URL` = `https://contained-shorter-charter-corporations.trycloudflare.com`
-   - `CPSAT_SOLVER_KEY` = `b246df70973824ac5163bcf5fb8011e1e7a33fa25123b57c`
+The secrets are already saved (visible in the secrets list: `CPSAT_SOLVER_URL`, `CPSAT_SOLVER_KEY`) and the `generate-cpsat` edge function source already exists at `supabase/functions/generate-cpsat/`. So this is a deploy-only request.
 
-2. **Deploy edge function** `generate-cpsat` via `supabase--deploy_edge_functions`.
+### Steps
+1. **Verify/overwrite the two secrets** with the exact values provided using `secrets--set_secret` (idempotent — confirms current values match).
+2. **Deploy `generate-cpsat`** via `supabase--deploy_edge_functions(["generate-cpsat"])`. This creates it if missing or redeploys if present.
+3. **Frontend redeploy from main** via `preview_ui--publish` so the updated client that calls `generate-cpsat` goes live. Website-info preflight: already-relevant (no metadata changes this turn).
 
-3. **Frontend** auto-deploys from main on next publish; no code changes required.
-
-No scheduling/scoring logic touched. If secrets were ever unset, `generate-cpsat` returns 503 and the client falls back to the existing generator.
+No code edits, no migrations, no scheduling/scoring logic changes — pure deploy.
