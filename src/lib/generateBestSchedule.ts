@@ -68,14 +68,19 @@ export async function generateBestSchedule(opts: BestScheduleOptions): Promise<B
   let attempt = 0;
   let lastError: string | null = null;
   let usedCPSAT = false;
+  let cpsatOptimal = false;
 
-  // ── CP-SAT phase: try the off-platform, provably-optimal OR-Tools solver first.
-  // When configured + reachable it returns a schedule that is OPTIMAL against the
-  // soft rubric (clustering/class_repeats/subject_gap driven to their true floor),
-  // already re-validated against the SSOT server-side. We seed it as the baseline;
-  // the metaheuristic below can only replace it with something strictly better
-  // (e.g. an A/B two-week layout the single-week model doesn't yet cover). If the
-  // solver isn't configured the function returns 503 and we silently fall back.
+  // ── CP-SAT phase (PRIMARY): the off-platform OR-Tools solver is now the main
+  // generator. When configured + reachable it returns a schedule that is PROVABLY
+  // OPTIMAL against the soft rubric (clustering / class_repeats / subject_gap /
+  // k_late / teacher_planning driven to their true floor), already re-validated
+  // against the SSOT server-side. When it proves OPTIMAL we SKIP the old Monte
+  // Carlo / SA search entirely (nothing random can beat a proven optimum) — that
+  // search now runs ONLY as a fallback when the solver is unconfigured (503),
+  // unreachable, or returns a non-proven (FEASIBLE) result. The deterministic
+  // refine pass below still runs on top: it can only raise the score further by
+  // improving the secondary terms CP-SAT doesn't model (teacher AM/PM & day
+  // preferences, specialist day-load balance) and never lowers it.
   try {
     if (!signal?.aborted) {
       const { data, error } = await supabase.functions.invoke("generate-cpsat", {
@@ -85,6 +90,7 @@ export async function generateBestSchedule(opts: BestScheduleOptions): Promise<B
       if (!error && d?.generation_id && typeof d?.quality_percent === "number") {
         best = { generationId: d.generation_id, quality: d.quality_percent };
         usedCPSAT = true;
+        cpsatOptimal = d.solver_status === "OPTIMAL"; // proven best → skip MC/SA search
         onProgress?.({
           phase: "cpsat", attempt: 1, attempts: 1,
           currentQuality: d.quality_percent, bestQuality: d.quality_percent, elapsedMs: Date.now() - start,
@@ -93,8 +99,9 @@ export async function generateBestSchedule(opts: BestScheduleOptions): Promise<B
     }
   } catch { /* solver is optional; fall back to the metaheuristic */ }
 
-  // ── Search phase: best-of-N independent generations ──
-  while (attempt < maxAttempts && Date.now() - start < timeBudgetMs) {
+  // ── Search phase (FALLBACK): best-of-N independent MC/SA generations. Skipped
+  // entirely when CP-SAT already proved an optimum. ──
+  while (!cpsatOptimal && attempt < maxAttempts && Date.now() - start < timeBudgetMs) {
     if (signal?.aborted) break;
     attempt++;
     const { data, error } = await supabase.functions.invoke("generate-schedule", {
