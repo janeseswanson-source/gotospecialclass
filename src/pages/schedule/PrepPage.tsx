@@ -370,7 +370,9 @@ export default function PrepPage() {
         onProgress: (p) => setGenProgress(
           p.phase === 'search'
             ? `Trying schedules… best ${p.bestQuality}% (attempt ${p.attempt})`
-            : `Polishing with AI… ${p.currentQuality}%`,
+            : p.phase === 'refine'
+              ? `Improving the schedule… ${p.bestQuality}% (pass ${p.attempt})`
+              : `Polishing with AI… ${p.currentQuality}%`,
         ),
       });
       setGenProgress('');

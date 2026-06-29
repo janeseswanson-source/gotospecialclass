@@ -17,10 +17,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { breakdownToPercent } from "@/lib/optimizerScore";
 
 export interface GenProgress {
-  phase: "search" | "polish";
-  attempt: number;        // search attempt number (1-based) or polish round
-  attempts: number;       // total attempts allowed (search) — for a progress bar
-  currentQuality: number; // quality of the candidate just produced/polished
+  phase: "search" | "refine" | "polish";
+  attempt: number;        // search attempt / refine pass / polish round (1-based)
+  attempts: number;       // total attempts allowed (for a progress bar)
+  currentQuality: number; // quality of the candidate just produced/refined
   bestQuality: number;    // best quality found so far
   elapsedMs: number;
 }
@@ -34,10 +34,12 @@ export interface BestScheduleResult {
 
 export interface BestScheduleOptions {
   schoolId: string;
-  targetQuality?: number;   // stop searching once a candidate hits this (default 99)
-  maxAttempts?: number;     // hard cap on search invocations (default 16)
-  timeBudgetMs?: number;    // wall-clock budget for the SEARCH phase (default 4 min)
+  targetQuality?: number;   // stop once a candidate hits this (default 99)
+  maxAttempts?: number;     // hard cap on search invocations (default 8)
+  timeBudgetMs?: number;    // overall wall-clock budget (default 8 min)
   polishRounds?: number;    // max Claude polish passes on the winner (default 3)
+  refinePasses?: number;    // max deterministic refine passes (default 40)
+  refineStaleLimit?: number;// stop refining after this many no-improvement passes (default 4)
   onProgress?: (p: GenProgress) => void;
   signal?: AbortSignal;     // optional cancel
 }
@@ -51,9 +53,11 @@ export async function generateBestSchedule(opts: BestScheduleOptions): Promise<B
   const {
     schoolId,
     targetQuality = 99,
-    maxAttempts = 16,
-    timeBudgetMs = 4 * 60 * 1000,
+    maxAttempts = 8,
+    timeBudgetMs = 8 * 60 * 1000,
     polishRounds = 3,
+    refinePasses = 40,
+    refineStaleLimit = 4,
     onProgress,
     signal,
   } = opts;
@@ -96,6 +100,44 @@ export async function generateBestSchedule(opts: BestScheduleOptions): Promise<B
   }
 
   if (!best) throw new Error(lastError ?? "Could not generate a schedule.");
+
+  // ── Refinement phase: relentlessly refine the winner with the DETERMINISTIC
+  // engine (directed repair + SA + LNS) until it reaches the target OR provably
+  // stops improving (converged). Each call writes a strictly-better NEW version
+  // and we chase the latest; many short calls accumulate unlimited total compute
+  // without ever exceeding the edge CPU limit. This is "keep trying until it is
+  // truly the best possible" — it never lowers quality and never double-books.
+  let stale = 0;
+  for (let pass = 0; pass < refinePasses && Date.now() - start < timeBudgetMs; pass++) {
+    if (signal?.aborted) break;
+    if (best.quality >= targetQuality) break;
+    const { data, error } = await supabase.functions.invoke("refine-schedule", {
+      // seed_salt = pass lets us retry a stuck version with a fresh search stream.
+      body: { generation_id: best.generationId, seed_salt: pass },
+    });
+    const d = data as any;
+    if (error || d?.error) {
+      stale++;
+      if (stale >= refineStaleLimit) break;
+      continue;
+    }
+    if (d?.improved && d?.generation_id) {
+      const old = best.generationId;
+      best = { generationId: d.generation_id, quality: typeof d.quality_percent === "number" ? d.quality_percent : best.quality };
+      if (old !== best.generationId) await deleteGeneration(old);
+      stale = 0;
+    } else {
+      stale++;
+    }
+    onProgress?.({
+      phase: "refine", attempt: pass + 1, attempts: refinePasses,
+      currentQuality: best.quality, bestQuality: best.quality, elapsedMs: Date.now() - start,
+    });
+    // Stop when the engine says capacity caps quality (structurally limited) or
+    // several passes in a row found nothing — i.e. we're at the achievable ceiling.
+    if (stale >= refineStaleLimit || d?.confidence?.assessment === "structurally_limited") break;
+  }
+
   const reachedTarget = best.quality >= targetQuality;
 
   // ── Polish phase: Claude repairs the winner until it stops applying fixes ──

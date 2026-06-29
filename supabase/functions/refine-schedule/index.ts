@@ -45,6 +45,10 @@ Deno.serve(async (req) => {
       generation_id?: string;
       lns_rounds?: number;
       sa_iterations?: number;
+      /** Optional salt mixed into the refinement seed, so a relentless client
+       *  loop can retry the SAME version with independent search streams to
+       *  escape a local optimum (still deterministic per salt). */
+      seed_salt?: number;
       /** Optional: anchor the refine to a committed baseline generation so the
        *  re-solve is minimal-perturbation (Phase 2). Used by replan flows. */
       perturbation_baseline_generation_id?: string;
@@ -111,7 +115,7 @@ Deno.serve(async (req) => {
         : undefined;
 
     const result = refineSchedule(persistedBlocks, { specialists, teachers, grades, school, recessConfigs }, {
-      seedKey: `${body.generation_id}:v${gen.version}`,
+      seedKey: `${body.generation_id}:v${gen.version}:s${body.seed_salt ?? 0}`,
       lnsRounds: typeof body.lns_rounds === "number" ? body.lns_rounds : 150,
       saMaxIterations: typeof body.sa_iterations === "number" ? body.sa_iterations : 1500,
       weightOverrides,
