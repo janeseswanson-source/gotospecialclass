@@ -51,6 +51,17 @@ async def solve_endpoint(request: Request):
     # Default worker count from env unless the request explicitly set one.
     spec.setdefault("num_workers", NUM_WORKERS)
     try:
-        return solve(spec)
+        result = solve(spec)
     except Exception as e:  # never leak a stack trace to the client
         raise HTTPException(status_code=500, detail=f"solve failed: {e}")
+    # DEBUG: dump the exact spec + result so we can diagnose the real school.
+    if os.environ.get("SOLVER_DEBUG_DUMP"):
+        try:
+            import json as _json, time as _time, pathlib as _pl
+            _pl.Path("_debug").mkdir(exist_ok=True)
+            stamp = _time.strftime("%H%M%S")
+            _pl.Path(f"_debug/spec_{stamp}.json").write_text(_json.dumps(spec))
+            _pl.Path(f"_debug/result_{stamp}.json").write_text(_json.dumps(result))
+        except Exception:
+            pass
+    return result
