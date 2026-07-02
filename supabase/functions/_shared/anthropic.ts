@@ -6,13 +6,22 @@
 // AI SDK provider instead — that lives in ./anthropic-aisdk.ts so functions
 // that only need the official SDK don't pull in the AI-SDK dependency.
 //
-// Model: Claude Opus 4.8 — Anthropic's smartest mainstream model, the right
-// default for genuinely-smart schedule editing and review.
 import Anthropic from "npm:@anthropic-ai/sdk@0.105.0";
 
-// Claude Opus 4.8 — Anthropic's smartest mainstream model, the right default
-// for genuinely-smart schedule review and editing.
-export const CLAUDE_MODEL = "claude-opus-4-8";
+// Model tiers. Pick by task shape, not habit:
+//   deep — hardest reasoning (document extraction, deep review narration). Opus 4.8,
+//          overridable via the CLAUDE_MODEL_DEEP env secret.
+//   chat — the interactive schedule editor: tool-loop heavy, engine does the hard
+//          combinatorics, so Sonnet 4.6 is the right cost/latency point.
+//   fast — cheap classification/summarization.
+export const MODELS = {
+  deep: Deno.env.get("CLAUDE_MODEL_DEEP")?.trim() || "claude-opus-4-8",
+  chat: "claude-sonnet-4-6",
+  fast: "claude-haiku-4-5",
+} as const;
+
+// Back-compat alias — existing callers that want "the smart one" keep working.
+export const CLAUDE_MODEL = MODELS.deep;
 
 export function anthropicApiKey(): string | null {
   return Deno.env.get("ANTHROPIC_API_KEY") ?? null;

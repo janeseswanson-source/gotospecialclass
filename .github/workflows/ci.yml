@@ -23,8 +23,8 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - name: Type-check generate-cpsat (no Anthropic SDK here)
-        run: deno check supabase/functions/generate-cpsat/index.ts supabase/functions/generate-cpsat/_spec_builder.ts
+      - name: Type-check generate-cpsat + improve-quality (no Anthropic SDK here)
+        run: deno check supabase/functions/generate-cpsat/index.ts supabase/functions/generate-cpsat/_spec_builder.ts supabase/functions/improve-quality/index.ts
       - name: Scheduler engine tests
         run: deno test --no-check --allow-hrtime supabase/functions/generate-schedule/
       - name: Shared SSOT + rubric tests

@@ -357,8 +357,10 @@ function idleDayGuardOk(before: Block[], after: Block[]): boolean {
 // search, and is the workhorse that actually drives quality toward the ceiling.
 
 /** Same-day (grade, subject) duplicates → relocate one to a day without that
- *  subject for the grade, keeping its specialist/teacher (a de-cluster move). */
-function declusterOnce(
+ *  subject for the grade, keeping its specialist/teacher (a de-cluster move).
+ *  Exported for the edit-tools' SCOPED improve_quality pass (clustering-only
+ *  focus must not trigger the whole-class reassignment directedRepair does). */
+export function declusterOnce(
   current: Block[],
   combined: Set<Block>,
   baseOccupancy: OccupancyTracker,

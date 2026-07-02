@@ -7,8 +7,16 @@
 
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
-import { CheckCircle2, Sparkles, AlertTriangle, TrendingUp, Loader2, BrainCircuit } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { CheckCircle2, Sparkles, AlertTriangle, TrendingUp, Loader2, BrainCircuit, Wrench } from "lucide-react";
 import { scoreSummary, confidenceCopy, type ConfidenceTone, type QualityConfidence } from "@/lib/scoreSummary";
+
+/** Penalty keys the engine can attempt a one-click fix for. "errors"/"warnings"
+ *  route to the conflict cascade; the soft keys route to improve-quality. */
+export const FIXABLE_KEYS = new Set([
+  "errors", "warnings", "subject_day_clustering", "class_repeats", "spec_dayload_stdev",
+  "subject_gap", "k_grade_after_780", "cart_back_to_back", "grade_cohesion", "teacher_planning", "contract_min",
+]);
 
 interface QualityPanelProps {
   breakdown: Record<string, number> | null | undefined;
@@ -17,6 +25,12 @@ interface QualityPanelProps {
   refining?: boolean;
   /** Optional AI verify-schedule review (folded in from the retired Explain sidebar). */
   verifyReview?: { score: number | null; summary: string | null };
+  /** One-click engine fix for an issue row (edit-with-ai v2). Conflict-type keys
+   *  run the deterministic cascade; soft keys run the scoped improve-quality
+   *  pass, previewed through the ghost overlay + Apply bar. */
+  onFixIssue?: (penaltyKey: string) => void;
+  /** The penalty key currently being fixed (spinner state). */
+  fixingKey?: string | null;
 }
 
 const TONE: Record<ConfidenceTone, { ring: string; text: string; chip: string; Icon: typeof Sparkles }> = {
@@ -25,7 +39,7 @@ const TONE: Record<ConfidenceTone, { ring: string; text: string; chip: string; I
   warn: { ring: "border-amber-500/40 bg-amber-50/60 dark:bg-amber-950/20", text: "text-amber-700 dark:text-amber-400", chip: "bg-amber-500/15 text-amber-700 dark:text-amber-400", Icon: AlertTriangle },
 };
 
-export default function QualityPanel({ breakdown, confidence, refining, verifyReview }: QualityPanelProps) {
+export default function QualityPanel({ breakdown, confidence, refining, verifyReview, onFixIssue, fixingKey }: QualityPanelProps) {
   const summary = useMemo(() => scoreSummary(breakdown), [breakdown]);
   const copy = useMemo(() => confidenceCopy(confidence), [confidence]);
   const tone = copy.tone;
@@ -92,12 +106,29 @@ export default function QualityPanel({ breakdown, confidence, refining, verifyRe
             </p>
           ) : (
             <ul className="space-y-1.5">
-              {summary.costs.slice(0, 5).map((c, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-foreground">
-                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
-                  <span>{c.label}</span>
-                </li>
-              ))}
+              {summary.costs.slice(0, 5).map((c) => {
+                const fixable = !!onFixIssue && FIXABLE_KEYS.has(c.key);
+                const fixing = fixingKey === c.key;
+                return (
+                  <li key={c.key} className="flex items-start gap-2 text-sm text-foreground">
+                    <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+                    <span className="min-w-0 flex-1">{c.label}</span>
+                    {fixable && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 shrink-0 gap-1 px-2 text-[11px]"
+                        disabled={!!fixingKey}
+                        onClick={() => onFixIssue(c.key)}
+                        aria-label={`Fix: ${c.label}`}
+                      >
+                        {fixing ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : <Wrench className="h-3 w-3" aria-hidden />}
+                        Fix
+                      </Button>
+                    )}
+                  </li>
+                );
+              })}
               {summary.costs.length > 5 && (
                 <li className="text-xs italic text-muted-foreground">+ {summary.costs.length - 5} more</li>
               )}

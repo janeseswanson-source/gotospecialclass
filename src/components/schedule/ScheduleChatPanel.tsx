@@ -3,20 +3,23 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport, type UIMessage } from "ai";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { BrainCircuit, X as XIcon, AlertCircle, Check, Loader2, MoveRight, ArrowLeftRight, Trash2, Plus, Wrench } from "lucide-react";
+import { BrainCircuit, X as XIcon, AlertCircle, Check } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { Conversation, ConversationContent, ConversationEmptyState, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
 import { Tool, ToolHeader, ToolContent, ToolInput, ToolOutput } from "@/components/ai-elements/tool";
 import { PromptInput, PromptInputTextarea, PromptInputSubmit, PromptInputFooter } from "@/components/ai-elements/prompt-input";
 import { Shimmer } from "@/components/ai-elements/shimmer";
+import ApplyOpsBar, { opLabel, OpIcon, type OpsDelta } from "@/components/schedule/ApplyOpsBar";
+import { toggleRejected, type PreviewOp, type ProposalItem } from "@/lib/ghostPreview";
 
+// Quick prompts that showcase what the v2 assistant can actually do (engine
+// tools: quality report, rebalance, conflict cascade, free-slot search).
 const QUICK_PROMPTS = [
-  "Move 3rd grade music to Tuesday morning",
-  "Give every specialist a 30-minute prep on Friday",
+  "What's wrong with this schedule?",
   "Even out specialist workload across days",
-  "Swap PE and Art for 5th grade on Monday",
+  "Fix the subjects that double up on the same day",
+  "Find a free Friday slot for 3rd grade Music and move it there",
 ];
 
 interface ScheduleChatPanelProps {
@@ -26,41 +29,30 @@ interface ScheduleChatPanelProps {
   /** Called after Apply with the ids of blocks that changed, so the page can
    *  highlight them in the grid. */
   onApplied?: (changedBlockIds: string[]) => void;
+  /** Ghost preview: the accepted-but-unapplied ops, emitted whenever they change
+   *  so the page can overlay them on the grid. Empty array clears the overlay. */
+  onPreviewOps?: (ops: PreviewOp[]) => void;
 }
 
-/** Human description for a proposed edit op. Falls back for ops proposed by
- *  an older server build without labels. */
-function opLabel(op: any): string {
-  if (op?.label) return op.label;
-  switch (op?.kind) {
-    case "move": return `Move block → ${op.day_of_week} ${String(op.start_time).slice(0, 5)}`;
-    case "swap": return "Swap two blocks";
-    case "delete": return "Remove a block";
-    case "insert": return `Add ${op.subject ?? "block"} → ${op.day_of_week} ${String(op.start_time).slice(0, 5)}`;
-    default: return "Schedule change";
-  }
-}
-
-function OpIcon({ kind }: { kind?: string }) {
-  const cls = "h-3.5 w-3.5 shrink-0";
-  if (kind === "move") return <MoveRight className={cls} />;
-  if (kind === "swap") return <ArrowLeftRight className={cls} />;
-  if (kind === "delete") return <Trash2 className={cls} />;
-  if (kind === "insert") return <Plus className={cls} />;
-  return <Wrench className={cls} />;
-}
-
-/** Inline card for a proposed (or rejected) tool action — replaces the raw
- *  JSON tool dump with a plain-language description. */
+/** Inline card for a proposed (or rejected) tool action — plain language, plus
+ *  the measured quality delta for engine passes. */
 function ProposalCard({ output }: { output: any }) {
-  if (output?.status === "proposed" && output.op) {
+  const ops: any[] = output?.op ? [output.op] : Array.isArray(output?.ops) ? output.ops : [];
+  if (output?.status === "proposed" && ops.length > 0) {
+    const delta = typeof output.quality_delta === "number" ? output.quality_delta : null;
     return (
-      <div className="my-1.5 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-xs">
-        <span className="mt-0.5 text-amber-700 dark:text-amber-400"><OpIcon kind={output.op.kind} /></span>
-        <div className="min-w-0 flex-1">
-          <p className="font-medium text-foreground">{opLabel(output.op)}</p>
-          <p className="text-[10px] text-muted-foreground">Proposed — review and apply below.</p>
-        </div>
+      <div className="my-1.5 rounded-lg border border-amber-500/40 bg-amber-50/60 dark:bg-amber-950/20 px-3 py-2 text-xs space-y-1">
+        {ops.slice(0, 6).map((op, i) => (
+          <div key={i} className="flex items-start gap-2">
+            <span className="mt-0.5 text-amber-700 dark:text-amber-400"><OpIcon kind={op.kind} /></span>
+            <p className="min-w-0 flex-1 font-medium text-foreground">{opLabel(op)}</p>
+          </div>
+        ))}
+        {ops.length > 6 && <p className="pl-6 text-[10px] text-muted-foreground">+ {ops.length - 6} more</p>}
+        <p className="text-[10px] text-muted-foreground">
+          Proposed — review and apply below.
+          {delta !== null && <span className={delta >= 0 ? " text-success font-semibold" : " text-destructive font-semibold"}> {delta >= 0 ? `+${delta}` : delta} quality</span>}
+        </p>
       </div>
     );
   }
@@ -78,17 +70,19 @@ function ProposalCard({ output }: { output: any }) {
   return null;
 }
 
-export default function ScheduleChatPanel({ generationId, onClose, onScheduleChanged, onApplied }: ScheduleChatPanelProps) {
+export default function ScheduleChatPanel({ generationId, onClose, onScheduleChanged, onApplied, onPreviewOps }: ScheduleChatPanelProps) {
   const [hydratedMessages, setHydratedMessages] = useState<UIMessage[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [input, setInput] = useState("");
   const tokenRef = useRef<string | null>(null);
-  // Proposed edits the user has already applied or discarded (by toolCallId),
-  // so they drop out of the pending Apply bar.
+  // Proposals the user has already applied or discarded (by toolCallId), so
+  // they drop out of the pending Apply bar.
   const [resolvedCallIds, setResolvedCallIds] = useState<Set<string>>(new Set());
-  const [rejectedCallIds, setRejectedCallIds] = useState<Set<string>>(new Set());
-  const [skippedByCallId, setSkippedByCallId] = useState<Record<string, string>>({});
+  const [rejectedItemIds, setRejectedItemIds] = useState<Set<string>>(new Set());
+  const [skippedByItemId, setSkippedByItemId] = useState<Record<string, string>>({});
   const [applying, setApplying] = useState(false);
+  // Compact before→after lines for the changes just applied (shown in the chat).
+  const [appliedLines, setAppliedLines] = useState<string[]>([]);
 
   const transport = useMemo(() => {
     const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/schedule-chat`;
@@ -108,12 +102,9 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
         };
       },
       fetch: async (input, init) => {
-        console.log("[chat] fetch →", typeof input === "string" ? input : (input as Request).url);
         try {
           const resp = await fetch(input as any, init);
-          console.log("[chat] fetch ←", resp.status, resp.statusText);
           if (!resp.ok) {
-            // Surface server error body before AI SDK's generic "Failed to fetch".
             const body = await resp.clone().text().catch(() => "");
             console.error("[chat] server error body:", body);
           }
@@ -145,8 +136,7 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
       const hist = Array.isArray((data as any)?.chat_history) ? ((data as any).chat_history as UIMessage[]) : [];
       setHydratedMessages(hist);
       // Proposals from earlier sessions were already applied or discarded back
-      // then — treat them all as resolved so they don't reappear in the Apply
-      // bar. Only NEW proposals from this session are actionable.
+      // then — treat them all as resolved so they don't reappear.
       const historicalCallIds = new Set<string>();
       for (const m of hist) {
         if ((m as any).role !== "assistant") continue;
@@ -187,24 +177,54 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
   const isLoading = status === "submitted" || status === "streaming";
   const canSend = !!generationId && hydrated && !!input.trim() && !isLoading;
 
-  // Pending proposals = tool outputs the AI returned with status "proposed"
-  // that the user hasn't yet applied or discarded. These are the edits the
-  // Apply bar will commit (re-validated server-side) on confirmation.
-  const pendingProposals = useMemo(() => {
-    const out: { toolCallId: string; op: unknown }[] = [];
+  // Pending proposals = tool outputs the AI returned with status "proposed" that
+  // the user hasn't yet applied or discarded. Engine passes return `ops` arrays;
+  // single-edit tools return one `op` — both flow into the same Apply bar.
+  const pendingItems = useMemo<Array<ProposalItem & { callId: string }>>(() => {
+    const out: Array<ProposalItem & { callId: string }> = [];
     for (const m of messages) {
       if (m.role !== "assistant") continue;
       m.parts.forEach((part: any, idx) => {
         if (!part?.type?.startsWith?.("tool-")) return;
         const output = part.output;
-        if (!output || output.status !== "proposed" || !output.op) return;
+        if (!output || output.status !== "proposed") return;
         const callId = part.toolCallId ?? `${m.id}-${idx}`;
         if (resolvedCallIds.has(callId)) return;
-        out.push({ toolCallId: callId, op: output.op });
+        const ops: PreviewOp[] = output.op ? [output.op] : Array.isArray(output.ops) ? output.ops : [];
+        ops.forEach((op, oi) => out.push({ id: `${callId}:${oi}`, callId, op }));
       });
     }
     return out;
   }, [messages, resolvedCallIds]);
+
+  // Latest quality delta reported by preview_ops / an engine pass this turn.
+  const latestDelta = useMemo<OpsDelta | null>(() => {
+    let found: OpsDelta | null = null;
+    for (const m of messages) {
+      if (m.role !== "assistant") continue;
+      for (const part of (m.parts ?? []) as any[]) {
+        if (!part?.type?.startsWith?.("tool-")) continue;
+        const o = part.output;
+        if (o && typeof o.quality_delta === "number") {
+          found = { quality_delta: o.quality_delta, new_errors: o.new_errors, warnings_after: o.warnings_after, warnings_before: o.warnings_before };
+        }
+      }
+    }
+    return found;
+  }, [messages]);
+
+  const acceptedItems = useMemo(
+    () => pendingItems.filter((p) => !rejectedItemIds.has(p.id)),
+    [pendingItems, rejectedItemIds],
+  );
+
+  // Ghost preview: emit the accepted ops whenever they change (page overlays them).
+  useEffect(() => {
+    onPreviewOps?.(acceptedItems.map((p) => p.op));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [acceptedItems]);
+  // Clear the overlay when the panel unmounts.
+  useEffect(() => () => { onPreviewOps?.([]); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   function markResolved(callIds: string[]) {
     setResolvedCallIds((prev) => {
@@ -214,25 +234,11 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
     });
   }
 
-  // Proposals the user hasn't rejected — only these get applied.
-  const acceptedProposals = useMemo(
-    () => pendingProposals.filter((p) => !rejectedCallIds.has(p.toolCallId)),
-    [pendingProposals, rejectedCallIds],
-  );
-
-  function toggleReject(callId: string) {
-    setRejectedCallIds((prev) => {
-      const next = new Set(prev);
-      next.has(callId) ? next.delete(callId) : next.add(callId);
-      return next;
-    });
-  }
-
   async function applyChanges() {
-    if (!generationId || applying || acceptedProposals.length === 0) return;
+    if (!generationId || applying || acceptedItems.length === 0) return;
     setApplying(true);
-    setSkippedByCallId({});
-    const ops = acceptedProposals.map((p) => p.op);
+    setSkippedByItemId({});
+    const ops = acceptedItems.map((p) => p.op);
     try {
       const { data: sess } = await supabase.auth.getSession();
       const token = sess.session?.access_token ?? tokenRef.current;
@@ -246,23 +252,26 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data?.error ?? `HTTP ${resp.status}`);
 
-      // Map each skipped reason back to the proposal it belongs to (by block id)
-      // so the user sees exactly WHICH change failed and WHY — and keep those
-      // rows visible (annotated) instead of silently dropping them.
+      // Map each skipped reason back to the proposal it belongs to (by block id).
       const skipped: string[] = Array.isArray(data.skipped) ? data.skipped : [];
       const skipMap: Record<string, string> = {};
-      const appliedCallIds: string[] = [];
-      for (const p of acceptedProposals) {
+      const appliedItems: Array<ProposalItem & { callId: string }> = [];
+      for (const p of acceptedItems) {
         const op: any = p.op;
         const ids = [op.block_id, op.a_id, op.b_id].filter(Boolean) as string[];
         const reason = ids.length ? skipped.find((s) => ids.some((id) => s.includes(id))) : undefined;
-        if (reason) skipMap[p.toolCallId] = reason.replace(/^[a-z]+\s+[0-9a-f-]+:\s*/i, "");
-        else appliedCallIds.push(p.toolCallId);
+        if (reason) skipMap[p.id] = reason.replace(/^[a-z]+\s+[0-9a-f-]+:\s*/i, "");
+        else appliedItems.push(p);
       }
-      markResolved(appliedCallIds);   // applied → leave the review list
-      setSkippedByCallId(skipMap);    // failed → stay, with the reason shown
+      // Resolve calls whose every op applied; keep partially-failed calls visible.
+      const failedCallIds = new Set(Object.keys(skipMap).map((id) => id.split(":")[0]));
+      markResolved([...new Set(appliedItems.map((p) => p.callId))].filter((c) => !failedCallIds.has(c)));
+      setSkippedByItemId(skipMap);
+      // Compact before→after line per applied op, shown in the chat.
+      setAppliedLines(appliedItems.map((p) => opLabel(p.op)));
 
       onScheduleChanged();
+      onPreviewOps?.([]);
       const changedIds: string[] = Array.isArray(data.changed_block_ids) ? data.changed_block_ids : [];
       if (changedIds.length) onApplied?.(changedIds);
       toast({
@@ -280,14 +289,14 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
   }
 
   function discardChanges() {
-    markResolved(pendingProposals.map((p) => p.toolCallId));
-    setRejectedCallIds(new Set());
-    setSkippedByCallId({});
+    markResolved([...new Set(pendingItems.map((p) => p.callId))]);
+    setRejectedItemIds(new Set());
+    setSkippedByItemId({});
+    onPreviewOps?.([]);
   }
 
   async function submit() {
     const text = input.trim();
-    console.log("[chat] submit attempt", { text, generationId, isLoading, hydrated });
     if (!text) return;
     if (!generationId) {
       toast({ title: "No schedule selected", description: "Generate a schedule first.", variant: "destructive" });
@@ -297,21 +306,17 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
       toast({ title: "Already sending", description: "Wait for the current response to finish." });
       return;
     }
-    // Starting a new turn re-plans from the live DB, so un-applied proposals
-    // from a previous turn become stale. Don't drop them silently — confirm
-    // first so the user never loses pending work by accident.
-    if (pendingProposals.length) {
+    if (pendingItems.length) {
       const proceed = window.confirm(
-        `You have ${pendingProposals.length} unapplied change${pendingProposals.length === 1 ? "" : "s"}. Sending a new message will discard ${pendingProposals.length === 1 ? "it" : "them"}. Continue?`,
+        `You have ${pendingItems.length} unapplied change${pendingItems.length === 1 ? "" : "s"}. Sending a new message will discard ${pendingItems.length === 1 ? "it" : "them"}. Continue?`,
       );
       if (!proceed) return;
       discardChanges();
     }
+    setAppliedLines([]);
     setInput("");
     try {
-      console.log("[chat] sendMessage", text);
       await sendMessage({ text });
-      console.log("[chat] sendMessage resolved");
     } catch (err: any) {
       console.error("[chat] send failed", err);
       toast({
@@ -333,7 +338,7 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
             <p className="text-sm font-semibold">Edit with AI</p>
             <p className="text-xs text-muted-foreground">
               {generationId
-                ? "Describe changes — I'll move, swap, or add blocks."
+                ? "Changes preview on the grid — nothing saves until you Apply."
                 : "Generate a schedule first to start chatting."}
             </p>
           </div>
@@ -347,14 +352,17 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
         <ConversationContent>
           {messages.length === 0 ? (
             <ConversationEmptyState
-              title="What should I change?"
-              description="Try one of the suggestions below, or type your own."
+              title="An assistant that knows the rules"
+              description="It can diagnose quality issues, find legal open slots, even out workloads, fix double-bookings with the smallest change, and preview every edit's quality impact before you apply. Try a suggestion below."
             />
           ) : (
             messages.map((m) => {
               const parts = (m.parts ?? []) as any[];
               const hasText = parts.some((p) => p.type === "text" && p.text?.trim());
-              const proposedCount = parts.filter((p) => p.type?.startsWith?.("tool-") && p.output?.status === "proposed").length;
+              const proposedCount = parts.reduce((acc, p) => {
+                if (!p.type?.startsWith?.("tool-") || p.output?.status !== "proposed") return acc;
+                return acc + (p.output.op ? 1 : Array.isArray(p.output.ops) ? p.output.ops.length : 0);
+              }, 0);
               const hasTool = parts.some((p) => p.type?.startsWith?.("tool-"));
               return (
                 <Message key={m.id} from={m.role === "user" ? "user" : "assistant"}>
@@ -385,8 +393,6 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
                       }
                       return null;
                     })}
-                    {/* Assistant turns that only made tool proposals (no prose)
-                        still get a clear, visible acknowledgement in the chat. */}
                     {m.role === "assistant" && !hasText && !isLoading && (
                       hasTool ? (
                         <p className="text-xs text-foreground">
@@ -404,6 +410,14 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
                 </Message>
               );
             })
+          )}
+          {appliedLines.length > 0 && (
+            <div className="mx-2 my-2 rounded-lg border border-success/40 bg-success/5 px-3 py-2 text-xs space-y-1">
+              <p className="flex items-center gap-1.5 font-semibold text-success"><Check className="h-3.5 w-3.5" /> Applied</p>
+              {appliedLines.map((l, i) => (
+                <p key={i} className="pl-5 text-foreground">{l}</p>
+              ))}
+            </div>
           )}
           {isLoading && (
             <div className="px-2 py-1">
@@ -438,50 +452,17 @@ export default function ScheduleChatPanel({ generationId, onClose, onScheduleCha
         </div>
       )}
 
-      {pendingProposals.length > 0 && !isLoading && (
-        <div className="border-t border-amber-500/30 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2.5 space-y-2">
-          <div className="flex items-center gap-3">
-            <div className="flex-1 text-xs">
-              <p className="font-semibold text-foreground">Review changes — not saved yet</p>
-              <p className="text-[10px] text-muted-foreground">
-                {acceptedProposals.length} of {pendingProposals.length} selected. Uncheck any you don't want.
-              </p>
-            </div>
-            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={discardChanges} disabled={applying}>
-              Discard all
-            </Button>
-            <Button size="sm" className="h-7 gap-1 text-xs" onClick={applyChanges} disabled={applying || acceptedProposals.length === 0}>
-              {applying ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-              {applying ? "Applying…" : `Apply ${acceptedProposals.length || ""}`.trim()}
-            </Button>
-          </div>
-          <ul className="max-h-40 overflow-y-auto space-y-1">
-            {pendingProposals.map((p) => {
-              const rejected = rejectedCallIds.has(p.toolCallId);
-              const skipReason = skippedByCallId[p.toolCallId];
-              return (
-                <li key={p.toolCallId} className="rounded border border-border/60 bg-background/60 px-2 py-1.5">
-                  <label className="flex items-start gap-2 text-[11px] cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-primary"
-                      checked={!rejected}
-                      onChange={() => toggleReject(p.toolCallId)}
-                      disabled={applying}
-                    />
-                    <span className="mt-0.5 text-amber-700 dark:text-amber-400"><OpIcon kind={(p.op as any)?.kind} /></span>
-                    <span className={`min-w-0 flex-1 ${rejected ? "line-through opacity-50" : "text-foreground"}`}>
-                      {opLabel(p.op)}
-                    </span>
-                  </label>
-                  {skipReason && (
-                    <p className="mt-1 pl-6 text-[10px] font-medium text-destructive">Couldn't apply: {skipReason}</p>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+      {pendingItems.length > 0 && !isLoading && (
+        <ApplyOpsBar
+          items={pendingItems}
+          rejectedIds={rejectedItemIds}
+          onToggle={(id) => setRejectedItemIds((prev) => toggleRejected(prev, id))}
+          skippedById={skippedByItemId}
+          delta={latestDelta}
+          applying={applying}
+          onApply={applyChanges}
+          onDiscard={discardChanges}
+        />
       )}
 
       <div className="border-t border-border p-3">

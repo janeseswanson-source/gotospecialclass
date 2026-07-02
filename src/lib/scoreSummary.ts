@@ -49,6 +49,8 @@ const PENALTIES: Array<{
 ];
 
 export interface ScoreCost {
+  /** The breakdown penalty key (drives the one-click Fix wiring). */
+  key: string;
   label: string;
   /** Penalty magnitude (for sorting / emphasis), already absolute. */
   magnitude: number;
@@ -88,7 +90,7 @@ export function scoreSummary(breakdown: Breakdown): ScoreSummary {
     const active = mag > (p.threshold ?? 0);
     if (active) {
       const n = p.qualitative ? 0 : Math.max(1, Math.round(mag / magnitude(p.weight)));
-      costs.push({ label: p.cost(n), magnitude: mag });
+      costs.push({ key: p.key, label: p.cost(n), magnitude: mag });
     } else if (p.good) {
       working.push(p.good);
     }

@@ -19,6 +19,12 @@ interface Props {
   conflictIds: Set<string>;
   lockedIds?: Set<string>;
   highlightIds?: Set<string>;
+  /** Ghost preview (proposed AI edits): synthetic dashed destination blocks. */
+  ghostIds?: Set<string>;
+  /** Origins of proposed moves — faded until Apply/Discard. */
+  originIds?: Set<string>;
+  /** Blocks proposed for deletion — struck-through until Apply/Discard. */
+  deletedIds?: Set<string>;
   onBlockClick?: (b: BlockData) => void;
   onPickUp?: (id: string) => void;
   selectedId?: string | null;
@@ -27,8 +33,8 @@ interface Props {
 }
 
 export default function ScheduleStackCell({
-  blocks, conflictIds, lockedIds, highlightIds, onBlockClick, onPickUp,
-  selectedId, draggable, onDragStart,
+  blocks, conflictIds, lockedIds, highlightIds, ghostIds, originIds, deletedIds,
+  onBlockClick, onPickUp, selectedId, draggable, onDragStart,
 }: Props) {
   if (!blocks.length) return null;
   // Dedupe by subject + teacher (keep first); preserves order so the grade chip
@@ -50,6 +56,10 @@ export default function ScheduleStackCell({
   const hasAnyConflict = rows.some((r) => conflictIds.has(r.id));
   const hasAnyLocked = rows.some((r) => lockedIds?.has(r.id));
   const isHighlighted = rows.some((r) => highlightIds?.has(r.id));
+  // Ghost preview: an all-ghost cell renders dashed + non-interactive (a proposed
+  // destination); an all-origin cell fades (its content is moving away).
+  const allGhost = rows.length > 0 && rows.every((r) => ghostIds?.has(r.id));
+  const allOrigin = rows.length > 0 && rows.every((r) => originIds?.has(r.id));
   // Border-accent color comes from the first row's subject — keeps the cell
   // visually anchored to its dominant subject.
   const borderClass = getSubjectLeftBorderClass(head.subject);
@@ -58,13 +68,16 @@ export default function ScheduleStackCell({
   return (
     <div
       className={cn(
-        "group relative w-full rounded-md border bg-card text-left text-[11px] leading-tight transition-all",
+        "group relative w-full rounded-md border bg-card text-left text-[11px] leading-tight transition-all motion-reduce:transition-none",
         tintClass,
         borderClass,
-        hasAnyConflict && "ring-2 ring-destructive/60 border-destructive/50",
+        hasAnyConflict && !allGhost && "ring-2 ring-destructive/60 border-destructive/50",
         hasAnyLocked && !hasAnyConflict && "ring-1 ring-primary/30",
         isHighlighted && "ring-4 ring-sky-400 ring-offset-1 ring-offset-background z-10",
+        allGhost && "border-dashed border-2 border-primary/60 bg-primary/5 opacity-80 pointer-events-none",
+        allOrigin && "opacity-40",
       )}
+      aria-hidden={allGhost || undefined}
     >
       {/* Header: grade chip + time. */}
       <div className="flex items-center gap-1 px-1.5 pt-1 pb-0.5">
@@ -93,19 +106,25 @@ export default function ScheduleStackCell({
         {rows.map((b) => {
           const isSelected = selectedId === b.id;
           const isLocked = lockedIds?.has(b.id);
+          const isGhost = ghostIds?.has(b.id);
+          const isOrigin = originIds?.has(b.id);
+          const isDeleted = deletedIds?.has(b.id);
           const teacher = b.teacher_name ?? b.specialist_name ?? "—";
           return (
             <li
               key={b.id}
-              draggable={draggable && !isLocked}
+              draggable={draggable && !isLocked && !isGhost && !isDeleted}
               onDragStart={(e) => onDragStart?.(e, b)}
-              onClick={(e) => { e.stopPropagation(); onBlockClick?.(b); }}
+              onClick={(e) => { e.stopPropagation(); if (!isGhost) onBlockClick?.(b); }}
               className={cn(
-                "flex items-center gap-1.5 rounded px-1 py-0.5 cursor-pointer hover:bg-foreground/5 transition-colors min-w-0",
+                "flex items-center gap-1.5 rounded px-1 py-0.5 cursor-pointer hover:bg-foreground/5 transition-colors motion-reduce:transition-none min-w-0",
                 isSelected && "ring-1 ring-primary bg-primary/10",
-                draggable && !isLocked && "active:cursor-grabbing",
+                draggable && !isLocked && !isGhost && !isDeleted && "active:cursor-grabbing",
+                isGhost && "border border-dashed border-primary/50 bg-primary/5 opacity-80 cursor-default",
+                isOrigin && !isGhost && "opacity-40",
+                isDeleted && "line-through text-destructive/80 opacity-60",
               )}
-              title={`${b.subject ?? ""} · ${teacher}`}
+              title={isGhost ? `Proposed: ${b.subject ?? ""} · ${teacher}` : isDeleted ? `Proposed removal: ${b.subject ?? ""} · ${teacher}` : `${b.subject ?? ""} · ${teacher}`}
             >
               {onPickUp && draggable && !isLocked && (
                 <button

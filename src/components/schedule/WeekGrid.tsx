@@ -45,6 +45,10 @@ interface WeekGridProps {
   trayIds: Set<string>;
   highlightIds: Set<string>;
   lockedIds: Set<string>;
+  /** Ghost preview of proposed (unapplied) AI edits. */
+  ghostIds?: Set<string>;
+  originIds?: Set<string>;
+  deletedIds?: Set<string>;
   onBlockClick: (block: BlockData) => void;
   onBlockDrop: (blockId: string, newDay: string, newTime: string) => void;
   onToggleLock: (blockId: string) => void;
@@ -66,12 +70,14 @@ export default function WeekGrid(props: WeekGridProps) {
     showWeekSelector, isAbStrategy, isAaBbStrategy, hasWeekLabels, weekOptions, weekFilter, onWeekFilterChange,
     masterBlocks, specialistBlocks, teacherBlocks, trayBlocks, onTrayDragStart,
     timeSlots, recessBands, conflictIds, trayIds, highlightIds, lockedIds,
+    ghostIds, originIds, deletedIds,
     onBlockClick, onBlockDrop, onToggleLock, onNotesChange,
     specialists, teachers, filterSpecialist, onFilterSpecialist, filterTeacher, onFilterTeacher, blockingError,
   } = props;
 
   const gridCommon = {
     timeSlots, recessBands, conflictIds, highlightIds, lockedIds,
+    ghostIds, originIds, deletedIds,
     onBlockClick, onBlockDrop, onToggleLock, onNotesChange,
     notesEditable: true as const,
   };

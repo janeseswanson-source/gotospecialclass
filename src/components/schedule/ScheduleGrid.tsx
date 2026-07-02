@@ -50,11 +50,18 @@ interface ScheduleGridProps {
   /** Block IDs recently changed (e.g. by the AI editor) — rendered with a
    *  prominent "changed" highlight so edits are visible at a glance. */
   highlightIds?: Set<string>;
+  /** Ghost preview (proposed, unapplied AI edits): synthetic destination blocks. */
+  ghostIds?: Set<string>;
+  /** Origins of proposed moves — rendered faded until Apply/Discard. */
+  originIds?: Set<string>;
+  /** Blocks proposed for deletion — rendered struck-through until Apply/Discard. */
+  deletedIds?: Set<string>;
 }
 
 export default function ScheduleGrid({
   blocks, timeSlots, onBlockClick, onBlockDrop, lockedIds, onToggleLock,
   recessBands, onNotesChange, notesEditable, conflictIds, liftedIds, highlightIds,
+  ghostIds, originIds, deletedIds,
 }: ScheduleGridProps) {
   const [dragOverCell, setDragOverCell] = useState<string | null>(null);
   // Touch/keyboard "pick up to move": the block waiting for a target slot.
@@ -207,6 +214,9 @@ export default function ScheduleGrid({
                             conflictIds={conflicts}
                             lockedIds={lockedIds}
                             highlightIds={highlightIds}
+                            ghostIds={ghostIds}
+                            originIds={originIds}
+                            deletedIds={deletedIds}
                             onBlockClick={onBlockClick}
                             onPickUp={onBlockDrop ? pickUp : undefined}
                             selectedId={selectedId}

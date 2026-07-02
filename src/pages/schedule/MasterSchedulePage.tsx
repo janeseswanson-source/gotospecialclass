@@ -29,6 +29,8 @@ import ConflictResolver, { type ConflictOutcome } from "@/components/schedule/Co
 import ScheduleToolbar from "@/components/schedule/ScheduleToolbar";
 import WeekGrid from "@/components/schedule/WeekGrid";
 import { diffSchedules, diffSummary } from "@/lib/scheduleDiff";
+import ApplyOpsBar, { type OpsDelta } from "@/components/schedule/ApplyOpsBar";
+import { buildGhostOverlay, toggleRejected, acceptedOps, type PreviewOp, type ProposalItem } from "@/lib/ghostPreview";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -106,6 +108,15 @@ export default function MasterSchedulePage() {
   }, []);
   const [density, setDensity] = useState<"compact" | "fine">("compact");
 
+  // ── Ghost preview (edit-with-ai v2) ──
+  // Ops proposed by the chat panel (accepted, unapplied) — overlaid as ghosts.
+  const [chatPreviewOps, setChatPreviewOps] = useState<PreviewOp[]>([]);
+  // Ops proposed by a QualityPanel one-click Fix (page-owned Apply bar).
+  const [fixItems, setFixItems] = useState<ProposalItem[]>([]);
+  const [fixRejected, setFixRejected] = useState<Set<string>>(new Set());
+  const [fixDelta, setFixDelta] = useState<OpsDelta | null>(null);
+  const [fixApplying, setFixApplying] = useState(false);
+  const [fixingKey, setFixingKey] = useState<string | null>(null);
 
   // Locked blocks
   const [lockedIds, setLockedIds] = useState<Set<string>>(new Set());
@@ -564,6 +575,84 @@ export default function MasterSchedulePage() {
     if (changedIds.length) flagChangedBlocks(changedIds);
   }
 
+  // ── edit-with-ai v2: one-click Fix from the QualityPanel ──
+  // Conflict-type issues run the deterministic cascade (existing flow); soft
+  // issues run the scoped improve-quality engine pass and preview through the
+  // SAME ghost overlay + Apply bar as the chat.
+  async function handleFixIssue(penaltyKey: string) {
+    if (!selectedGen || fixingKey) return;
+    if (penaltyKey === "errors" || penaltyKey === "warnings") {
+      handleResolveWithAI();
+      return;
+    }
+    setFixingKey(penaltyKey);
+    try {
+      const { data, error } = await supabase.functions.invoke("improve-quality", {
+        body: { generation_id: selectedGen, focus: penaltyKey },
+      });
+      if (error || (data as any)?.error) throw new Error((data as any)?.error ?? error?.message ?? "Fix failed");
+      const d = data as { ops?: PreviewOp[]; quality_delta?: number; note?: string | null };
+      const ops = Array.isArray(d.ops) ? d.ops : [];
+      if (ops.length === 0) {
+        // Honest ceiling: the engine found no legal improving move — surface the
+        // structured reason + the named input change from the confidence signal.
+        const rec = (activeGen?.quality_confidence as any)?.recommendation as string | undefined;
+        toast({
+          title: "No safe fix available",
+          description: [d.note ?? "No legal move improves this without breaking a rule.", rec].filter(Boolean).join(" "),
+        });
+        return;
+      }
+      setFixItems(ops.map((op, i) => ({ id: `fix:${i}`, op })));
+      setFixRejected(new Set());
+      setFixDelta(typeof d.quality_delta === "number" ? { quality_delta: d.quality_delta } : null);
+    } catch (e: any) {
+      toast({ title: "Fix failed", description: e?.message ?? "Unknown error", variant: "destructive" });
+    } finally {
+      setFixingKey(null);
+    }
+  }
+
+  function clearFixProposal() {
+    setFixItems([]);
+    setFixRejected(new Set());
+    setFixDelta(null);
+  }
+
+  async function applyFixProposal() {
+    if (!selectedGen || fixApplying) return;
+    const ops = acceptedOps(fixItems, fixRejected);
+    if (ops.length === 0) return;
+    setFixApplying(true);
+    try {
+      const { data: sess } = await supabase.auth.getSession();
+      const token = sess.session?.access_token;
+      if (!token) throw new Error("Signed out — please sign in again.");
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/apply-schedule-edits`;
+      const resp = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ generation_id: selectedGen, ops }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data?.error ?? `HTTP ${resp.status}`);
+      const skipped: string[] = Array.isArray(data.skipped) ? data.skipped : [];
+      clearFixProposal();
+      await loadBlocks(selectedGen);
+      const changedIds: string[] = Array.isArray(data.changed_block_ids) ? data.changed_block_ids : [];
+      if (changedIds.length) flagChangedBlocks(changedIds);
+      toast({
+        title: skipped.length ? `Applied ${data.applied}, ${skipped.length} couldn't apply` : `Applied ${data.applied} fix${data.applied === 1 ? "" : "es"}`,
+        description: skipped.length ? skipped[0] : "The schedule has been updated.",
+        variant: skipped.length ? "destructive" : undefined,
+      });
+    } catch (e: any) {
+      toast({ title: "Couldn't apply the fix", description: e?.message ?? "Unknown error", variant: "destructive" });
+    } finally {
+      setFixApplying(false);
+    }
+  }
+
   // Power 5: the deterministic engine resolves conflicts (smallest blast radius,
   // every option SSOT-legal) and the LLM only narrates. We render the engine's
   // applied fixes + any escalations, and highlight what moved (power 4 synergy).
@@ -770,17 +859,36 @@ export default function MasterSchedulePage() {
     ? blocks
     : blocks.filter((b: any) => !b.week_label || b.week_label === weekFilter);
 
-  const filteredBySpecialist = filterSpecialist === "all" ? weekFiltered : weekFiltered.filter((b) => {
+  // ── Ghost preview overlay (edit-with-ai v2): proposed-but-unapplied ops from
+  // the chat panel and/or a QualityPanel Fix render as dashed ghosts at their
+  // destination, faded origins, and struck-through deletes. Display-only. ──
+  const previewOpsAll = useMemo(
+    () => [...chatPreviewOps, ...acceptedOps(fixItems, fixRejected)],
+    [chatPreviewOps, fixItems, fixRejected],
+  );
+  const ghostOverlay = useMemo(
+    () => buildGhostOverlay(blocks, previewOpsAll, {
+      specialistName: (id) => (id ? specialists.find((s) => s.id === id)?.name ?? null : null),
+      teacherName: (id) => (id ? teachers.find((t) => t.id === id)?.name ?? null : null),
+    }),
+    [blocks, previewOpsAll, specialists, teachers],
+  );
+  const displayBlocks = useMemo(
+    () => (ghostOverlay.ghostBlocks.length ? [...weekFiltered, ...ghostOverlay.ghostBlocks] : weekFiltered),
+    [weekFiltered, ghostOverlay],
+  );
+
+  const filteredBySpecialist = filterSpecialist === "all" ? displayBlocks : displayBlocks.filter((b) => {
     const spec = specialists.find((s) => s.name === b.specialist_name);
     return spec?.id === filterSpecialist;
   });
 
-  const filteredByTeacher = filterTeacher === "all" ? weekFiltered : weekFiltered.filter((b) => {
+  const filteredByTeacher = filterTeacher === "all" ? displayBlocks : displayBlocks.filter((b) => {
     const t = teachers.find((t) => t.name === b.teacher_name);
     return t?.id === filterTeacher;
   });
 
-  const filteredByDay = weekFiltered.filter((b) => b.day_of_week === filterDay);
+  const filteredByDay = displayBlocks.filter((b) => b.day_of_week === filterDay);
 
   if (loading) {
     return (
@@ -915,7 +1023,25 @@ export default function MasterSchedulePage() {
           confidence={activeGen.quality_confidence ?? null}
           refining={enableRefine}
           verifyReview={{ score: activeGen.verify_quality_score ?? null, summary: activeGen.verify_summary ?? null }}
+          onFixIssue={handleFixIssue}
+          fixingKey={fixingKey}
         />
+      )}
+
+      {/* ── edit-with-ai v2: page-level Apply bar for QualityPanel fixes ── */}
+      {fixItems.length > 0 && (
+        <div className="rounded-xl border border-border bg-card overflow-hidden no-print">
+          <ApplyOpsBar
+            title="Engine fix ready — preview on the grid"
+            items={fixItems}
+            rejectedIds={fixRejected}
+            onToggle={(id) => setFixRejected((prev) => toggleRejected(prev, id))}
+            delta={fixDelta}
+            applying={fixApplying}
+            onApply={applyFixProposal}
+            onDiscard={clearFixProposal}
+          />
+        </div>
       )}
 
       {/* ─── Power 6: background refinement (quietly gets better) ─── */}
@@ -1141,7 +1267,7 @@ export default function MasterSchedulePage() {
           weekOptions={weekOptions}
           weekFilter={weekFilter}
           onWeekFilterChange={setWeekFilter}
-          masterBlocks={weekFiltered}
+          masterBlocks={displayBlocks}
           specialistBlocks={filteredBySpecialist}
           teacherBlocks={filteredByTeacher}
           trayBlocks={trayBlocks}
@@ -1152,6 +1278,9 @@ export default function MasterSchedulePage() {
           trayIds={trayIds}
           highlightIds={recentChangedIds}
           lockedIds={lockedIds}
+          ghostIds={ghostOverlay.ghostIds}
+          originIds={ghostOverlay.originIds}
+          deletedIds={ghostOverlay.deletedIds}
           onBlockClick={(b) => { setEditBlock(b); setEditOpen(true); }}
           onBlockDrop={handleBlockDrop}
           onToggleLock={toggleLock}
@@ -1212,6 +1341,7 @@ export default function MasterSchedulePage() {
           onClose={() => setChatOpen(false)}
           onScheduleChanged={() => selectedGen && loadBlocks(selectedGen)}
           onApplied={flagChangedBlocks}
+          onPreviewOps={setChatPreviewOps}
         />
       )}
 
