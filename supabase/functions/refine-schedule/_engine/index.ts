@@ -169,7 +169,7 @@ interface RecessWindow {
   end: number;
 }
 
-interface Club {
+export interface Club {
   id: string;
   name: string;
   day_of_week: string | null;
@@ -1531,7 +1531,7 @@ function generateExtraRotation(
   return { blocks, preferenceViolations };
 }
 
-function addMakeupBlocks(
+export function addMakeupBlocks(
   generationId: string,
   specialists: Specialist[],
   existingBlocks: Block[],
@@ -1593,7 +1593,7 @@ function addMakeupBlocks(
 }
 
 // ─── Lunch Club blocks (from clubs table) ────────────────────────────
-function generateLunchClubBlocks(
+export function generateLunchClubBlocks(
   generationId: string,
   specialists: Specialist[],
   school: any,
@@ -1677,7 +1677,7 @@ function generateLunchClubBlocks(
 }
 
 // ─── Event Planning blocks ───────────────────────────────────────────
-function generateEventPlanningBlocks(
+export function generateEventPlanningBlocks(
   generationId: string,
   specialists: Specialist[],
   existingBlocks: Block[],
@@ -2345,11 +2345,18 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       { global: { headers: { Authorization: authHeader } } }
     );
 
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
+    // Internal service-role calls (the run-generation-job worker) skip the per-user
+    // gate; the service token they carry already bypasses RLS.
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const isInternal = !!serviceKey && authHeader.slice(7).trim() === serviceKey;
+    let userId: string | null = null;
+    if (!isInternal) {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
+      }
+      userId = user.id;
     }
-    const userId = user.id;
 
     const { school_id, locked_block_ids } = await req.json();
     if (!school_id) {
@@ -2441,30 +2448,38 @@ const __serveHandler = async (req: Request): Promise<Response> => {
     for (let i = 0; i < school_id.length; i++) quoteSeed = (quoteSeed * 31 + school_id.charCodeAt(i)) >>> 0;
     const quote = quotes[quoteSeed % quotes.length];
 
-    const { data: lastGen } = await supabase
-      .from("schedule_generations")
-      .select("version")
-      .eq("school_id", school_id)
-      .order("version", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const nextVersion = (lastGen?.version ?? 0) + 1;
-
-    const { data: generation, error: genErr } = await supabase
-      .from("schedule_generations")
-      .insert({
-        school_id,
-        version: nextVersion,
-        status: "complete",
-        quote: JSON.stringify(quote),
-        generated_at: new Date().toISOString(),
-      })
-      .select("id")
-      .single();
-
-    if (genErr || !generation) {
+    // Allocate the next version, retrying on a UNIQUE(school_id, version) race so
+    // two concurrent generations can't collide on the same version number.
+    let allocatedGen: { id: string } | null = null;
+    let nextVersion = 0;
+    for (let attempt = 0; attempt < 5 && !allocatedGen; attempt++) {
+      const { data: lastGen } = await supabase
+        .from("schedule_generations")
+        .select("version")
+        .eq("school_id", school_id)
+        .order("version", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      nextVersion = (lastGen?.version ?? 0) + 1;
+      const { data, error: genErr } = await supabase
+        .from("schedule_generations")
+        .insert({
+          school_id,
+          version: nextVersion,
+          status: "complete",
+          quote: JSON.stringify(quote),
+          generated_at: new Date().toISOString(),
+        })
+        .select("id")
+        .single();
+      if (data) { allocatedGen = data; break; }
+      const dup = !!genErr && (genErr.code === "23505" || /duplicate key|unique constraint/i.test(genErr.message ?? ""));
+      if (genErr && !dup) break; // a real error — stop retrying
+    }
+    if (!allocatedGen) {
       return new Response(JSON.stringify({ error: "Failed to create generation" }), { status: 500, headers: corsHeaders });
     }
+    const generation = allocatedGen;
 
     // Fetch locked blocks and carry them forward
     let lockedBlocks: Block[] = [];

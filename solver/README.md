@@ -31,14 +31,19 @@ curl localhost:8080/health
 All three build the `Dockerfile`. Set `SOLVER_API_KEY` to a long random string and
 give the same value to the Supabase edge function (below).
 
-**Google Cloud Run** (simplest):
+**Google Cloud Run** (recommended) — one command:
 ```sh
-cd solver
-gcloud run deploy cpsat-solver --source . --region us-central1 \
-  --memory 1Gi --cpu 2 --timeout 300 --allow-unauthenticated \
-  --set-env-vars SOLVER_API_KEY=YOUR_LONG_RANDOM_KEY
-# → prints a https URL
+cd solver && ./deploy-cloudrun.sh
 ```
+It creates a Secret Manager API key, deploys from source (`min-instances=0`, `cpu=2`,
+`memory=1Gi`, `timeout=300`), and prints the `CPSAT_SOLVER_URL` / `CPSAT_SOLVER_KEY`
+to paste into Supabase. (Manual equivalent: `gcloud run deploy cpsat-solver --source .
+--region us-central1 --cpu 2 --memory 1Gi --timeout 300 --min-instances 0
+--allow-unauthenticated --set-env-vars SOLVER_API_KEY=YOUR_LONG_RANDOM_KEY`.)
+
+**Render** — Blueprint: New + → Blueprint → this repo → Apply (reads `render.yaml`,
+auto-generates `SOLVER_API_KEY`). Or New → Web Service → Root Directory `solver`,
+Runtime Docker.
 
 **Fly.io**:
 ```sh
@@ -47,8 +52,22 @@ fly secrets set SOLVER_API_KEY=YOUR_LONG_RANDOM_KEY
 fly deploy
 ```
 
-**Render**: New → Web Service → repo, Root Directory `solver`, Runtime Docker, add
-env var `SOLVER_API_KEY`. Render injects `$PORT` automatically.
+### Cloud Run vs Render Starter — which host?
+
+| | **Cloud Run** (`min-instances=0`) | **Render Starter** |
+|---|---|---|
+| Idle cost | ~$0 (scales to zero) | ~$7/mo (always on) |
+| Cold start | ~10–15 s on the first solve after idle | none (always warm) |
+| Scaling | automatic, per-request (`cpu=2`) | fixed single instance |
+| RAM | 1 GiB (configurable) | 512 MB (free) / 512 MB+ (starter) |
+| Setup | `./deploy-cloudrun.sh` | `render.yaml` Blueprint, one click |
+| Best when | bursty/occasional generation (most schools) | steady all-day use, or you want zero cold starts |
+
+Either way, `.github/workflows/keep-warm.yml` pings `/health` every 10 min on
+weekday business hours (set the GitHub secret `CPSAT_SOLVER_URL`), so even the
+scale-to-zero Cloud Run path is warm before the first real generation of the day.
+Render **free** also spins down when idle — the same keep-warm covers it; **starter**
+never spins down, so it's the pick if you never want a cold start.
 
 ## Wire it to the app
 The new `generate-cpsat` edge function reads two Supabase secrets:
@@ -65,8 +84,12 @@ Without them, the app silently uses the metaheuristic path.
 - More CPU (`--cpu`) → faster proofs (CP-SAT parallelizes across workers).
 
 ## Scope note
-The model covers a single rotation week (`week_labels: [null]`) plus fixed
-Big-Group sessions. A/B and AA/BB two-week demand is a documented extension: pass
-`week_labels: ["A","B"]` and split the per-pair demand across weeks (TODO in the
-spec builder). The single-week solver already drives class_repeats, subject_gap,
-and clustering to their true floor — the dominant quality levers.
+The solver is now the PRIMARY generator for every school and all seven conflict
+strategies (standard, A/B, AA/BB, quick-30 per-duration grids, Big-Group `group_id`
+taught-together, extra-rotation `sessions_per_pair`, plus makeup/lunch-club/event
+post-passes appended by the edge builder). It drives class_repeats, subject_gap, and
+clustering to their true floor and proves the remaining gap. "Optimal in a few
+seconds" holds for small/medium schools; a large school (≈40+ teachers) returns a
+fully-covered, bounded-gap FEASIBLE schedule within `time_limit_s` rather than a
+certified optimum — still legal and fully covered (the hard min-sessions floor),
+just not proven optimal on the soft-preference terms.

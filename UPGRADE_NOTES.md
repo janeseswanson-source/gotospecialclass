@@ -323,10 +323,100 @@ npm run test
   consistent samples converge to the ±50% clamp and stop; nothing auto-applies.
   Full backend: **134 passed / 0 failed**; frontend **27 passed**.
 
+- **Phase 5 (done):** CP-SAT is now the PRIMARY generator for EVERY school — all
+  seven conflict strategies, every teacher/specialist input honored, objective =
+  the FULL public rubric with the school's learned weights. Branch `cpsat-complete`.
+
+  - **Solver (`solver/solver.py`).** The objective mirrors every `_scoring.ts`
+    term, each spec-weighted (learned weights drive it), scaled ×20 to integers:
+    per-(grade,specialist) coverage (subject_gap) + a per-(class,specialist)
+    placement reward + a *smaller* extra-session reward, teacher_planning,
+    subject_day_clustering, k_grade_after_780, full_week_coverage, grade_cohesion,
+    contract_min (subject minimums), cart_back_to_back (proxy), spec_dayload_stdev
+    (MAD linearized via `AddAbsEquality` around a **free per-spec center** — the
+    naïve mean-coupled form left the objective un-provable; the free-center form
+    proves OPTIMAL in ~1s), and am_pm / day_pref / planning_target rewards. New:
+    a hard `min_sessions_per_pair` floor (the edge sends 1) with a **soft retry**
+    that drops the floor and returns `coverage_relaxed:true` on a capacity wall;
+    per-duration `slots_by_grade_duration` (quick-30 mixed classes; a specialist
+    whose duration has no grid → `MODEL_INVALID` naming it, never a silent hole);
+    Big-Group `group_id` on fixed sessions (members sharing an id = ONE specialist
+    interval + one teacher interval each, counted once for clustering; same
+    slot+specialist WITHOUT a shared id stays INFEASIBLE = a genuine double-book);
+    `extra_rotation` via `sessions_per_pair` (≤ N, with day-spacing and the smaller
+    2nd-session reward); per-specialist `grade_rotation` candidate filtering. AA/BB
+    is a two-timeline solve with opaque labels — the consecutive-week cadence is a
+    calendar-mapping concern, not a solver constraint (documented in the docstring).
+
+  - **Edge builder (`generate-cpsat/`).** Extracted pure, testable
+    `buildCpsatSpec(...)` (`_spec_builder.ts`): per-duration slot grids, `["AA","BB"]`
+    for aa_bb_week / `["A","B"]` for ab_week, Big-Group fixed sessions with group_ids
+    derived the same way generate-schedule combines conflict-grade classes,
+    `sessions_per_pair` for extra_rotation, grade_rotation / uses_cart / am_pm & day
+    prefs / contract minimums / per-spec planning budget, and DEFAULT_WEIGHTS merged
+    with the school's learned weights each clamped ±50%. After the solve it appends
+    the SAME makeup / lunch_clubs / event_planning post-passes generate-schedule
+    appends (those generators are now exported and imported via `_engine`) BEFORE the
+    SSOT re-validation + scoring, so those schools stop losing blocks. Every
+    non-success path returns a typed 4xx/5xx with a machine-readable `code`
+    (`cpsat_unconfigured` / `cpsat_unreachable` / `cpsat_solver_error` /
+    `cpsat_model_invalid` / `cpsat_infeasible` / …) — nothing silently degrades.
+
+  - **Guards & tests.** `sync-engine.sh --check` fails CI on engine drift; a new
+    `.github/workflows/ci.yml` runs sync-check + Deno tests + vitest + build + solver
+    pytest. Migration `20260702000000` adds `UNIQUE(school_id, version)` on
+    `schedule_generations` and every generation inserter (generate-schedule,
+    generate-cpsat, refine-schedule) retries on the conflict. **Counts: solver
+    pytest 17 passed; Deno generate-schedule 118, `_shared` 19 (incl. Big-Group SSOT
+    exemption parity), generate-cpsat `_spec_builder` 16 (incl. a
+    computeWarnings→scoreSchedule→qualityPercent parity test); vitest 50; build OK.**
+    All §3 invariants hold: the SSOT re-validates every persisted block, the
+    Big-Group exemption is preserved end-to-end, and the AI never places blocks.
+
+- **Phase 6 (done):** CP-SAT-only async pipeline, moved SERVER-SIDE. Branch
+  `cpsat-only-pipeline`. The browser used to orchestrate best-of-N + refine itself
+  (dozens of edge calls it had to stay on the page for). Now:
+  - **Job queue.** Migration `20260702010000` adds `generation_jobs`
+    (status queued|running|polishing|complete|failed|cancelled, phase, progress
+    jsonb, best_generation_id, fallback_used/reason, error, attempts, timestamps) +
+    RLS (workspace members read/enqueue/cancel; the worker uses the service role) +
+    Realtime (REPLICA IDENTITY FULL, added to `supabase_realtime`).
+  - **Pure state machine.** `run-generation-job/_stepJob.ts` is I/O-free (every
+    effect injected): `stepJob` advances a job ONE bounded step —
+    `cpsat` (60s, 120s for > 30 teachers) → on success `refine`; on
+    **503/unreachable ONLY** → `fallback_search` (metaheuristic best-of-3) with
+    `fallback_used=true`; on a definitive solver verdict (model_invalid/infeasible)
+    → `failed`. `refine` loops until improved=false twice OR
+    `structurally_limited` OR target. A 10-min wall guard finalizes honestly;
+    cancelled is a no-op; `runInvocation` does the atomic queued→running claim +
+    optimistic `attempts` guard so a double-fire never double-runs a step. 14 unit
+    tests (happy/fallback/cancel/idempotent double-claim/wall/optimistic-guard).
+  - **Edge functions.** `enqueue-generation` (validates the user, supersedes any
+    in-flight job, inserts queued, kicks the worker) + `run-generation-job`
+    (internal-only via the service key; self-chains via `EdgeRuntime.waitUntil`;
+    sends the completion notification server-side so it fires even if the page is
+    closed). generate-cpsat / generate-schedule / refine-schedule gained an internal
+    service-role auth bypass so the worker can call them. **verify-schedule is
+    removed from the generation pipeline** (repurposed elsewhere).
+  - **Client.** `generateBestSchedule` now just enqueues + subscribes to the job
+    over Realtime (same `GenProgress` shape via the pure `mapJobProgress`, unit-tested).
+    PrepPage/StepReview show "Safe to close this page", a Cancel button, and an amber
+    "Generated with fallback engine — the optimal solver was unreachable" note with a
+    retry-with-solver button when `fallback_used`.
+  - **Admin.** AdminAICostsPage charts CP-SAT vs fallback runs + fallback rate +
+    median solve time from `generation_jobs`.
+  - **Hosting.** `solver/deploy-cloudrun.sh` (min-instances=0, cpu=2, 1Gi, timeout
+    300, key from Secret Manager); `render.yaml` documents Starter as the always-on
+    alternative; `.github/workflows/keep-warm.yml` pings `/health` every 10 min on
+    weekday business hours; the Dockerfile is cold-start-tuned (slim, prod-only deps,
+    single uvicorn worker, no access log).
+
 ## 6. Final state
 
-All phases 0–4 are merged. Tooling note: edge functions that import the Anthropic
-SDK only type-check with `deno check --node-modules-dir=auto` (the SDK is an npm
-dep); this is a pre-existing local-tooling quirk, not a code issue, and affects
-the untouched functions too. Phase 5 (a CP-SAT worker for a provable optimality
-gap) remains intentionally unstarted, behind a future flag.
+All phases 0–6 are merged. CP-SAT (`solver/` + `generate-cpsat/`) is the primary
+generator for every school when the service is configured; if it isn't (or returns
+a typed failure), the client falls back to the deterministic metaheuristic and is
+never worse off. Tooling note: edge functions that import the Anthropic SDK only
+type-check with `deno check --node-modules-dir=auto` (the SDK is an npm dep); this
+is a pre-existing local-tooling quirk, not a code issue. `generate-cpsat` does NOT
+import the SDK, so it type-checks plainly (and CI does so).

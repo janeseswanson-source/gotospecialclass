@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main, cpsat-complete]
+  pull_request:
+
+jobs:
+  # The scheduler engine is duplicated into each consumer's _engine/ copy (Lovable's
+  # deploy can't import across function dirs). Fail fast if a copy drifted from the
+  # canonical generate-schedule/ source.
+  engine-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify engine copies are in sync
+        run: bash scripts/sync-engine.sh --check
+
+  backend-deno:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: Type-check generate-cpsat (no Anthropic SDK here)
+        run: deno check supabase/functions/generate-cpsat/index.ts supabase/functions/generate-cpsat/_spec_builder.ts
+      - name: Scheduler engine tests
+        run: deno test --no-check --allow-hrtime supabase/functions/generate-schedule/
+      - name: Shared SSOT + rubric tests
+        run: |
+          deno test --no-check supabase/functions/_shared/constraints_test.ts
+          deno test --no-check supabase/functions/_shared/scoring-rubric_test.ts
+      - name: generate-cpsat spec-builder tests
+        run: deno test --no-check --allow-hrtime supabase/functions/generate-cpsat/_spec_builder_test.ts
+      - name: generation-job state-machine tests
+        run: deno test --no-check supabase/functions/run-generation-job/_stepJob_test.ts
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Unit tests (vitest)
+        run: npm run test
+      - name: Production build
+        run: npm run build
+
+  solver:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install solver dependencies
+        run: pip install -r solver/requirements.txt pytest
+      - name: CP-SAT solver tests
+        run: python -m pytest solver/test_solver.py -q

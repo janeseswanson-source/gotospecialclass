@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { logActivity } from '@/lib/activityLogger';
 import { track } from '@/lib/observability';
 import { generateBestSchedule } from '@/lib/generateBestSchedule';
+import { progressLabel } from '@/lib/genJobProgress';
 import { getStrategyTitle } from '@/lib/conflictStrategies';
 import { cn } from '@/lib/utils';
 import { SafeSection } from '@/components/SafeSection';
@@ -125,20 +126,9 @@ const StepReview = () => {
       try {
         const result = await generateBestSchedule({
           schoolId,
-          targetQuality: 99,
-          onProgress: (p) => {
-            setGenProgress(
-              p.phase === 'cpsat'
-                ? `Solving for the provably-optimal schedule… ${p.bestQuality}%`
-                : p.phase === 'search'
-                  ? `Trying schedules… best ${p.bestQuality}% (attempt ${p.attempt})`
-                  : p.phase === 'refine'
-                    ? `Improving the schedule… ${p.bestQuality}% (pass ${p.attempt})`
-                    : `Polishing with AI… ${p.currentQuality}%`,
-            );
-          },
+          onProgress: (p) => setGenProgress(progressLabel(p)),
         });
-        track('schedule_generated', { via: 'setup_wizard', quality: result.quality, attempts: result.attemptsRun, reached_target: result.reachedTarget });
+        track('schedule_generated', { via: 'setup_wizard', quality: result.quality, attempts: result.attemptsRun, reached_target: result.reachedTarget, fallback: result.fallbackUsed });
       } catch (genErr: any) {
         console.error('Generate error:', genErr);
         toast.error(genErr?.message || 'Schedule generation had an issue, but your data is saved.');

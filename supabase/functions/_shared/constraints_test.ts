@@ -197,3 +197,47 @@ Deno.test("end before start is rejected", () => {
   };
   assertEquals(violations(candidate, allBlocks, ctx), ["end_before_start"]);
 });
+
+// ─── Big-Group taught-together exemption (CP-SAT persist parity) ─────────
+// A CP-SAT Big-Group emits one block PER member teacher: same specialist, IDENTICAL
+// interval, same grade, different teachers. The SSOT must treat that as one combined
+// class (NOT a specialist double-book) or the persisted schedule would score a
+// -1000 error. This pins that exemption so generate-cpsat's fixed group_id sessions
+// survive re-validation. Verified with a fixture (per the task brief — don't assume).
+Deno.test("Big-Group: identical interval, same grade, different teachers is NOT a double-book", () => {
+  const memberA: ConstraintBlock = {
+    id: "bgA", day_of_week: "Mon", start_time: "13:00", end_time: "13:45",
+    specialist_id: "S9", teacher_id: "T1", grade: "3", subject: "PE",
+  };
+  const memberB: ConstraintBlock = {
+    id: "bgB", day_of_week: "Mon", start_time: "13:00", end_time: "13:45",
+    specialist_id: "S9", teacher_id: "T2", grade: "3", subject: "PE",
+  };
+  const bgCtx = buildConstraintContext(school, recessConfigs, [memberA, memberB]);
+  // Each member, re-validated against the full persisted set, is legal.
+  assertEquals(violations(memberA, [memberA, memberB], bgCtx), []);
+  assertEquals(violations(memberB, [memberA, memberB], bgCtx), []);
+});
+
+Deno.test("Big-Group exemption does NOT mask a genuine double-book", () => {
+  // Same specialist + identical interval but DIFFERENT grades = a real double-book
+  // (two distinct classes, not one taught-together group) — must still be flagged.
+  const g3: ConstraintBlock = {
+    id: "x3", day_of_week: "Mon", start_time: "13:00", end_time: "13:45",
+    specialist_id: "S9", teacher_id: "T1", grade: "3", subject: "PE",
+  };
+  const g4: ConstraintBlock = {
+    id: "x4", day_of_week: "Mon", start_time: "13:00", end_time: "13:45",
+    specialist_id: "S9", teacher_id: "T2", grade: "4", subject: "PE",
+  };
+  const c = buildConstraintContext(school, recessConfigs, [g3, g4]);
+  assertEquals(violations(g4, [g3, g4], c).includes("specialist_double_book"), true);
+
+  // And a PARTIAL time overlap (not identical) of the same grade is still a
+  // double-book — the exemption is only for sessions taught at the exact same time.
+  const partial: ConstraintBlock = {
+    id: "p", day_of_week: "Mon", start_time: "13:15", end_time: "14:00",
+    specialist_id: "S9", teacher_id: "T7", grade: "3", subject: "PE",
+  };
+  assertEquals(violations(partial, [g3, partial], c).includes("specialist_double_book"), true);
+});

@@ -1,0 +1,31 @@
+name: keep-solver-warm
+
+# Ping the CP-SAT solver's /health during business hours so a min-instances=0 host
+# (Cloud Run) or a spun-down free instance (Render) is warm before the first real
+# generation of the day — turning a ~15s cold start into a <1s solve. A safety net
+# for EITHER host; harmless if the solver is always-on.
+on:
+  schedule:
+    # Every 10 minutes, weekdays. GitHub cron is UTC with no timezone support; the
+    # 10:00–22:00 UTC window ≈ 06:00–18:00 America/New_York (exact during EDT; within
+    # an hour during EST). Adjust the hour range if your users are elsewhere.
+    - cron: "*/10 10-22 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping solver /health
+        env:
+          URL: ${{ secrets.CPSAT_SOLVER_URL }}
+        run: |
+          if [ -z "${URL:-}" ]; then
+            echo "CPSAT_SOLVER_URL secret is not set — nothing to warm. Skipping."
+            exit 0
+          fi
+          code="$(curl -s -m 20 -o /dev/null -w '%{http_code}' "${URL%/}/health" || echo 000)"
+          echo "GET ${URL%/}/health -> $code"
+          if [ "$code" != "200" ]; then
+            echo "::warning::solver /health returned $code (cold start in progress, or the service is down)"
+          fi

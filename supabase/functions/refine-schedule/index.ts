@@ -38,8 +38,14 @@ Deno.serve(async (req) => {
       Deno.env.get("SUPABASE_ANON_KEY")!,
       { global: { headers: { Authorization: authHeader } } },
     );
-    const { data: { user }, error: userErr } = await supabase.auth.getUser();
-    if (userErr || !user) return json(401, { error: "Unauthorized" });
+    // Internal service-role calls (the run-generation-job worker) skip the per-user
+    // gate; the service token they carry already bypasses RLS.
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    const isInternal = !!serviceKey && authHeader.slice(7).trim() === serviceKey;
+    if (!isInternal) {
+      const { data: { user }, error: userErr } = await supabase.auth.getUser();
+      if (userErr || !user) return json(401, { error: "Unauthorized" });
+    }
 
     const body = await req.json() as {
       generation_id?: string;
@@ -134,32 +140,39 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Improved → write a NEW version (atomic: the old version is never mutated).
-    const { data: lastGen } = await supabase
-      .from("schedule_generations")
-      .select("version")
-      .eq("school_id", schoolId)
-      .order("version", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    const nextVersion = (lastGen?.version ?? gen.version) + 1;
-
-    const { data: newGen, error: newGenErr } = await supabase
-      .from("schedule_generations")
-      .insert({
-        school_id: schoolId,
-        version: nextVersion,
-        status: "complete",
-        quote: gen.quote,
-        generated_at: new Date().toISOString(),
-        score_breakdown: result.scoreBreakdown,
-        winning_score: result.score,
-        quality_confidence: result.confidence,
-        refined_from_generation_id: body.generation_id,
-      })
-      .select("id")
-      .single();
-    if (newGenErr || !newGen) return json(500, { error: `Failed to create refined generation: ${newGenErr?.message}` });
+    // Improved → write a NEW version (atomic: the old version is never mutated),
+    // retrying on a UNIQUE(school_id, version) race with concurrent generations.
+    let newGen: { id: string } | null = null;
+    let nextVersion = 0;
+    for (let attempt = 0; attempt < 5 && !newGen; attempt++) {
+      const { data: lastGen } = await supabase
+        .from("schedule_generations")
+        .select("version")
+        .eq("school_id", schoolId)
+        .order("version", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      nextVersion = (lastGen?.version ?? gen.version) + 1;
+      const { data, error: newGenErr } = await supabase
+        .from("schedule_generations")
+        .insert({
+          school_id: schoolId,
+          version: nextVersion,
+          status: "complete",
+          quote: gen.quote,
+          generated_at: new Date().toISOString(),
+          score_breakdown: result.scoreBreakdown,
+          winning_score: result.score,
+          quality_confidence: result.confidence,
+          refined_from_generation_id: body.generation_id,
+        })
+        .select("id")
+        .single();
+      if (data) { newGen = data; break; }
+      const dup = !!newGenErr && (newGenErr.code === "23505" || /duplicate key|unique constraint/i.test(newGenErr.message ?? ""));
+      if (newGenErr && !dup) return json(500, { error: `Failed to create refined generation: ${newGenErr.message}` });
+    }
+    if (!newGen) return json(500, { error: "Failed to create refined generation after version-conflict retries" });
 
     const specById = Object.fromEntries(specialists.map((s) => [s.id, s]));
     // Full teacher rows (name/room/etc.) for placement-reason narration.

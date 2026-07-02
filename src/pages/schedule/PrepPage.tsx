@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { getStrategyNote, getRecommendedStrategies, type StrategyContext } from "@/lib/strategyFeasibility";
 import { analyzeContractFeasibility, type FeasibilityNote } from "@/lib/contractFeasibility";
 import { generateBestSchedule } from "@/lib/generateBestSchedule";
+import { progressLabel } from "@/lib/genJobProgress";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -322,6 +323,8 @@ export default function PrepPage() {
   }
 
   const [genProgress, setGenProgress] = useState<string>('');
+  const [genAbort, setGenAbort] = useState<AbortController | null>(null);
+  const [fallbackInfo, setFallbackInfo] = useState<{ reason?: string } | null>(null);
   const [genHistory, setGenHistory] = useState<Array<{ id: string; version: number; status: string; created_at: string }>>([]);
 
   useEffect(() => {
@@ -341,6 +344,9 @@ export default function PrepPage() {
 
   async function handleGenerate() {
     if (!selectedSchoolId) return;
+    const abort = new AbortController();
+    setGenAbort(abort);
+    setFallbackInfo(null);
     setGenerating(true);
     setGenProgress('Saving strategies…');
     try {
@@ -362,22 +368,15 @@ export default function PrepPage() {
       if (saveErr) throw saveErr;
 
       setGenProgress('Analyzing conflicts & placing blocks…');
-      // Best-of-N: keep generating until 99%+ (or the time budget), then polish
-      // the winner with Claude. Many short Edge calls avoid the CPU limit.
+      // Server-side CP-SAT-first pipeline: enqueue a job and subscribe to it over
+      // Realtime. The user can close this page — the job runs to completion regardless.
       const result = await generateBestSchedule({
         schoolId: selectedSchoolId,
-        targetQuality: 99,
-        onProgress: (p) => setGenProgress(
-          p.phase === 'cpsat'
-            ? `Solving for the provably-optimal schedule… ${p.bestQuality}%`
-            : p.phase === 'search'
-              ? `Trying schedules… best ${p.bestQuality}% (attempt ${p.attempt})`
-              : p.phase === 'refine'
-                ? `Improving the schedule… ${p.bestQuality}% (pass ${p.attempt})`
-                : `Polishing with AI… ${p.currentQuality}%`,
-        ),
+        signal: abort.signal,
+        onProgress: (p) => setGenProgress(progressLabel(p)),
       });
       setGenProgress('');
+      if (result.fallbackUsed) setFallbackInfo({ reason: result.fallbackReason });
       toast({ title: "Schedule generated!", description: `Best quality ${result.quality}%. View it on the Master Schedule page.` });
 
       const newGenId = result.generationId;
@@ -399,8 +398,13 @@ export default function PrepPage() {
       loadHistory();
     } catch (err: any) {
       setGenProgress('');
-      toast({ title: "Generation failed", description: err.message, variant: "destructive" });
+      if (err?.name === 'AbortError') {
+        toast({ title: "Generation cancelled" });
+      } else {
+        toast({ title: "Generation failed", description: err.message, variant: "destructive" });
+      }
     }
+    setGenAbort(null);
     setGenerating(false);
   }
 
@@ -636,9 +640,33 @@ export default function PrepPage() {
       </div>
 
       {generating && genProgress && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground animate-pulse">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          {genProgress}
+        <div className="space-y-2 rounded-lg border border-border bg-card px-4 py-3">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            {genProgress}
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">✓ Safe to close this page — generation runs in the background and we'll notify you when it's ready.</p>
+            {genAbort && (
+              <Button variant="ghost" size="sm" onClick={() => genAbort.abort()} className="text-xs h-7 gap-1 text-destructive shrink-0">
+                <X className="h-3 w-3" /> Cancel
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {fallbackInfo && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+          <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0 space-y-1">
+            <p className="text-sm text-amber-700 dark:text-amber-300">
+              Generated with the fallback engine — the optimal solver was unreachable{fallbackInfo.reason ? ` (${fallbackInfo.reason})` : ''}.
+            </p>
+            <Button variant="outline" size="sm" onClick={handleGenerate} disabled={generating} className="h-7 gap-1 text-xs">
+              <RefreshCw className="h-3 w-3" /> Retry with solver
+            </Button>
+          </div>
         </div>
       )}
 

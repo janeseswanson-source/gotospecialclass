@@ -48,17 +48,34 @@ for `cpsat_unconfigured` / `cpsat_unreachable`.
 
 ## What it guarantees / what it doesn't
 - **Guarantees**: legal schedule (re-validated against the SSOT before saving — it
-  never persists an illegal block), and *optimal-or-proven-gap* against the soft
-  rubric for the single rotation week.
+  never persists an illegal block), and *optimal-or-proven-gap* against the FULL
+  soft rubric (every `_scoring.ts` term) with the school's learned weights.
 - **Honest ceiling**: "optimal" is not always 100%. If your inputs force it (a
   specialist who only works 2 days, or fewer specials slots than a teacher needs for
   prep), the true best is below 100% and CP-SAT proves it — the remaining gap shows
-  up as `teacher_planning` and tells you the input to change.
-- **Scope (v1)**: single rotation week + PLC/admin locks + PLUS rotations + specialist
-  lunch. A/B and AA/BB two-week layouts and Big-Group "taught-together" sessions are
-  still best handled by the metaheuristic; the client keeps whichever scores higher,
-  so those schools are never worse off. (Both are documented extension points in
-  `solver/README.md` / `solver/solver.py`.)
+  up as `teacher_planning` and tells you the input to change. When full coverage is
+  itself impossible, the solver relaxes the coverage floor and reports
+  `coverage_relaxed: true` instead of failing.
+
+## Strategy scope — full coverage (Phase 5)
+CP-SAT is now the PRIMARY generator for **every** school and every conflict strategy,
+not a single-week special case:
+
+| Strategy        | How CP-SAT handles it |
+|-----------------|-----------------------|
+| standard        | single rotation week |
+| ab_week         | two disjoint timelines, labels `A`/`B` |
+| aa_bb_week      | two disjoint timelines, labels `AA`/`BB` (the consecutive-week cadence is calendar-mapping, not a solver constraint) |
+| quick_30        | per-duration slot grids — a 30-min specialist gets real 30-min sessions alongside 45-min ones |
+| big_group       | selected conflict-grade classes are pinned as taught-together fixed sessions (shared `group_id`) the solver keeps together |
+| extra_rotation  | a `(class, specialist)` pair may be scheduled twice, spaced across days, with a smaller reward so extras never crowd out first coverage |
+| makeup / lunch_clubs / event_planning | appended as post-passes (the same generators generate-schedule uses) before the SSOT re-validation, so these schools keep their blocks |
+
+Every teacher/specialist input is honored: PLC/admin locks, PLUS rotations, specialist
+lunch, grade rotation, `uses_cart`, AM/PM & day preferences, contractual subject
+minutes, and planning-time targets all feed the objective or its constraints. If the
+service is unconfigured or returns a typed failure (`cpsat_*` code), the client falls
+back to the in-app metaheuristic and the school is never worse off.
 
 ## Cost / tuning
 These schools solve to OPTIMAL in a few seconds. Cloud Run bills per request-second,

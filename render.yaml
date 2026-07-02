@@ -9,7 +9,11 @@ services:
     name: cpsat-solver
     runtime: docker
     rootDir: solver          # build context = the solver/ folder (its Dockerfile)
-    plan: free               # 512 MB; bump to "starter" if it ever OOMs
+    # plan: "free" (512 MB) spins down when idle → a cold start on the first solve,
+    # which the keep-warm workflow masks during business hours. For an ALWAYS-ON,
+    # never-cold, more-RAM instance switch to "starter" (see solver/README.md for the
+    # Cloud Run vs Render Starter comparison).
+    plan: free               # alternative: starter (always-on, ~$7/mo)
     healthCheckPath: /health
     autoDeploy: true         # redeploy automatically when solver/ changes on the branch
     envVars:

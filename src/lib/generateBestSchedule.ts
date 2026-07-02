@@ -1,194 +1,102 @@
-// Best-of-N schedule generation, orchestrated from the browser.
+// Schedule generation, orchestrated SERVER-SIDE (CP-SAT-first pipeline).
 //
-// WHY CLIENT-SIDE: Supabase Edge Functions have a hard CPU-time limit (~2s of
-// compute per request). The Monte Carlo solver is CPU-bound, so a single call
-// can only fit ~2 attempts before the runtime kills it — that's the "CPU error"
-// users hit when asking the server to grind for minutes. Instead we make many
-// SHORT calls: each `generate-schedule` invocation creates a fresh generation
-// with an independent random seed (seed = hash(generationId)), stays safely
-// under the CPU limit, and returns its quality. We keep the best, delete the
-// losers (schedule_blocks cascade-delete), and stop at the target quality or a
-// wall-clock budget. Then Claude's polish pass (verify-schedule) repairs the
-// best until it stops finding fixable issues.
-//
-// Net effect: "keep trying for a few minutes until 99%+, else keep the highest"
-// — with no CPU errors, because no single request does heavy work.
+// The browser used to run best-of-N + refine itself — dozens of edge calls it had
+// to stay on the page for. Now it just ENQUEUES a job (enqueue-generation) and
+// subscribes to the generation_jobs row over Realtime; run-generation-job advances
+// the job one bounded step at a time and self-chains server-side. So the user can
+// close the page mid-generation, and the pipeline (CP-SAT → deterministic refine,
+// with a metaheuristic fallback only if the solver service is unreachable) runs to
+// completion regardless.
 import { supabase } from "@/integrations/supabase/client";
-import { breakdownToPercent } from "@/lib/optimizerScore";
+import { mapJobProgress, type GenProgress, type JobRowLite } from "@/lib/genJobProgress";
 
-export interface GenProgress {
-  phase: "cpsat" | "search" | "refine" | "polish";
-  attempt: number;        // search attempt / refine pass / polish round (1-based)
-  attempts: number;       // total attempts allowed (for a progress bar)
-  currentQuality: number; // quality of the candidate just produced/refined
-  bestQuality: number;    // best quality found so far
-  elapsedMs: number;
-}
+export { mapJobProgress, type GenProgress };
 
 export interface BestScheduleResult {
   generationId: string;
   quality: number;
   attemptsRun: number;
   reachedTarget: boolean;
-  usedCPSAT: boolean;       // true if the proven-optimal CP-SAT solver produced the baseline
+  usedCPSAT: boolean;         // true unless the metaheuristic fallback produced it
+  fallbackUsed: boolean;      // the CP-SAT solver was unreachable → fallback engine
+  fallbackReason?: string;
+  jobId: string;
 }
 
 export interface BestScheduleOptions {
   schoolId: string;
-  targetQuality?: number;   // stop once a candidate hits this (default 99)
-  maxAttempts?: number;     // hard cap on search invocations (default 8)
-  timeBudgetMs?: number;    // overall wall-clock budget (default 8 min)
-  polishRounds?: number;    // max Claude polish passes on the winner (default 3)
-  refinePasses?: number;    // max deterministic refine passes (default 80)
-  refineStaleLimit?: number;// stop refining after this many no-improvement passes (default 12)
   onProgress?: (p: GenProgress) => void;
-  signal?: AbortSignal;     // optional cancel
+  signal?: AbortSignal;       // cancel: flips the job to 'cancelled'
+  /** Client-side hard cap in case Realtime AND polling both die (default 12 min). */
+  maxWaitMs?: number;
+  // Legacy fields are accepted but ignored — the server owns these now.
+  targetQuality?: number;
+  maxAttempts?: number;
+  timeBudgetMs?: number;
+  polishRounds?: number;
+  refinePasses?: number;
+  refineStaleLimit?: number;
 }
 
-async function deleteGeneration(generationId: string) {
-  // Blocks cascade via FK ON DELETE CASCADE.
-  try { await supabase.from("schedule_generations").delete().eq("id", generationId); } catch { /* best-effort */ }
-}
+const TERMINAL = new Set(["complete", "failed", "cancelled"]);
 
 export async function generateBestSchedule(opts: BestScheduleOptions): Promise<BestScheduleResult> {
-  const {
-    schoolId,
-    targetQuality = 99,
-    maxAttempts = 8,
-    timeBudgetMs = 8 * 60 * 1000,
-    polishRounds = 3,
-    refinePasses = 80,
-    refineStaleLimit = 12,
-    onProgress,
-    signal,
-  } = opts;
+  const { schoolId, onProgress, signal, maxWaitMs = 12 * 60 * 1000 } = opts;
 
-  const start = Date.now();
-  let best: { generationId: string; quality: number } | null = null;
-  let attempt = 0;
-  let lastError: string | null = null;
-  let usedCPSAT = false;
-  let cpsatOptimal = false;
+  const { data, error } = await supabase.functions.invoke("enqueue-generation", { body: { school_id: schoolId } });
+  const jobId = (data as any)?.job_id as string | undefined;
+  if (error || !jobId) throw new Error((data as any)?.error ?? error?.message ?? "Could not start schedule generation.");
 
-  // ── CP-SAT phase (PRIMARY): the off-platform OR-Tools solver is now the main
-  // generator. When configured + reachable it returns a schedule that is PROVABLY
-  // OPTIMAL against the soft rubric (clustering / class_repeats / subject_gap /
-  // k_late / teacher_planning driven to their true floor), already re-validated
-  // against the SSOT server-side. When it proves OPTIMAL we SKIP the old Monte
-  // Carlo / SA search entirely (nothing random can beat a proven optimum) — that
-  // search now runs ONLY as a fallback when the solver is unconfigured (503),
-  // unreachable, or returns a non-proven (FEASIBLE) result. The deterministic
-  // refine pass below still runs on top: it can only raise the score further by
-  // improving the secondary terms CP-SAT doesn't model (teacher AM/PM & day
-  // preferences, specialist day-load balance) and never lowers it.
-  try {
-    if (!signal?.aborted) {
-      const { data, error } = await supabase.functions.invoke("generate-cpsat", {
-        body: { school_id: schoolId },
-      });
-      const d = data as any;
-      if (!error && d?.generation_id && typeof d?.quality_percent === "number") {
-        best = { generationId: d.generation_id, quality: d.quality_percent };
-        usedCPSAT = true;
-        cpsatOptimal = d.solver_status === "OPTIMAL"; // proven best → skip MC/SA search
-        onProgress?.({
-          phase: "cpsat", attempt: 1, attempts: 1,
-          currentQuality: d.quality_percent, bestQuality: d.quality_percent, elapsedMs: Date.now() - start,
-        });
+  return await new Promise<BestScheduleResult>((resolve, reject) => {
+    let settled = false;
+    const done = (fn: () => void) => { if (settled) return; settled = true; cleanup(); fn(); };
+
+    const handle = (job: JobRowLite | null | undefined) => {
+      if (!job || settled) return;
+      onProgress?.(mapJobProgress(job));
+      if (!TERMINAL.has(job.status)) return;
+      if (job.status === "complete" && job.best_generation_id) {
+        const quality = mapJobProgress(job).bestQuality;
+        done(() => resolve({
+          generationId: job.best_generation_id!, quality,
+          attemptsRun: mapJobProgress(job).attempt, reachedTarget: quality >= 99,
+          usedCPSAT: !job.fallback_used, fallbackUsed: !!job.fallback_used,
+          fallbackReason: job.fallback_reason ?? undefined, jobId,
+        }));
+      } else if (job.status === "cancelled") {
+        done(() => reject(new DOMException("Generation cancelled", "AbortError")));
+      } else {
+        done(() => reject(new Error(job.error ?? "Generation failed")));
       }
+    };
+
+    const channel = supabase
+      .channel(`genjob:${jobId}`)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "generation_jobs", filter: `id=eq.${jobId}` },
+        (payload) => handle(payload.new as JobRowLite))
+      .subscribe();
+
+    // Poll as a safety net (Realtime can drop; also catches a terminal state that
+    // landed before the subscription attached).
+    const poll = setInterval(async () => {
+      const { data } = await supabase.from("generation_jobs").select("*").eq("id", jobId).maybeSingle();
+      handle(data as JobRowLite | null);
+    }, 2500);
+
+    supabase.from("generation_jobs").select("*").eq("id", jobId).maybeSingle().then(({ data }) => handle(data as JobRowLite | null));
+
+    const onAbort = () => {
+      supabase.from("generation_jobs").update({ status: "cancelled", error: "cancelled by user", updated_at: new Date().toISOString() }).eq("id", jobId).then(() => {});
+    };
+    if (signal) { if (signal.aborted) onAbort(); else signal.addEventListener("abort", onAbort); }
+
+    const timeout = setTimeout(() => done(() => reject(new Error("Generation timed out — check the Master Schedule; it may still finish."))), maxWaitMs);
+
+    function cleanup() {
+      clearInterval(poll);
+      clearTimeout(timeout);
+      supabase.removeChannel(channel);
+      signal?.removeEventListener("abort", onAbort);
     }
-  } catch { /* solver is optional; fall back to the metaheuristic */ }
-
-  // ── Search phase (FALLBACK): best-of-N independent MC/SA generations. Skipped
-  // entirely when CP-SAT already proved an optimum. ──
-  while (!cpsatOptimal && attempt < maxAttempts && Date.now() - start < timeBudgetMs) {
-    if (signal?.aborted) break;
-    attempt++;
-    const { data, error } = await supabase.functions.invoke("generate-schedule", {
-      body: { school_id: schoolId },
-    });
-    if (error || (data as any)?.error) {
-      lastError = (data as any)?.error ?? error?.message ?? "generation failed";
-      // Budget/transient errors: keep trying other attempts rather than aborting.
-      continue;
-    }
-    const genId = (data as any)?.generation_id as string | undefined;
-    if (!genId) { lastError = "no generation_id returned"; continue; }
-    const quality = breakdownToPercent((data as any)?.score_breakdown) ?? 0;
-
-    if (!best || quality > best.quality) {
-      const previousLoser = best?.generationId;
-      best = { generationId: genId, quality };
-      if (previousLoser) await deleteGeneration(previousLoser);
-    } else {
-      await deleteGeneration(genId); // worse than current best → discard
-    }
-
-    onProgress?.({
-      phase: "search", attempt, attempts: maxAttempts,
-      currentQuality: quality, bestQuality: best.quality, elapsedMs: Date.now() - start,
-    });
-
-    if (best.quality >= targetQuality) break;
-  }
-
-  if (!best) throw new Error(lastError ?? "Could not generate a schedule.");
-
-  // ── Refinement phase: relentlessly refine the winner with the DETERMINISTIC
-  // engine (directed repair + SA + LNS) until it reaches the target OR provably
-  // stops improving (converged). Each call writes a strictly-better NEW version
-  // and we chase the latest; many short calls accumulate unlimited total compute
-  // without ever exceeding the edge CPU limit. This is "keep trying until it is
-  // truly the best possible" — it never lowers quality and never double-books.
-  let stale = 0;
-  for (let pass = 0; pass < refinePasses && Date.now() - start < timeBudgetMs; pass++) {
-    if (signal?.aborted) break;
-    if (best.quality >= targetQuality) break;
-    const { data, error } = await supabase.functions.invoke("refine-schedule", {
-      // seed_salt = pass lets us retry a stuck version with a fresh search stream.
-      body: { generation_id: best.generationId, seed_salt: pass },
-    });
-    const d = data as any;
-    if (error || d?.error) {
-      stale++;
-      if (stale >= refineStaleLimit) break;
-      continue;
-    }
-    if (d?.improved && d?.generation_id) {
-      const old = best.generationId;
-      best = { generationId: d.generation_id, quality: typeof d.quality_percent === "number" ? d.quality_percent : best.quality };
-      if (old !== best.generationId) await deleteGeneration(old);
-      stale = 0;
-    } else {
-      stale++;
-    }
-    onProgress?.({
-      phase: "refine", attempt: pass + 1, attempts: refinePasses,
-      currentQuality: best.quality, bestQuality: best.quality, elapsedMs: Date.now() - start,
-    });
-    // Stop when the engine says capacity caps quality (structurally limited) or
-    // several passes in a row found nothing — i.e. we're at the achievable ceiling.
-    if (stale >= refineStaleLimit || d?.confidence?.assessment === "structurally_limited") break;
-  }
-
-  const reachedTarget = best.quality >= targetQuality;
-
-  // ── Polish phase: Claude repairs the winner until it stops applying fixes ──
-  for (let round = 0; round < polishRounds; round++) {
-    if (signal?.aborted) break;
-    const { data, error } = await supabase.functions.invoke("verify-schedule", {
-      body: { generation_id: best.generationId },
-    });
-    if (error || (data as any)?.error) break; // polish is best-effort; keep the schedule
-    const applied = Number((data as any)?.issues_applied ?? 0);
-    const q = Number((data as any)?.quality_score);
-    if (Number.isFinite(q)) best.quality = q;
-    onProgress?.({
-      phase: "polish", attempt: round + 1, attempts: polishRounds,
-      currentQuality: best.quality, bestQuality: best.quality, elapsedMs: Date.now() - start,
-    });
-    if (applied === 0) break; // nothing left to fix
-  }
-
-  return { generationId: best.generationId, quality: best.quality, attemptsRun: attempt, reachedTarget, usedCPSAT };
+  });
 }
