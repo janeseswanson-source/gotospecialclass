@@ -1,19 +1,26 @@
-## Fix: CP-SAT Unauthorized
+## Plan
 
-The 401 is from a stale tunnel URL, not a key mismatch. Verified locally that the current key works against the new ngrok tunnel.
+1. **Keep the existing solver key**
+   - Do not change `CPSAT_SOLVER_KEY`, since you verified the current `b246…` key works against the local solver through ngrok.
 
-## Change
+2. **Set the solver URL secret to the fresh tunnel**
+   - Update the backend runtime secret `CPSAT_SOLVER_URL` to:
+     ```text
+     https://ayaan-nonnitrogenized-undefinitely.ngrok-free.dev
+     ```
+   - This is the only required configuration change if the code already reads `CPSAT_SOLVER_URL` and `CPSAT_SOLVER_KEY` at request time.
 
-- Update the `CPSAT_SOLVER_URL` secret to:
-  `https://ayaan-nonnitrogenized-undefinitely.ngrok-free.dev`
-- Leave `CPSAT_SOLVER_KEY` unchanged (the `b246…` value).
-- No code changes; edge functions read the secret at request time, so no redeploy needed.
+3. **Retry generation**
+   - Run Generate again from the app.
+   - If it still fails, inspect the latest `generate-cpsat` / generation job logs for the exact downstream response.
 
-## Verify
+4. **If Unauthorized persists**
+   - Confirm the ngrok tunnel is still alive and still points to `127.0.0.1:8000`.
+   - Confirm the local solver still accepts the same key on `/solve`.
+   - If ngrok was restarted, update `CPSAT_SOLVER_URL` again because free tunnel URLs can change.
 
-- Retry Generate from the app.
-- If it still fails, pull `generate-cpsat` logs to see whether the solver returns 200 or a different error.
+## Technical details
 
-## Note
-
-Ngrok free tunnels change URL every restart. Whenever the tunnel is restarted, `CPSAT_SOLVER_URL` will need to be updated again.
+- No app code or database schema changes are needed for this fix.
+- The likely failure mode is runtime configuration drift: the backend is calling an old tunnel URL, or the local solver/tunnel no longer matches the configured URL.
+- Existing logs do not currently show a matching `Unauthorized` line, so the next failed Generate attempt will be the useful signal if the secret update alone does not resolve it.
