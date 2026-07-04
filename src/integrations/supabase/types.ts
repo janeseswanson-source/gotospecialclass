@@ -519,6 +519,75 @@ export type Database = {
           },
         ]
       }
+      generation_jobs: {
+        Row: {
+          attempts: number
+          best_generation_id: string | null
+          created_at: string
+          error: string | null
+          fallback_reason: string | null
+          fallback_used: boolean
+          finished_at: string | null
+          id: string
+          phase: string | null
+          progress: Json
+          requested_by: string | null
+          school_id: string
+          started_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          best_generation_id?: string | null
+          created_at?: string
+          error?: string | null
+          fallback_reason?: string | null
+          fallback_used?: boolean
+          finished_at?: string | null
+          id?: string
+          phase?: string | null
+          progress?: Json
+          requested_by?: string | null
+          school_id: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          best_generation_id?: string | null
+          created_at?: string
+          error?: string | null
+          fallback_reason?: string | null
+          fallback_used?: boolean
+          finished_at?: string | null
+          id?: string
+          phase?: string | null
+          progress?: Json
+          requested_by?: string | null
+          school_id?: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "generation_jobs_best_generation_id_fkey"
+            columns: ["best_generation_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_generations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "generation_jobs_school_id_fkey"
+            columns: ["school_id"]
+            isOneToOne: false
+            referencedRelation: "schools"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       lesson_plan_templates: {
         Row: {
           body: Json
