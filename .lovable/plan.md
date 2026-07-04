@@ -1,16 +1,13 @@
-## Plan: point CP-SAT at the Render solver and redeploy
+## Plan: redeploy the three schedule-generation edge functions
 
 ### Change
-1. Set two runtime secrets via `secrets--set_secret`:
-   - `CPSAT_SOLVER_URL` = `https://cpsat-solver.onrender.com`
-   - `CPSAT_SOLVER_KEY` = `lTrcNomrPEH7Ew/Pb0JZMS07hPPAjyAJM/uXaEhaAP8=`
-   
-   Note: `set_secret` only creates new secrets. Since we just deleted both, this will create them fresh. No trailing slash / `/solve` — `generate-cpsat` appends `/solve` itself.
+Redeploy from main via `supabase--deploy_edge_functions`:
+- `generate-cpsat`
+- `run-generation-job`
+- `generate-schedule`
 
-2. Redeploy `generate-cpsat` and `run-generation-job` via `supabase--deploy_edge_functions` so they pick up the new secrets and the latest fallback code.
+### About `SUPABASE_SERVICE_ROLE_KEY`
+It's platform-injected into every edge function automatically — it does not appear in the user-managed secrets list (`fetch_secrets` only shows user secrets). It's confirmed present in the project's Supabase configuration, so `run-generation-job` and `generate-cpsat` can use it. No action needed.
 
 ### Verify
-Retry **Generate** in the app — it should route through CP-SAT (`chosen_strategy: "cpsat_optimal"`). If Render's free instance is cold or unreachable, the client automatically falls back to the JS solver (`generate-schedule`).
-
-### Notes
-No code, migration, or UI changes.
+Retry Generate — should complete via CP-SAT (`chosen_strategy: "cpsat_optimal"`), with JS fallback if the Render solver is cold/unreachable.
