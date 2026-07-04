@@ -13,7 +13,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # App code copied last so the (slow) dependency layer stays cached.
-COPY solver.py app.py ./
+COPY solver.py app.py _memory.py ./
 
 ENV PORT=8080
 # Single uvicorn worker — CP-SAT already parallelizes internally via num_workers, so

@@ -24,20 +24,22 @@ if ! gcloud secrets describe "$SECRET_NAME" >/dev/null 2>&1; then
 fi
 
 # 2. Deploy. min-instances=0 keeps idle cost at ~zero (cold starts are covered by the
-#    keep-warm workflow); cpu=2 speeds CP-SAT proofs; timeout=300 + concurrency=4 give
-#    each solve room without letting one request monopolize an instance.
+#    keep-warm workflow); cpu=2 speeds CP-SAT proofs; timeout=300 gives each solve
+#    room. memory=2Gi + concurrency=1 keep a real (large, A/B-week) school's model
+#    from OOM-killing the worker — the 512 MB free tier crash-loops on those. The
+#    solver also reads SOLVER_MEMORY_MB to cap workers to what the RAM can hold.
 gcloud run deploy "$SERVICE" \
   --source . \
   --region "$REGION" \
   --min-instances=0 \
   --max-instances=4 \
   --cpu=2 \
-  --memory=1Gi \
+  --memory=2Gi \
   --timeout=300 \
-  --concurrency=4 \
+  --concurrency=1 \
   --allow-unauthenticated \
   --set-secrets "SOLVER_API_KEY=${SECRET_NAME}:latest" \
-  --set-env-vars "SOLVER_MAX_TIME_S=120,SOLVER_NUM_WORKERS=4"
+  --set-env-vars "SOLVER_MAX_TIME_S=120,SOLVER_NUM_WORKERS=4,SOLVER_MEMORY_MB=2048"
 
 URL="$(gcloud run services describe "$SERVICE" --region "$REGION" --format='value(status.url)')"
 echo ""

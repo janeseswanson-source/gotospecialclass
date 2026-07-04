@@ -9,6 +9,7 @@ Auth: if the env var SOLVER_API_KEY is set, requests must send
 import os
 from fastapi import FastAPI, HTTPException, Request
 from solver import solve
+from _memory import safe_worker_count
 
 app = FastAPI(title="GoToSpecialClass CP-SAT solver", version="1.0")
 
@@ -19,6 +20,10 @@ MAX_TIME_LIMIT_S = float(os.environ.get("SOLVER_MAX_TIME_S", "120"))
 # CP-SAT parallel search workers. Fewer = lower memory (safer on small/free
 # instances); more = faster proofs. The request may still override per-spec.
 NUM_WORKERS = int(os.environ.get("SOLVER_NUM_WORKERS", "4"))
+# Instance RAM in MB — drives the memory-aware worker cap so a big model degrades
+# (fewer workers) instead of OOM-crashing the container. Set this to match the host
+# (Render free = 512, Cloud Run 2Gi = 2048, Render Standard = 2048).
+MEMORY_MB = int(os.environ.get("SOLVER_MEMORY_MB", "512"))
 
 
 def _check_auth(request: Request) -> None:
@@ -48,8 +53,16 @@ async def solve_endpoint(request: Request):
         spec["time_limit_s"] = min(float(spec.get("time_limit_s", 30)), MAX_TIME_LIMIT_S)
     except (TypeError, ValueError):
         spec["time_limit_s"] = 30.0
-    # Default worker count from env unless the request explicitly set one.
+    # Default worker count from env unless the request explicitly set one, then cap
+    # it to what the instance RAM can hold for THIS model — degrade gracefully
+    # instead of OOM-crashing (which would 502 this request and restart-loop the
+    # service for everyone else).
     spec.setdefault("num_workers", NUM_WORKERS)
+    capped = safe_worker_count(spec, spec["num_workers"], MEMORY_MB)
+    if capped < spec["num_workers"]:
+        print(f"[solve] capping num_workers {spec['num_workers']} -> {capped} "
+              f"for a large model on a {MEMORY_MB} MB instance", flush=True)
+        spec["num_workers"] = capped
     try:
         result = solve(spec)
     except Exception as e:  # never leak a stack trace to the client

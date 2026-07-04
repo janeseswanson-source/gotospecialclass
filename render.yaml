@@ -9,11 +9,14 @@ services:
     name: cpsat-solver
     runtime: docker
     rootDir: solver          # build context = the solver/ folder (its Dockerfile)
-    # plan: "free" (512 MB) spins down when idle → a cold start on the first solve,
-    # which the keep-warm workflow masks during business hours. For an ALWAYS-ON,
-    # never-cold, more-RAM instance switch to "starter" (see solver/README.md for the
-    # Cloud Run vs Render Starter comparison).
-    plan: free               # alternative: starter (always-on, ~$7/mo)
+    # WARNING: "free" AND "starter" are both 512 MB. A real (large, A/B-week) school's
+    # CP-SAT model OOM-kills at 512 MB with >1 worker — the container 502s and
+    # restart-loops, breaking other generations too. For real use pick a plan with
+    # ≥2 GB RAM ("standard") OR deploy to Cloud Run 2Gi (solver/deploy-cloudrun.sh),
+    # and set SOLVER_MEMORY_MB to match. The solver caps its worker count to the RAM
+    # so a too-small instance degrades (weaker result + JS fallback) instead of
+    # crashing — but ≥2 GB is what actually lets CP-SAT solve real schools.
+    plan: free               # ⚠ 512 MB — use "standard" (2 GB) for real schools
     healthCheckPath: /health
     autoDeploy: true         # redeploy automatically when solver/ changes on the branch
     envVars:
@@ -22,4 +25,6 @@ services:
       - key: SOLVER_MAX_TIME_S
         value: "120"
       - key: SOLVER_NUM_WORKERS
-        value: "4"           # modest parallelism to stay comfortable on the free tier
+        value: "4"           # parallelism; auto-capped down to fit SOLVER_MEMORY_MB
+      - key: SOLVER_MEMORY_MB
+        value: "512"         # set to the instance RAM: 512 (free/starter) or 2048 (standard)
