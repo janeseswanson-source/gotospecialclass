@@ -1,26 +1,42 @@
 ## Plan
 
-1. **Keep the existing solver key**
-   - Do not change `CPSAT_SOLVER_KEY`, since you verified the current `b246…` key works against the local solver through ngrok.
+1. **Add safe solver-call diagnostics**
+   - Update `generate-cpsat` to log non-secret credential metadata before calling `/solve`:
+     - solver URL origin/host only
+     - whether `CPSAT_SOLVER_KEY` is present
+     - key length and first/last 4 characters only
+   - Never log the full key.
 
-2. **Set the solver URL secret to the fresh tunnel**
-   - Update the backend runtime secret `CPSAT_SOLVER_URL` to:
+2. **Log the solver response shape**
+   - When `/solve` returns an error-like response or `MODEL_INVALID`, log:
+     - HTTP status
+     - returned solver `status`
+     - first 300 characters of the solver message/body
+   - This will confirm whether the local service is receiving the expected key or returning `MODEL_INVALID` for another validation path.
+
+3. **Make solver-auth failures explicit**
+   - If the solver returns `MODEL_INVALID` with message `Unauthorized`, return a backend error like:
      ```text
-     https://ayaan-nonnitrogenized-undefinitely.ngrok-free.dev
+     CP-SAT solver authorization failed
      ```
-   - This is the only required configuration change if the code already reads `CPSAT_SOLVER_URL` and `CPSAT_SOLVER_KEY` at request time.
+   - This avoids mislabeling it as a model/spec validation problem.
 
-3. **Retry generation**
-   - Run Generate again from the app.
-   - If it still fails, inspect the latest `generate-cpsat` / generation job logs for the exact downstream response.
+4. **Deploy and retest the function**
+   - Deploy `generate-cpsat` so the diagnostics and error classification are live.
+   - Ask you to retry Generate once.
+   - Then inspect fresh logs to determine the exact mismatch.
 
-4. **If Unauthorized persists**
-   - Confirm the ngrok tunnel is still alive and still points to `127.0.0.1:8000`.
-   - Confirm the local solver still accepts the same key on `/solve`.
-   - If ngrok was restarted, update `CPSAT_SOLVER_URL` again because free tunnel URLs can change.
+5. **Apply the final auth fix from the log signal**
+   - If the key metadata shows the wrong/missing value: update `CPSAT_SOLVER_KEY` through the secure secret form.
+   - If the URL host is wrong: update `CPSAT_SOLVER_URL` again to the active ngrok URL.
+   - If the solver expects a different auth header on `/solve`: update the request header format in `generate-cpsat` and redeploy.
 
 ## Technical details
 
-- No app code or database schema changes are needed for this fix.
-- The likely failure mode is runtime configuration drift: the backend is calling an old tunnel URL, or the local solver/tunnel no longer matches the configured URL.
-- Existing logs do not currently show a matching `Unauthorized` line, so the next failed Generate attempt will be the useful signal if the secret update alone does not resolve it.
+- The app already sends `Authorization: Bearer <CPSAT_SOLVER_KEY>` to `/solve`.
+- The current user-facing error is produced when the solver returns JSON with:
+  ```text
+  status = MODEL_INVALID
+  message = Unauthorized
+  ```
+- That means the backend is reaching something at `/solve`; the remaining issue is whether it is the right tunnel, the right key value, or the exact header format expected by the local solver.
