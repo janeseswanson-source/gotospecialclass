@@ -139,7 +139,13 @@ Deno.serve(async (req) => {
       solverResp = await fetch(`${SOLVER_URL.replace(/\/$/, "")}/solve`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(SOLVER_KEY ? { Authorization: `Bearer ${SOLVER_KEY}` } : {}) },
-        body: JSON.stringify({ school_id, time_limit_s: typeof time_limit_s === "number" ? time_limit_s : 60 }),
+        // The solver is a PURE OR-Tools service with no DB access — it must receive
+        // the FULL built spec (classes, specialists, slots_by_grade, week_labels…),
+        // NOT a bare school_id. Sending {school_id} makes the solver reject the
+        // model ("School not found" / "spec must include classes"), which surfaces
+        // as a hard MODEL_INVALID failure instead of solving. This is the contract
+        // the solver/ service + all its pytest/spec-builder tests rely on.
+        body: JSON.stringify(spec),
       });
     } catch (e) {
       return fail(503, "cpsat_unreachable", `CP-SAT solver unreachable: ${e instanceof Error ? e.message : e}`);
