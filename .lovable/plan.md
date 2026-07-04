@@ -1,23 +1,27 @@
-## Plan: resolve "CP-SAT rejected the model: School not found"
+## Plan: send the solver the body it actually expects
 
-### Diagnosis
-- The `Unauthorized` error is gone — the solver is now authenticating our requests.
-- The external CP-SAT solver at `CPSAT_SOLVER_URL` returned `MODEL_INVALID` with message `"School not found"`.
-- This message is produced by the **external solver service**, not by our edge function. Our function is correctly sending the school's data in the spec payload.
-- The active school id is `8f9b400b-b235-49fa-870c-103bd2027afe`. The solver's registry does not include it.
+### Root cause
+The external CP-SAT solver at `CPSAT_SOLVER_URL` expects a minimal body:
+```json
+{ "school_id": "…", "time_limit_s": 60 }
+```
+…and looks the school up in its own datastore. Our `generate-cpsat` edge function is instead POSTing the fully-built `spec` object (which has no top-level `school_id`), so the solver returns `MODEL_INVALID: "School not found"`.
 
-### Action (no code change required)
-1. **You**: register school id `8f9b400b-b235-49fa-870c-103bd2027afe` in the CP-SAT solver service (the process at your ngrok URL).
-2. **You**: retry **Generate** from the app.
-3. **If it still fails**: come back with the new error string and I'll investigate the next layer (spec payload shape, solver logs, etc.).
+### Change (single file)
+`supabase/functions/generate-cpsat/index.ts`, in the `/solve` fetch call:
 
-### Fallback if registration isn't possible right now
-If registering the school on the solver isn't feasible in the short term, tell me and I'll switch the app to the non-CP-SAT heuristic generation path until the solver is provisioned. That would be a small code change gated behind a feature flag or a `CPSAT_ENABLED` secret.
+- Replace the body `JSON.stringify(spec)` with `JSON.stringify({ school_id, time_limit_s: typeof time_limit_s === "number" ? time_limit_s : 60 })`.
+- Leave everything else untouched:
+  - Local data loading (school, specialists, teachers, recess, clubs, weights) — still required for post-passes, mapping, validation, and persistence downstream.
+  - `buildCpsatSpec(...)` call — still needed because the returned `adminBlocks`, `plusBlocks`, `lunchBlocks`, `strategies` feed the post-pass logic.
+  - Auth header, response handling, `MODEL_INVALID` classification, block mapping, persistence, `schedule_generations` write.
 
-### Why no code change now
-The app is behaving correctly:
-- Auth header is being sent.
-- The spec includes the school payload the solver needs.
-- The error is being surfaced clearly to the user (`cpsat_model_invalid` → visible message).
+### Not doing
+- Secrets: `CPSAT_SOLVER_URL` and `CPSAT_SOLVER_KEY` are already set correctly per your message — no secret changes.
+- No changes to the spec builder, post-passes, or persistence.
+- No client/UI changes.
 
-Editing our function won't teach the external solver about a school it hasn't been told about.
+### Verify after implementation
+1. Retry **Generate** from the app.
+2. Check `generation_jobs` latest row — expect `status: complete` or, if the solver can't fit, an INFEASIBLE/NO_SOLUTION classification instead of "School not found".
+3. Tail `generate-cpsat` logs for the new `solver request` / `solver http error` / `solver model invalid` entries added earlier.
