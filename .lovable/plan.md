@@ -1,27 +1,16 @@
-## Plan: send the solver the body it actually expects
+## Plan: fall back to the JS solver by unsetting the CP-SAT secrets
 
-### Root cause
-The external CP-SAT solver at `CPSAT_SOLVER_URL` expects a minimal body:
-```json
-{ "school_id": "…", "time_limit_s": 60 }
-```
-…and looks the school up in its own datastore. Our `generate-cpsat` edge function is instead POSTing the fully-built `spec` object (which has no top-level `school_id`), so the solver returns `MODEL_INVALID: "School not found"`.
+### Why
+The current `CPSAT_SOLVER_URL` points at a placeholder solver that returns "School not found". The cleanest immediate fix is to remove the CP-SAT solver secrets so `generate-cpsat` returns `503 cpsat_unconfigured`, and the client falls back to the proven in-app JS solver (`generate-schedule`). All scheduling constraints stay intact; we just lose the CP-SAT optimality proof until a real solver URL is wired up.
 
-### Change (single file)
-`supabase/functions/generate-cpsat/index.ts`, in the `/solve` fetch call:
+### Change
+Delete two runtime secrets via the secrets tool:
+- `CPSAT_SOLVER_URL`
+- `CPSAT_SOLVER_KEY`
 
-- Replace the body `JSON.stringify(spec)` with `JSON.stringify({ school_id, time_limit_s: typeof time_limit_s === "number" ? time_limit_s : 60 })`.
-- Leave everything else untouched:
-  - Local data loading (school, specialists, teachers, recess, clubs, weights) — still required for post-passes, mapping, validation, and persistence downstream.
-  - `buildCpsatSpec(...)` call — still needed because the returned `adminBlocks`, `plusBlocks`, `lunchBlocks`, `strategies` feed the post-pass logic.
-  - Auth header, response handling, `MODEL_INVALID` classification, block mapping, persistence, `schedule_generations` write.
+No code, migration, or UI changes. The existing guard in `supabase/functions/generate-cpsat/index.ts` already returns `503 cpsat_unconfigured` when `CPSAT_SOLVER_URL` is missing, which the client treats as the signal to run the JS fallback.
 
-### Not doing
-- Secrets: `CPSAT_SOLVER_URL` and `CPSAT_SOLVER_KEY` are already set correctly per your message — no secret changes.
-- No changes to the spec builder, post-passes, or persistence.
-- No client/UI changes.
-
-### Verify after implementation
-1. Retry **Generate** from the app.
-2. Check `generation_jobs` latest row — expect `status: complete` or, if the solver can't fit, an INFEASIBLE/NO_SOLUTION classification instead of "School not found".
-3. Tail `generate-cpsat` logs for the new `solver request` / `solver http error` / `solver model invalid` entries added earlier.
+### Verify
+1. Retry **Generate** in the app.
+2. Confirm the job completes via the JS path (no more "School not found" / `cpsat_model_invalid`).
+3. When you're ready to bring CP-SAT back, re-add both secrets pointing at the real `solver/` service and generation will resume using it automatically.
