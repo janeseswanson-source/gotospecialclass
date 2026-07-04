@@ -1,16 +1,16 @@
-## Plan: fall back to the JS solver by unsetting the CP-SAT secrets
-
-### Why
-The current `CPSAT_SOLVER_URL` points at a placeholder solver that returns "School not found". The cleanest immediate fix is to remove the CP-SAT solver secrets so `generate-cpsat` returns `503 cpsat_unconfigured`, and the client falls back to the proven in-app JS solver (`generate-schedule`). All scheduling constraints stay intact; we just lose the CP-SAT optimality proof until a real solver URL is wired up.
+## Plan: point CP-SAT at the Render solver and redeploy
 
 ### Change
-Delete two runtime secrets via the secrets tool:
-- `CPSAT_SOLVER_URL`
-- `CPSAT_SOLVER_KEY`
+1. Set two runtime secrets via `secrets--set_secret`:
+   - `CPSAT_SOLVER_URL` = `https://cpsat-solver.onrender.com`
+   - `CPSAT_SOLVER_KEY` = `lTrcNomrPEH7Ew/Pb0JZMS07hPPAjyAJM/uXaEhaAP8=`
+   
+   Note: `set_secret` only creates new secrets. Since we just deleted both, this will create them fresh. No trailing slash / `/solve` — `generate-cpsat` appends `/solve` itself.
 
-No code, migration, or UI changes. The existing guard in `supabase/functions/generate-cpsat/index.ts` already returns `503 cpsat_unconfigured` when `CPSAT_SOLVER_URL` is missing, which the client treats as the signal to run the JS fallback.
+2. Redeploy `generate-cpsat` and `run-generation-job` via `supabase--deploy_edge_functions` so they pick up the new secrets and the latest fallback code.
 
 ### Verify
-1. Retry **Generate** in the app.
-2. Confirm the job completes via the JS path (no more "School not found" / `cpsat_model_invalid`).
-3. When you're ready to bring CP-SAT back, re-add both secrets pointing at the real `solver/` service and generation will resume using it automatically.
+Retry **Generate** in the app — it should route through CP-SAT (`chosen_strategy: "cpsat_optimal"`). If Render's free instance is cold or unreachable, the client automatically falls back to the JS solver (`generate-schedule`).
+
+### Notes
+No code, migration, or UI changes.
