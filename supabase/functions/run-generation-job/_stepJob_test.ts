@@ -145,12 +145,18 @@ Deno.test("fallback: CP-SAT unavailable (503) → best-of-3 search → refine, f
   assertEquals((r.update as any).best_generation_id, "s3");
 });
 
-Deno.test("hard CP-SAT error (model_invalid, NOT unavailable) → failed, no fallback", async () => {
+Deno.test("CP-SAT model verdict (model_invalid) also falls back to the JS solver", async () => {
+  // CP-SAT is an optimization layer, never a single point of failure: even a
+  // model verdict (invalid/infeasible) falls back to the proven JS solver rather
+  // than hard-failing generation. The reason records that CP-SAT rejected.
   const d = deps({ runCpsat: async () => ({ ok: false, unavailable: false, code: "cpsat_model_invalid", error: "bad spec" }) });
   const r = await stepJob(baseJob(), d);
-  assertEquals((r.update as any).status, "failed");
-  assert(String((r.update as any).error).includes("bad spec"));
-  assert(r.done && !r.chain);
+  assertEquals((r.update as any).status, "running");
+  assertEquals((r.update as any).phase, "fallback_search");
+  assertEquals((r.update as any).fallback_used, true);
+  assert(String((r.update as any).fallback_reason).includes("bad spec"));
+  assert(String((r.update as any).fallback_reason).includes("cpsat_model_invalid"));
+  assert(r.chain && !r.done);
 });
 
 Deno.test("fallback that never produces a schedule → failed", async () => {

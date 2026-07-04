@@ -83,10 +83,11 @@ export function pickTimeLimitS(teacherCount: number): number {
   return teacherCount > 30 ? 120 : 60;
 }
 
-/** Fallback policy: the metaheuristic runs ONLY when the solver service is
- *  unavailable (unconfigured / unreachable / a gateway-level solver error, or a
- *  transport failure). A definitive verdict the solver actually computed
- *  (model_invalid / infeasible / no_solution) is respected, not papered over. */
+/** Distinguishes an infrastructure failure (unconfigured / unreachable / a
+ *  gateway-level solver error, or a transport failure) from a model verdict the
+ *  solver actually computed (model_invalid / infeasible / no_solution). Both now
+ *  fall back to the metaheuristic (see stepJob) — this only shapes the reason we
+ *  record: infra failures read plainly, verdicts note that CP-SAT rejected. */
 export function isSolverUnavailable(httpStatus: number | null, code: string | null): boolean {
   if (httpStatus === 503 || httpStatus === 502 || httpStatus === 0 || httpStatus === null) return true;
   return code === "cpsat_unconfigured" || code === "cpsat_unreachable" || code === "cpsat_solver_error";
@@ -140,11 +141,16 @@ export async function stepJob(job: JobRow, deps: StepDeps): Promise<StepResult> 
       const p: JobProgress = { ...prog, phase: "cpsat", attempt: 1, attempts: 1, currentQuality: r.quality, bestQuality: r.quality, elapsedMs: elapsed };
       return { update: { status: "polishing", phase: "refine", best_generation_id: r.generationId, progress: p }, done: false, chain: true };
     }
-    if (r.unavailable) {
-      const p: JobProgress = { ...prog, phase: "search", attempt: 0, attempts: MAX_SEARCH_ATTEMPTS, searchAttempt: 0, elapsedMs: elapsed };
-      return { update: { status: "running", phase: "fallback_search", fallback_used: true, fallback_reason: r.error, progress: p }, done: false, chain: true };
-    }
-    return finish("failed", null, { ...prog, elapsedMs: elapsed }, `CP-SAT rejected the model: ${r.error}`);
+    // CP-SAT is an OPTIMIZATION layer, never a single point of failure. Whatever
+    // went wrong — unreachable/misconfigured solver OR a model verdict
+    // (invalid/infeasible/no_solution) — we fall back to the JS metaheuristic. It
+    // builds its OWN representation (so it survives any generate-cpsat spec-mapping
+    // bug) and always returns a best-effort schedule, surfacing unplaceable classes
+    // as warnings rather than hard-failing generation. `unavailable` only shapes
+    // the reason we record.
+    const reason = r.unavailable ? r.error : `CP-SAT rejected the model (${r.code}): ${r.error}`;
+    const p: JobProgress = { ...prog, phase: "search", attempt: 0, attempts: MAX_SEARCH_ATTEMPTS, searchAttempt: 0, elapsedMs: elapsed };
+    return { update: { status: "running", phase: "fallback_search", fallback_used: true, fallback_reason: reason, progress: p }, done: false, chain: true };
   }
 
   // ── Fallback: metaheuristic best-of-3 (one attempt per step) ──
