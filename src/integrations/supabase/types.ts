@@ -86,6 +86,7 @@ export type Database = {
           feature: string
           id: string
           tokens_used: number | null
+          user_id: string | null
           workspace_id: string | null
         }
         Insert: {
@@ -94,6 +95,7 @@ export type Database = {
           feature: string
           id?: string
           tokens_used?: number | null
+          user_id?: string | null
           workspace_id?: string | null
         }
         Update: {
@@ -102,6 +104,7 @@ export type Database = {
           feature?: string
           id?: string
           tokens_used?: number | null
+          user_id?: string | null
           workspace_id?: string | null
         }
         Relationships: [
@@ -516,6 +519,75 @@ export type Database = {
           },
         ]
       }
+      generation_jobs: {
+        Row: {
+          attempts: number
+          best_generation_id: string | null
+          created_at: string
+          error: string | null
+          fallback_reason: string | null
+          fallback_used: boolean
+          finished_at: string | null
+          id: string
+          phase: string | null
+          progress: Json
+          requested_by: string | null
+          school_id: string
+          started_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          best_generation_id?: string | null
+          created_at?: string
+          error?: string | null
+          fallback_reason?: string | null
+          fallback_used?: boolean
+          finished_at?: string | null
+          id?: string
+          phase?: string | null
+          progress?: Json
+          requested_by?: string | null
+          school_id: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          best_generation_id?: string | null
+          created_at?: string
+          error?: string | null
+          fallback_reason?: string | null
+          fallback_used?: boolean
+          finished_at?: string | null
+          id?: string
+          phase?: string | null
+          progress?: Json
+          requested_by?: string | null
+          school_id?: string
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "generation_jobs_best_generation_id_fkey"
+            columns: ["best_generation_id"]
+            isOneToOne: false
+            referencedRelation: "schedule_generations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "generation_jobs_school_id_fkey"
+            columns: ["school_id"]
+            isOneToOne: false
+            referencedRelation: "schools"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       lesson_plan_templates: {
         Row: {
           body: Json
@@ -813,6 +885,41 @@ export type Database = {
         }
         Relationships: []
       }
+      quotes: {
+        Row: {
+          audience: string
+          created_at: string
+          created_by: string | null
+          id: string
+          school_id: string
+          text: string
+        }
+        Insert: {
+          audience?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          school_id: string
+          text: string
+        }
+        Update: {
+          audience?: string
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          school_id?: string
+          text?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quotes_school_id_fkey"
+            columns: ["school_id"]
+            isOneToOne: false
+            referencedRelation: "schools"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       recess_lunch_config: {
         Row: {
           am_recess_end: string | null
@@ -1105,6 +1212,8 @@ export type Database = {
           rotations_start_time: string | null
           schedule_type: Database["public"]["Enums"]["schedule_type"] | null
           school_year: string | null
+          school_year_end: string | null
+          school_year_start: string | null
           setup_complete: boolean | null
           setup_step: number | null
           setup_time: number | null
@@ -1162,6 +1271,8 @@ export type Database = {
           rotations_start_time?: string | null
           schedule_type?: Database["public"]["Enums"]["schedule_type"] | null
           school_year?: string | null
+          school_year_end?: string | null
+          school_year_start?: string | null
           setup_complete?: boolean | null
           setup_step?: number | null
           setup_time?: number | null
@@ -1219,6 +1330,8 @@ export type Database = {
           rotations_start_time?: string | null
           schedule_type?: Database["public"]["Enums"]["schedule_type"] | null
           school_year?: string | null
+          school_year_end?: string | null
+          school_year_start?: string | null
           setup_complete?: boolean | null
           setup_step?: number | null
           setup_time?: number | null
@@ -1673,6 +1786,8 @@ export type Database = {
         Returns: boolean
       }
       is_workspace_member: { Args: { _workspace_id: string }; Returns: boolean }
+      pg_realtime_has_table: { Args: { p_table: string }; Returns: boolean }
+      prune_old_generations: { Args: never; Returns: number }
     }
     Enums: {
       access_source: "stripe" | "license" | "admin_override" | "enterprise"

@@ -301,7 +301,7 @@ const StepTeachers = () => {
         team: inferTeamFromGrade(t.grade),
       }) as ParsedTeacherRow);
       const warnings = mapped.filter((t) => t.preferences).map((t) => `${t.name}: note — ${t.preferences}`);
-      setPastePreview({ rows, warnings });
+      setPastePreview({ rows, warnings, headerDetected: true });
       setWarningsOpen(warnings.length > 0);
     } catch (err: any) {
       console.error('[TeacherRoster AI]', err);
