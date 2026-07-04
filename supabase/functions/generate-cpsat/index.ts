@@ -64,6 +64,26 @@ function previewMessage(value: unknown) {
   return typeof value === "string" ? value.slice(0, 300) : "";
 }
 
+/** Free-tier solver hosts (Render free / Cloud Run min-instances=0) spin down when
+ *  idle, so the first generation after a quiet period races a ~30–60s cold start.
+ *  Poll /health (no auth needed) until the container answers, so we POST the
+ *  time-limited /solve to a WARM service and get a real CP-SAT result instead of a
+ *  cold-start timeout that falls back to the JS engine. Bounded (~60s) so a solver
+ *  that is genuinely down still fails fast into the fallback. */
+async function waitForSolverWarm(baseUrl: string): Promise<boolean> {
+  const deadline = Date.now() + 60_000;
+  let delay = 2_000;
+  for (;;) {
+    try {
+      const r = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(8_000) });
+      if (r.ok) return true;
+    } catch { /* container still starting — keep polling */ }
+    if (Date.now() >= deadline) return false;
+    await new Promise((res) => setTimeout(res, delay));
+    delay = Math.min(Math.floor(delay * 1.5), 8_000);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return fail(405, "method_not_allowed", "Method not allowed");
@@ -135,13 +155,17 @@ Deno.serve(async (req) => {
     });
 
     // ── Call the CP-SAT service ──
+    const solverBase = SOLVER_URL.replace(/\/$/, "");
+    // Warm a possibly-cold host first so the solve below runs against a live
+    // container (a free-tier cold start would otherwise time the POST out).
+    await waitForSolverWarm(solverBase);
     let solverResp: Response;
     try {
       console.info("generate-cpsat solver request", {
         solver: solverUrlLabel(SOLVER_URL),
         solverKey: keySummary(SOLVER_KEY),
       });
-      solverResp = await fetch(`${SOLVER_URL.replace(/\/$/, "")}/solve`, {
+      solverResp = await fetch(`${solverBase}/solve`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(SOLVER_KEY ? { Authorization: `Bearer ${SOLVER_KEY}` } : {}) },
         // The solver is a PURE OR-Tools service with no DB access — it must receive
@@ -151,6 +175,9 @@ Deno.serve(async (req) => {
         // as a hard MODEL_INVALID failure instead of solving. This is the contract
         // the solver/ service + all its pytest/spec-builder tests rely on.
         body: JSON.stringify(spec),
+        // Cap the wait so a wedged solver can't hang the edge function — SOLVER_MAX_TIME_S
+        // defaults to 120s, so 135s leaves a margin for the solve + network.
+        signal: AbortSignal.timeout(135_000),
       });
     } catch (e) {
       return fail(503, "cpsat_unreachable", `CP-SAT solver unreachable: ${e instanceof Error ? e.message : e}`);
