@@ -26,7 +26,7 @@ async function seedTenant(admin: any, label: string): Promise<Tenant> {
   if (uErr || !created.user) throw new Error(`createUser failed: ${uErr?.message}`);
   const userId = created.user.id;
 
-  const { data: ws, error: wErr } = await admin.from("workspaces").insert({ name: `WS ${label}`, owner_id: userId } as any).select("id").single();
+  const { data: ws, error: wErr } = await admin.from("workspaces").insert({ name: `WS ${label}`, created_by: userId } as any).select("id").single();
   if (wErr || !ws) throw new Error(`workspace insert failed: ${wErr?.message}`);
   const workspaceId = (ws as any).id;
 
@@ -53,7 +53,8 @@ Deno.test("cross-tenant RLS: user B cannot read or write user A's data", opts, a
   const gen = await admin.from("schedule_generations").insert({ school_id: a.schoolId } as any).select("id").single();
   const genId = (gen.data as any)?.id;
   assert(genId, `seed generation failed: ${gen.error?.message}`);
-  await admin.from("schedule_blocks").insert({ generation_id: genId, school_id: a.schoolId, day_of_week: "Mon", start_time: "09:00:00", end_time: "09:45:00" } as any);
+  // NOTE: schedule_blocks has NO school_id column — blocks scope through their generation.
+  await admin.from("schedule_blocks").insert({ generation_id: genId, day_of_week: "Mon", start_time: "09:00:00", end_time: "09:45:00" } as any);
   await admin.from("quotes").insert({ school_id: a.schoolId, text: "secret A" } as any);
   await admin.from("specialists").insert({ school_id: a.schoolId, name: "A Specialist", subject: "Art" } as any);
 
@@ -61,11 +62,17 @@ Deno.test("cross-tenant RLS: user B cannot read or write user A's data", opts, a
   const asB = createClient(URL!, ANON!, { global: { headers: { Authorization: `Bearer ${b.token}` } }, auth: { persistSession: false } });
 
   // READS: B sees zero of A's rows on every security-critical table.
-  for (const table of ["schedule_generations", "schedule_blocks", "quotes", "specialists", "scoring_weight_profiles", "generation_jobs"]) {
+  for (const table of ["schedule_generations", "quotes", "specialists", "scoring_weight_profiles", "generation_jobs"]) {
     const { data, error } = await asB.from(table).select("*").eq("school_id", a.schoolId);
     // RLS returns an empty set (not an error) for filtered reads.
     assertEquals(error, null, `${table} read errored`);
     assertEquals((data ?? []).length, 0, `LEAK: user B read ${data?.length} ${table} rows from tenant A`);
+  }
+  // schedule_blocks scopes via generation_id (its RLS resolves school through the generation).
+  {
+    const { data, error } = await asB.from("schedule_blocks").select("*").eq("generation_id", genId);
+    assertEquals(error, null, "schedule_blocks read errored");
+    assertEquals((data ?? []).length, 0, `LEAK: user B read ${data?.length} schedule_blocks rows from tenant A`);
   }
 
   // WRITE: B cannot insert into A's school.
@@ -76,8 +83,8 @@ Deno.test("cross-tenant RLS: user B cannot read or write user A's data", opts, a
   const own = await asB.from("quotes").select("*").eq("school_id", b.schoolId);
   assertEquals(own.error, null);
 
-  // Cleanup (service role).
-  for (const t of ["schedule_blocks", "schedule_generations", "quotes", "specialists"]) {
+  // Cleanup (service role). schedule_blocks cascade-delete with their generation.
+  for (const t of ["schedule_generations", "quotes", "specialists"]) {
     await admin.from(t).delete().eq("school_id", a.schoolId);
   }
   await admin.from("schools").delete().in("id", [a.schoolId, b.schoolId]);

@@ -22,7 +22,10 @@ FILES=(
 )
 CONSUMERS=(refine-schedule resolve-conflicts-ai update-scoring-weights generate-cpsat schedule-chat improve-quality verify-schedule)
 
-transform() { sed 's|\.\./_shared/|../../_shared/|g' "$1"; }
+# Strip CRs so the sync/check is line-ending agnostic: on Windows working trees
+# git's autocrlf smudges files to CRLF while MSYS sed strips CR on read — without
+# this the --check reports full-file "drift" that git itself doesn't see.
+transform() { sed 's|\.\./_shared/|../../_shared/|g' "$1" | tr -d '\r'; }
 
 CHECK=0
 [ "${1:-}" = "--check" ] && CHECK=1
@@ -35,7 +38,7 @@ if [ "$CHECK" = "1" ]; then
       if [ ! -f "$dest/$f" ]; then
         echo "MISSING: $dest/$f"
         drift=1
-      elif ! diff -q <(transform "$SRC/$f") "$dest/$f" >/dev/null 2>&1; then
+      elif ! diff -q <(transform "$SRC/$f") <(tr -d '\r' < "$dest/$f") >/dev/null 2>&1; then
         echo "DRIFT:   $dest/$f is out of sync with $SRC/$f"
         drift=1
       fi

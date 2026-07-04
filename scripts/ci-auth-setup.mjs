@@ -53,12 +53,12 @@ async function ensureUser() {
 }
 
 async function ensureData(userId) {
-  // Workspace (reuse by owner if present).
+  // Workspace (reuse by creator if present). NOTE: the column is created_by.
   let workspaceId;
-  const { data: ws } = await admin.from("workspaces").select("id").eq("owner_id", userId).limit(1).maybeSingle();
+  const { data: ws } = await admin.from("workspaces").select("id").eq("created_by", userId).limit(1).maybeSingle();
   if (ws?.id) workspaceId = ws.id;
   else {
-    const { data: newWs, error } = await admin.from("workspaces").insert({ name: "CI Workspace", owner_id: userId }).select("id").single();
+    const { data: newWs, error } = await admin.from("workspaces").insert({ name: "CI Workspace", created_by: userId }).select("id").single();
     if (error) throw error;
     workspaceId = newWs.id;
   }
@@ -92,9 +92,10 @@ async function ensureData(userId) {
     generationId = newGen.id;
     const spec = (await admin.from("specialists").select("id").eq("school_id", schoolId).limit(1).maybeSingle()).data;
     const teacher = (await admin.from("classroom_teachers").select("id").eq("school_id", schoolId).limit(1).maybeSingle()).data;
+    // NOTE: schedule_blocks has no school_id column — blocks scope through the generation.
     await admin.from("schedule_blocks").insert([
-      { generation_id: generationId, school_id: schoolId, day_of_week: "Mon", start_time: "09:00:00", end_time: "09:45:00", subject: "Art", grade: "3", specialist_id: spec?.id ?? null, teacher_id: teacher?.id ?? null },
-      { generation_id: generationId, school_id: schoolId, day_of_week: "Wed", start_time: "10:00:00", end_time: "10:45:00", subject: "Art", grade: "4", specialist_id: spec?.id ?? null, teacher_id: teacher?.id ?? null },
+      { generation_id: generationId, day_of_week: "Mon", start_time: "09:00:00", end_time: "09:45:00", subject: "Art", grade: "3", specialist_id: spec?.id ?? null, teacher_id: teacher?.id ?? null },
+      { generation_id: generationId, day_of_week: "Wed", start_time: "10:00:00", end_time: "10:45:00", subject: "Art", grade: "4", specialist_id: spec?.id ?? null, teacher_id: teacher?.id ?? null },
     ]);
   }
   return { workspaceId, schoolId, generationId };
