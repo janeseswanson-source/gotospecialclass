@@ -1105,8 +1105,6 @@ export type Database = {
           rotations_start_time: string | null
           schedule_type: Database["public"]["Enums"]["schedule_type"] | null
           school_year: string | null
-          school_year_end: string | null
-          school_year_start: string | null
           setup_complete: boolean | null
           setup_step: number | null
           setup_time: number | null
@@ -1164,8 +1162,6 @@ export type Database = {
           rotations_start_time?: string | null
           schedule_type?: Database["public"]["Enums"]["schedule_type"] | null
           school_year?: string | null
-          school_year_end?: string | null
-          school_year_start?: string | null
           setup_complete?: boolean | null
           setup_step?: number | null
           setup_time?: number | null
@@ -1223,8 +1219,6 @@ export type Database = {
           rotations_start_time?: string | null
           schedule_type?: Database["public"]["Enums"]["schedule_type"] | null
           school_year?: string | null
-          school_year_end?: string | null
-          school_year_start?: string | null
           setup_complete?: boolean | null
           setup_step?: number | null
           setup_time?: number | null
