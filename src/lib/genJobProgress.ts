@@ -38,12 +38,19 @@ export function mapJobProgress(job: JobRowLite): GenProgress {
   };
 }
 
-/** Human progress label for the UI (same phrasing the pages used inline). */
+/** Human progress label for the UI (same phrasing the pages used inline).
+ *  A 0% best quality means "no result yet", not "terrible schedule" — showing
+ *  "… 0%" while the solver is still working reads as broken, so the % (and a
+ *  0th attempt) are omitted until there is a real number to show. */
 export function progressLabel(p: GenProgress): string {
   const fb = p.fallbackUsed ? " (fallback engine)" : "";
+  const pct = p.bestQuality > 0 ? ` ${p.bestQuality}%` : "";
+  const best = p.bestQuality > 0 ? ` best ${p.bestQuality}%` : "";
+  const attempt = p.attempt > 0 ? ` (attempt ${p.attempt})` : "";
+  const pass = p.attempt > 0 ? ` (pass ${p.attempt})` : "";
   switch (p.phase) {
-    case "cpsat": return `Solving for the provably-optimal schedule… ${p.bestQuality}%`;
-    case "search": return `Trying schedules${fb}… best ${p.bestQuality}% (attempt ${p.attempt})`;
-    case "refine": return `Improving the schedule${fb}… ${p.bestQuality}% (pass ${p.attempt})`;
+    case "cpsat": return `Solving for the provably-optimal schedule…${pct}`;
+    case "search": return `Trying schedules${fb}…${best}${attempt}`;
+    case "refine": return `Improving the schedule${fb}…${pct}${pass}`;
   }
 }

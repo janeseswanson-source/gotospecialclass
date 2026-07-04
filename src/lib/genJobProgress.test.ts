@@ -51,4 +51,20 @@ describe("progressLabel", () => {
     expect(progressLabel({ phase: "refine", attempt: 4, attempts: 5, currentQuality: 0, bestQuality: 95, elapsedMs: 0, fallbackUsed: false }))
       .toContain("Improving");
   });
+
+  it("shows the % when a real quality exists", () => {
+    expect(progressLabel({ phase: "cpsat", attempt: 1, attempts: 1, currentQuality: 92, bestQuality: 92, elapsedMs: 0, fallbackUsed: false }))
+      .toContain("92%");
+    expect(progressLabel({ phase: "search", attempt: 2, attempts: 3, currentQuality: 0, bestQuality: 80, elapsedMs: 0, fallbackUsed: false }))
+      .toContain("best 80%");
+  });
+
+  it("omits a meaningless 0% / attempt 0 while nothing has landed yet", () => {
+    const solving = progressLabel({ phase: "cpsat", attempt: 0, attempts: 1, currentQuality: 0, bestQuality: 0, elapsedMs: 0, fallbackUsed: false });
+    expect(solving).not.toContain("0%");
+    const searching = progressLabel({ phase: "search", attempt: 0, attempts: 3, currentQuality: 0, bestQuality: 0, elapsedMs: 0, fallbackUsed: true });
+    expect(searching).not.toContain("0%");
+    expect(searching).not.toContain("attempt 0");
+    expect(searching).toContain("(fallback engine)");
+  });
 });

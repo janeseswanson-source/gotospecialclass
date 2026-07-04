@@ -693,7 +693,7 @@ export default function PrepPage() {
           <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0 space-y-1">
             <p className="text-sm text-amber-700 dark:text-amber-300">
-              Generated with the fallback engine — the optimal solver was unreachable{fallbackInfo.reason ? ` (${fallbackInfo.reason})` : ''}.
+              Generated with the fallback engine — the optimal solver wasn't available{fallbackInfo.reason ? ` (${fallbackInfo.reason})` : ''}.
             </p>
             <Button variant="outline" size="sm" onClick={handleGenerate} disabled={generating || !allReady} className="h-7 gap-1 text-xs">
               <RefreshCw className="h-3 w-3" /> Retry with solver

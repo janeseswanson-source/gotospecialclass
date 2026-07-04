@@ -39,11 +39,17 @@ interface Props {
 
 /** One draggable rotation row. Extracted so `useDraggable` runs at the row level. */
 function BlockRow({
-  block, teacher, isSelected, isLocked, isGhost, isOrigin, isDeleted,
+  block, teacher, showGrade, differingEnd, isSelected, isLocked, isGhost, isOrigin, isDeleted,
   dndEnabled, isActiveDrag, onBlockClick, onPickUp,
 }: {
   block: BlockData;
   teacher: string;
+  /** Render this row's own grade chip (multi-grade stacks — the shared header
+   *  chip would mislabel the other grades' rows). */
+  showGrade: boolean;
+  /** This row ends at a different time than the header range (mixed durations
+   *  sharing a start slot) — show its own end time so the header doesn't lie. */
+  differingEnd: boolean;
   isSelected: boolean;
   isLocked: boolean;
   isGhost: boolean;
@@ -88,12 +94,22 @@ function BlockRow({
           <GripVertical className="h-3 w-3" />
         </button>
       )}
+      {showGrade && block.grade && (
+        <span className="shrink-0 rounded bg-primary/15 px-1 text-[9px] font-bold leading-[14px] text-primary uppercase">
+          {block.grade}
+        </span>
+      )}
       <span className="font-semibold text-foreground truncate shrink-0 max-w-[40%]">
         {block.subject ?? "—"}
       </span>
       <span className="text-foreground/65 truncate flex-1 min-w-0">
         {teacher}
       </span>
+      {differingEnd && (
+        <span className="shrink-0 font-mono text-[9px] text-foreground/55" title={`Ends ${formatTime(block.end_time)}`}>
+          →{formatTime(block.end_time)}
+        </span>
+      )}
       {block.room && (
         <span className="shrink-0 text-[9px] text-foreground/50">{block.room}</span>
       )}
@@ -106,21 +122,26 @@ export default function ScheduleStackCell({
   onBlockClick, onPickUp, selectedId, dndEnabled, activeDragId,
 }: Props) {
   if (!blocks.length) return null;
-  // Dedupe by subject + teacher (keep first); preserves order so the grade chip
-  // matches the visible top row.
+  // Dedupe by grade + subject + teacher (keep first); preserves order so the
+  // grade chip matches the visible top row. Grade is part of the key so two
+  // whole-grade blocks (teacher null) with the same subject in DIFFERENT grades
+  // both stay visible instead of one silently collapsing into the other.
   const seen = new Set<string>();
   const rows = blocks.filter((b) => {
-    const k = `${(b.subject ?? "").toLowerCase()}|${b.teacher_id ?? b.teacher_name ?? ""}`;
+    const k = `${b.grade ?? ""}|${(b.subject ?? "").toLowerCase()}|${b.teacher_id ?? b.teacher_name ?? ""}`;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
   });
 
-  // Header derived from the first row.
+  // Header derived from the first row. On the master grid a slot can hold blocks
+  // from SEVERAL grades — then a single header chip would mislabel the other
+  // rows, so each row carries its own grade chip instead.
   const head = rows[0];
   const start = head.start_time;
   const end = head.end_time;
-  const grade = head.grade;
+  const multiGrade = new Set(rows.map((r) => r.grade ?? "")).size > 1;
+  const grade = multiGrade ? null : head.grade;
   const week = head.week_label;
   const hasAnyConflict = rows.some((r) => conflictIds.has(r.id));
   const hasAnyLocked = rows.some((r) => lockedIds?.has(r.id));
@@ -173,6 +194,8 @@ export default function ScheduleStackCell({
             key={b.id}
             block={b}
             teacher={b.teacher_name ?? b.specialist_name ?? "—"}
+            showGrade={multiGrade}
+            differingEnd={b.end_time !== end}
             isSelected={selectedId === b.id}
             isLocked={!!lockedIds?.has(b.id)}
             isGhost={!!ghostIds?.has(b.id)}
