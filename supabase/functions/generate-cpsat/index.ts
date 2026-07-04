@@ -40,6 +40,30 @@ function fail(status: number, code: string, error: string) {
   return json(status, { error, code });
 }
 
+function solverUrlLabel(url: string | undefined) {
+  if (!url) return { configured: false };
+  try {
+    const parsed = new URL(url);
+    return { configured: true, origin: parsed.origin, host: parsed.host };
+  } catch {
+    return { configured: true, origin: "invalid-url", host: "invalid-url" };
+  }
+}
+
+function keySummary(key: string | undefined) {
+  if (!key) return { present: false, length: 0 };
+  return {
+    present: true,
+    length: key.length,
+    prefix: key.slice(0, 4),
+    suffix: key.slice(-4),
+  };
+}
+
+function previewMessage(value: unknown) {
+  return typeof value === "string" ? value.slice(0, 300) : "";
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   if (req.method !== "POST") return fail(405, "method_not_allowed", "Method not allowed");
@@ -108,6 +132,10 @@ Deno.serve(async (req) => {
     // ── Call the CP-SAT service ──
     let solverResp: Response;
     try {
+      console.info("generate-cpsat solver request", {
+        solver: solverUrlLabel(SOLVER_URL),
+        solverKey: keySummary(SOLVER_KEY),
+      });
       solverResp = await fetch(`${SOLVER_URL.replace(/\/$/, "")}/solve`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(SOLVER_KEY ? { Authorization: `Bearer ${SOLVER_KEY}` } : {}) },
@@ -118,10 +146,25 @@ Deno.serve(async (req) => {
     }
     if (!solverResp.ok) {
       const t = await solverResp.text().catch(() => "");
+      console.warn("generate-cpsat solver http error", {
+        httpStatus: solverResp.status,
+        bodyPreview: t.slice(0, 300),
+      });
+      if (solverResp.status === 401 || solverResp.status === 403) {
+        return fail(502, "cpsat_auth_failed", "CP-SAT solver authorization failed");
+      }
       return fail(502, "cpsat_solver_error", `CP-SAT solver error ${solverResp.status}: ${t.slice(0, 300)}`);
     }
     const result = await solverResp.json() as { status: string; message?: string; blocks: any[]; objective?: number; coverage_relaxed?: boolean };
     if (result.status === "MODEL_INVALID") {
+      console.warn("generate-cpsat solver model invalid", {
+        httpStatus: solverResp.status,
+        solverStatus: result.status,
+        messagePreview: previewMessage(result.message),
+      });
+      if (/unauthorized/i.test(result.message ?? "")) {
+        return fail(502, "cpsat_auth_failed", "CP-SAT solver authorization failed");
+      }
       // A spec-level error (e.g. a specialist duration with no slot grid). This is a
       // real input problem, not a transient failure — surface it, don't silently fall back.
       return fail(422, "cpsat_model_invalid", `CP-SAT rejected the model: ${result.message ?? "invalid spec"}`);
