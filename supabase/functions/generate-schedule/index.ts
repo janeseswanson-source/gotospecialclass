@@ -2339,16 +2339,22 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
     // Internal service-role calls (the run-generation-job worker) skip the per-user
-    // gate; the service token they carry already bypasses RLS.
+    // gate. Build a REAL service-role client so RLS is bypassed regardless of the
+    // key format (legacy JWT vs. new sb_secret_* keys that PostgREST won't accept
+    // as a bearer JWT when only layered on top of an anon client).
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const isInternal = !!serviceKey && authHeader.slice(7).trim() === serviceKey;
+    const token = authHeader.slice(7).trim();
+    const isInternal = !!serviceKey && token === serviceKey;
+
+    const supabase = isInternal
+      ? createClient(Deno.env.get("SUPABASE_URL")!, serviceKey!)
+      : createClient(
+          Deno.env.get("SUPABASE_URL")!,
+          Deno.env.get("SUPABASE_ANON_KEY")!,
+          { global: { headers: { Authorization: authHeader } } }
+        );
+
     let userId: string | null = null;
     if (!isInternal) {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
