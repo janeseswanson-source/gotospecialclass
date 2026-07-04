@@ -1,5 +1,6 @@
 import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer';
 import { BrandHeader, BrandFooter, BRAND_COLORS as C } from './lib/BrandHeader';
+import { PDF_BRAND } from './lib/pdfTheme';
 
 export interface PrepRow {
   question: string;
@@ -15,13 +16,13 @@ const styles = StyleSheet.create({
   page: { paddingTop: 28, paddingBottom: 40, paddingHorizontal: 32, fontSize: 10, fontFamily: 'Helvetica', color: C.ink },
   table: { borderTop: `1pt solid ${C.ink}`, borderLeft: `1pt solid ${C.ink}` },
   thead: { flexDirection: 'row', backgroundColor: C.ink },
-  th: { padding: 6, fontFamily: 'Helvetica-Bold', color: '#fff', fontSize: 10, borderRight: '1pt solid #fff' },
+  th: { padding: 6, fontFamily: 'Helvetica-Bold', color: C.white, fontSize: 10, borderRight: `1pt solid ${C.white}` },
   thAsk: { width: '45%' },
   thAns: { width: '55%' },
   row: { flexDirection: 'row', borderBottom: `1pt solid ${C.ink}`, minHeight: 40 },
   rowAlt: { backgroundColor: C.band },
   cellAsk: { width: '45%', padding: 6, borderRight: `1pt solid ${C.ink}`, fontSize: 10, color: C.ink, fontFamily: 'Helvetica-Bold' },
-  cellAns: { width: '55%', padding: 6, borderRight: `1pt solid ${C.ink}`, fontSize: 10, color: '#222' },
+  cellAns: { width: '55%', padding: 6, borderRight: `1pt solid ${C.ink}`, fontSize: 10, color: C.ink },
 });
 
 const CoordinatorPrepDoc = ({ schoolName, rows }: Props) => (
@@ -29,7 +30,7 @@ const CoordinatorPrepDoc = ({ schoolName, rows }: Props) => (
     <Page size="LETTER" style={styles.page}>
       <BrandHeader
         title="Coordinator Prep — Intake Sheet"
-        subtitle="Specialist Ops! · Pre-Setup Worksheet"
+        subtitle={`${PDF_BRAND.name} · Pre-Setup Worksheet`}
         schoolName={schoolName}
       />
 

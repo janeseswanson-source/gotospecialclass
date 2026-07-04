@@ -1,0 +1,39 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`brand token exposure > exposes a stable identity + palette surface 1`] = `
+{
+  "argb": {
+    "cream": "FFF9F4E6",
+    "gold": "FFC8A451",
+    "goldDeep": "FF9B7427",
+    "gridline": "FFDADCE2",
+    "ink": "FF1C2C4A",
+    "mute": "FF5D636F",
+    "navy": "FF2B476E",
+    "paper": "FFFAF8F5",
+    "white": "FFFFFFFF",
+    "zebra": "FFF6F7F9",
+  },
+  "attribution": "Specialist Ops!",
+  "domain": "GoToSpecialClass.com",
+  "hex": {
+    "cream": "#F9F4E6",
+    "gold": "#C8A451",
+    "goldDeep": "#9B7427",
+    "gridline": "#DADCE2",
+    "ink": "#1C2C4A",
+    "mute": "#5D636F",
+    "navy": "#2B476E",
+    "paper": "#FAF8F5",
+    "white": "#FFFFFF",
+    "zebra": "#F6F7F9",
+  },
+  "name": "Specialist Ops!",
+  "tagline": "The specials schedule, solved.",
+  "typography": {
+    "pdfSans": "Helvetica",
+    "pdfSansBold": "Helvetica-Bold",
+    "sans": "Inter",
+  },
+}
+`;

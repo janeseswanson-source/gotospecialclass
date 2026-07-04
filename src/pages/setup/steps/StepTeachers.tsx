@@ -14,13 +14,15 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle
 } from '@/components/ui/alert-dialog';
-import { Plus, Trash2, Upload, Download, Loader2, ClipboardPaste, Check, Link as LinkIcon, ChevronDown, HelpCircle } from 'lucide-react';
+import { Plus, Trash2, Upload, Download, Loader2, ClipboardPaste, Check, Link as LinkIcon, ChevronDown, HelpCircle, Sparkles } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { downloadTemplate } from '@/lib/templateDownload';
 import { parseTeacherPaste, inferTeamFromGrade, type ParseResult, type ParsedTeacherRow } from '@/lib/parseTeacherPaste';
+import { mapParsedTeachers } from '@/lib/setupImport';
+import { aiErrorToast } from '@/lib/aiError';
 
 
 interface Teacher {
@@ -94,6 +96,7 @@ const StepTeachers = () => {
   const [showPaste, setShowPaste] = useState(false);
   const [pasteText, setPasteText] = useState('');
   const [pastePreview, setPastePreview] = useState<ParseResult | null>(null);
+  const [aiParsing, setAiParsing] = useState(false);
   const [warningsOpen, setWarningsOpen] = useState(false);
   const [pendingLargeImport, setPendingLargeImport] = useState<Teacher[] | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
@@ -273,6 +276,39 @@ const StepTeachers = () => {
     setShowPaste(false);
     setPastePreview(null);
     setWarningsOpen(false);
+  };
+
+  /** AI parse — for messy rosters the deterministic parser can't split (uses the
+   *  parse-teacher-roster function on MODELS.fast, mapped through the shared
+   *  mapper so the review table matches the parser contract). */
+  const handleAiParse = async () => {
+    if (!pasteText.trim() || aiParsing) return;
+    setAiParsing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('parse-teacher-roster', { body: { text: pasteText } });
+      if (error) throw error;
+      const mapped = mapParsedTeachers(data?.teachers);
+      if (mapped.length === 0) {
+        toast.error("AI couldn't find any teachers in that text.");
+        return;
+      }
+      const rows: ParsedTeacherRow[] = mapped.map((t) => ({
+        name: t.name,
+        grade: t.grade,
+        room: t.room,
+        phone: '',
+        email: '',
+        team: inferTeamFromGrade(t.grade),
+      }) as ParsedTeacherRow);
+      const warnings = mapped.filter((t) => t.preferences).map((t) => `${t.name}: note — ${t.preferences}`);
+      setPastePreview({ rows, warnings });
+      setWarningsOpen(warnings.length > 0);
+    } catch (err: any) {
+      console.error('[TeacherRoster AI]', err);
+      aiErrorToast(err, { retry: handleAiParse, title: "Couldn't read that roster" });
+    } finally {
+      setAiParsing(false);
+    }
   };
 
   const handlePreviewParse = () => {
@@ -636,9 +672,13 @@ const StepTeachers = () => {
               </div>
             </div>
           ) : (
-            <div className="flex gap-2 justify-end">
+            <div className="flex flex-wrap gap-2 justify-end">
               <Button size="sm" variant="ghost" onClick={handleCancelPreview}>Cancel</Button>
-              <Button size="sm" onClick={handlePreviewParse} disabled={!pasteText.trim()}>Preview</Button>
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={handleAiParse} disabled={!pasteText.trim() || aiParsing}>
+                {aiParsing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                Parse with AI
+              </Button>
+              <Button size="sm" onClick={handlePreviewParse} disabled={!pasteText.trim() || aiParsing}>Preview</Button>
             </div>
           )}
         </div>

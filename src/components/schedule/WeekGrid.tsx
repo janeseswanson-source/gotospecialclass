@@ -9,7 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Printer } from "lucide-react";
 import ScheduleGrid, { type BlockData, type RecessBand } from "./ScheduleGrid";
-import ScrabbleTray from "./ScrabbleTray";
+import WeekCyclePicker from "./WeekCyclePicker";
+import type { WeekCycle } from "@/lib/weekCycle";
 
 function PrintViewButton({ label, disabled, disabledReason }: { label: string; disabled?: boolean; disabledReason?: string }) {
   return (
@@ -26,6 +27,8 @@ interface WeekGridProps {
   isAaBbStrategy: boolean;
   hasWeekLabels: boolean;
   weekOptions: { value: string; label: string }[];
+  /** The dated cycle for the WeekCyclePicker (real Mon–Fri ranges, holiday-aware). */
+  weekCycle?: WeekCycle;
   weekFilter: string;
   onWeekFilterChange: (v: string) => void;
 
@@ -34,13 +37,14 @@ interface WeekGridProps {
   specialistBlocks: BlockData[];
   teacherBlocks: BlockData[];
 
-  // Conflict tray
+  // Conflict tray (rendered inside the master grid's DndContext)
   trayBlocks: BlockData[];
-  onTrayDragStart: (e: React.DragEvent, block: BlockData) => void;
 
   // Grid rendering
   timeSlots: string[];
   recessBands: RecessBand[];
+  schoolStart?: string | null;
+  schoolEnd?: string | null;
   conflictIds: Set<string>;
   trayIds: Set<string>;
   highlightIds: Set<string>;
@@ -67,16 +71,16 @@ interface WeekGridProps {
 
 export default function WeekGrid(props: WeekGridProps) {
   const {
-    showWeekSelector, isAbStrategy, isAaBbStrategy, hasWeekLabels, weekOptions, weekFilter, onWeekFilterChange,
-    masterBlocks, specialistBlocks, teacherBlocks, trayBlocks, onTrayDragStart,
-    timeSlots, recessBands, conflictIds, trayIds, highlightIds, lockedIds,
+    showWeekSelector, isAbStrategy, isAaBbStrategy, hasWeekLabels, weekOptions, weekCycle, weekFilter, onWeekFilterChange,
+    masterBlocks, specialistBlocks, teacherBlocks, trayBlocks,
+    timeSlots, recessBands, schoolStart, schoolEnd, conflictIds, trayIds, highlightIds, lockedIds,
     ghostIds, originIds, deletedIds,
     onBlockClick, onBlockDrop, onToggleLock, onNotesChange,
     specialists, teachers, filterSpecialist, onFilterSpecialist, filterTeacher, onFilterTeacher, blockingError,
   } = props;
 
   const gridCommon = {
-    timeSlots, recessBands, conflictIds, highlightIds, lockedIds,
+    timeSlots, recessBands, schoolStart, schoolEnd, conflictIds, highlightIds, lockedIds,
     ghostIds, originIds, deletedIds,
     onBlockClick, onBlockDrop, onToggleLock, onNotesChange,
     notesEditable: true as const,
@@ -85,17 +89,22 @@ export default function WeekGrid(props: WeekGridProps) {
   return (
     <div className="flex-1 min-w-0 space-y-4">
       {showWeekSelector && (
-        <div className="flex items-center gap-2 no-print">
-          <span className="text-sm font-medium text-muted-foreground">
-            {isAbStrategy ? "A/B Week rotation:" : isAaBbStrategy ? "AA/BB rotation:" : "Week:"}
-          </span>
-          <Tabs value={weekFilter} onValueChange={onWeekFilterChange} className="w-auto">
-            <TabsList className="h-8">
-              {weekOptions.map((opt) => (
-                <TabsTrigger key={opt.value} value={opt.value} className="text-xs px-3 h-7">{opt.label}</TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
+        <div className="space-y-1.5 no-print">
+          {weekCycle && (isAbStrategy || isAaBbStrategy) ? (
+            // Dated selector — real Mon–Fri ranges, today highlighted, holiday-aware.
+            <WeekCyclePicker cycle={weekCycle} value={weekFilter} onChange={onWeekFilterChange} />
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-muted-foreground">Week:</span>
+              <Tabs value={weekFilter} onValueChange={onWeekFilterChange} className="w-auto">
+                <TabsList className="h-8">
+                  {weekOptions.map((opt) => (
+                    <TabsTrigger key={opt.value} value={opt.value} className="text-xs px-3 h-7">{opt.label}</TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            </div>
+          )}
           {!hasWeekLabels && (isAbStrategy || isAaBbStrategy) && (
             <span className="text-xs text-muted-foreground italic">
               (no per-week labels on these blocks — generator may have fallen back to a single-week layout)
@@ -112,12 +121,7 @@ export default function WeekGrid(props: WeekGridProps) {
         </TabsList>
 
         <TabsContent value="master">
-          {trayBlocks.length > 0 && (
-            <div className="mb-3">
-              <ScrabbleTray blocks={trayBlocks} onDragStart={onTrayDragStart} />
-            </div>
-          )}
-          <ScheduleGrid blocks={masterBlocks} liftedIds={trayIds} {...gridCommon} />
+          <ScheduleGrid blocks={masterBlocks} trayBlocks={trayBlocks} liftedIds={trayIds} {...gridCommon} />
         </TabsContent>
 
         <TabsContent value="specialist">

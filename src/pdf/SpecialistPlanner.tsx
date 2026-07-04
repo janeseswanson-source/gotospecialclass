@@ -2,6 +2,7 @@ import { Document, Page, Text, View, Image, StyleSheet } from '@react-pdf/render
 import { addDays, formatWeekHeader, formatDayHeader } from './lib/weekDates';
 import { getDayLabelFor, type SchoolCalendarEvent } from './lib/holidays';
 import { pickQuoteForWeek } from './lib/quotes';
+import { PDF, PDF_BRAND, pdfSubjectColors } from './lib/pdfTheme';
 import logoAsset from '@/assets/logo.png.asset.json';
 
 const LOGO_URL = (() => {
@@ -45,33 +46,28 @@ export interface SpecialistPlannerProps {
   includeNotesBox?: boolean;
   /** Approved school calendar events — drive HOLIDAY/PD overlays. */
   calendarEvents?: SchoolCalendarEvent[];
+  /** The chosen (AI or fallback) motivational quote for the footer. Falls back
+   *  to the deterministic weekly pick when not supplied. */
+  quote?: string | null;
 }
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 
-function getSubjectColors(subject: string): { accent: string; light: string } {
-  const s = subject.toLowerCase();
-  if (s.includes('art')) return { accent: '#D97706', light: '#FFF8F0' };
-  if (s.includes('music')) return { accent: '#2563EB', light: '#EFF6FF' };
-  if (s.includes('pe') || s.includes('physical')) return { accent: '#16A34A', light: '#F0FDF4' };
-  if (s.includes('library') || s.includes('media')) return { accent: '#92400E', light: '#FEF9EC' };
-  if (s.includes('spanish') || s.includes('language') || s.includes('foreign')) return { accent: '#DC2626', light: '#FEF2F2' };
-  if (s.includes('stem') || s.includes('science')) return { accent: '#0369A1', light: '#F0F9FF' };
-  if (s.includes('tech') || s.includes('computer')) return { accent: '#7C3AED', light: '#F5F3FF' };
-  if (s.includes('drama') || s.includes('theater')) return { accent: '#9333EA', light: '#FDF4FF' };
-  if (s.includes('dance')) return { accent: '#BE185D', light: '#FFF1F2' };
-  return { accent: '#C5A55A', light: '#FBF5E6' };
-}
+// Subject colors come from the shared brand band (same hue as grid + xlsx).
+const getSubjectColors = pdfSubjectColors;
 
 const C = {
-  ink: '#1B2A4A',
-  gold: '#C5A55A',
-  border: '#cfd3dc',
-  borderLight: '#e6e8ee',
-  mute: '#6b7280',
-  band: '#FBF5E6',
-  open: '#9aa1ad',
-  stripe: 'rgba(197,165,90,0.25)',
+  ink: PDF.ink,
+  navy: PDF.navy,
+  gold: PDF.gold,
+  border: PDF.border,
+  borderLight: PDF.borderLight,
+  mute: PDF.mute,
+  band: PDF.band,
+  zebra: PDF.zebra,
+  white: PDF.white,
+  open: PDF.mute,
+  stripe: 'rgba(200,164,81,0.25)',
 };
 
 const styles = StyleSheet.create({
@@ -89,8 +85,8 @@ const styles = StyleSheet.create({
   notesLabel: { fontSize: 9, fontWeight: 'bold', marginBottom: 6 },
   notesLine: { borderBottom: `0.5pt solid ${C.border}`, height: 12 },
 
-  gridHeader: { flexDirection: 'row', backgroundColor: C.ink, color: '#fff' },
-  gridHeaderCell: { padding: 4, fontSize: 8, fontWeight: 'bold', textAlign: 'center', borderRight: '0.5pt solid #2c3a5a' },
+  gridHeader: { flexDirection: 'row', backgroundColor: C.ink, color: C.white },
+  gridHeaderCell: { padding: 4, fontSize: 8, fontWeight: 'bold', textAlign: 'center', borderRight: `0.5pt solid ${C.navy}` },
   timeColHeader: { width: 60 },
   dayColHeader: { flex: 1 },
 
@@ -206,7 +202,7 @@ function renderCellContent(b: PlannerBlock | undefined, noteNumber?: number) {
 }
 
 function PlannerPage({
-  specialist, blocks, monday, weekLabel, schoolName, schoolYear, recessConfig, includeNotesBox, calendarEvents,
+  specialist, blocks, monday, weekLabel, schoolName, schoolYear, recessConfig, includeNotesBox, calendarEvents, quote: quoteProp,
 }: {
   specialist: { id: string; name: string; subject: string };
   blocks: PlannerBlock[];
@@ -217,6 +213,7 @@ function PlannerPage({
   recessConfig: RecessRow[];
   includeNotesBox?: boolean;
   calendarEvents?: SchoolCalendarEvent[];
+  quote?: string | null;
 }) {
   // Filter to this specialist + this week label
   const mine = blocks.filter((b) => {
@@ -227,7 +224,7 @@ function PlannerPage({
   });
   const slots = dedupeSlots(mine);
   const dayLabels = DAYS.map((_, i) => getDayLabelFor(addDays(monday, i), calendarEvents));
-  const quote = pickQuoteForWeek(monday);
+  const quote = (quoteProp && quoteProp.trim()) || pickQuoteForWeek(monday);
   const { accent } = getSubjectColors(specialist.subject);
   const totalSlots = slots.length * 5;
   const filledSlots = mine.filter((b) => {
@@ -324,14 +321,14 @@ function PlannerPage({
             );
           }
           return (
-            <View key={idx} style={[styles.row, idx % 2 === 1 ? { backgroundColor: '#F7F8FA' } : {}]}>
-              <View style={[styles.timeCell, idx % 2 === 1 ? { backgroundColor: '#F7F8FA' } : {}]}><Text>{fmtTime(slot.start)} – {fmtTime(slot.end)}</Text></View>
+            <View key={idx} style={[styles.row, idx % 2 === 1 ? { backgroundColor: C.zebra } : {}]}>
+              <View style={[styles.timeCell, idx % 2 === 1 ? { backgroundColor: C.zebra } : {}]}><Text>{fmtTime(slot.start)} – {fmtTime(slot.end)}</Text></View>
               {DAYS.map((day) => {
                 const block = mine.find((b) => b.day_of_week === day && b.start_time === slot.start);
                 const n = block ? noteNumberByBlock.get(block) : undefined;
                 const isFilled = block && !(block.subject || '').toLowerCase().includes('planning') && !(block.subject || '').toLowerCase().includes('plc');
                 return (
-                  <View key={day} style={[styles.dayCell, isFilled ? { borderTopColor: accent, borderTopWidth: 1.5 } : {}, idx % 2 === 1 ? { backgroundColor: '#F7F8FA' } : {}]}>
+                  <View key={day} style={[styles.dayCell, isFilled ? { borderTopColor: accent, borderTopWidth: 1.5 } : {}, idx % 2 === 1 ? { backgroundColor: C.zebra } : {}]}>
                     {renderCellContent(block, n)}
                   </View>
                 );
@@ -411,11 +408,13 @@ function PlannerPage({
         ))}
       </View>
 
-      {/* Footer */}
+      {/* Footer — shared anatomy: quote (center) · week pill · brand + page numbers */}
       <View style={styles.footer} fixed>
-        <Text style={styles.footerQuote}>{quote}</Text>
+        <Text style={styles.footerQuote}>"{quote}"</Text>
         {weekLabel && <Text style={[styles.weekPill, { marginRight: 8 }]}>{weekLabel} WEEK</Text>}
-        <Text style={{ fontSize: 7.5, color: C.mute }}>GoToSpecialClass.com · Specialist Ops!</Text>
+        <Text style={{ fontSize: 7.5, color: C.mute }}>
+          {PDF_BRAND.domain} · {PDF_BRAND.name} · <Text render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
+        </Text>
       </View>
     </Page>
   );

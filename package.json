@@ -10,7 +10,10 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:a11y": "playwright test",
+    "ci:auth-setup": "node scripts/ci-auth-setup.mjs",
+    "lhci:authed": "lhci autorun --config=lighthouserc.authed.json"
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "^2.0.48",
@@ -89,7 +92,10 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.10.1",
     "@eslint/js": "^9.32.0",
+    "@lhci/cli": "^0.14.0",
+    "@playwright/test": "^1.48.2",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.0.0",
     "@tailwindcss/typography": "^0.5.16",

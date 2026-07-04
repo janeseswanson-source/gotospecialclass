@@ -25,6 +25,10 @@ export interface SchoolSetupData {
   setupTime: number;
   gradeTimeConfig: Record<string, { passingTime?: number; resetTime?: number }>;
   schoolYear: string;
+  /** Explicit first/last instructional day (ISO "YYYY-MM-DD"). Optional — the
+   *  week cycle falls back to parsing `schoolYear` when these are blank. */
+  schoolYearStart: string;
+  schoolYearEnd: string;
   notes: string;
   gradesServed: string[];
   scheduleType: 'whole_school' | 'staggered';
@@ -86,6 +90,8 @@ const defaultData: SchoolSetupData = {
   setupTime: 15,
   gradeTimeConfig: {},
   schoolYear: '2025-2026',
+  schoolYearStart: '',
+  schoolYearEnd: '',
   notes: '',
   gradesServed: [],
   scheduleType: 'whole_school',
@@ -208,6 +214,12 @@ export const SetupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (school.start_time) seed.startTime = String(school.start_time).slice(0, 5);
           if (school.end_time) seed.endTime = String(school.end_time).slice(0, 5);
           if (school.school_year) seed.schoolYear = school.school_year;
+          if ((school as { school_year_start?: string | null }).school_year_start) {
+            seed.schoolYearStart = String((school as { school_year_start?: string | null }).school_year_start).slice(0, 10);
+          }
+          if ((school as { school_year_end?: string | null }).school_year_end) {
+            seed.schoolYearEnd = String((school as { school_year_end?: string | null }).school_year_end).slice(0, 10);
+          }
           if (typeof school.class_duration === 'number') seed.classDuration = school.class_duration;
           if (typeof school.planning_minutes === 'number') seed.planningMinutes = school.planning_minutes;
           if (typeof school.lunch_minutes === 'number') seed.lunchMinutes = school.lunch_minutes;

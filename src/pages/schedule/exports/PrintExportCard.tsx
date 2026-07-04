@@ -8,6 +8,7 @@ import AdminExportModal from './AdminExportModal';
 interface Props {
   specialists: { id: string; name: string; subject: string }[];
   blocks: any[];
+  schoolId?: string | null;
   schoolName?: string;
   schoolYear?: string;
   recessConfig?: any[];
@@ -15,7 +16,7 @@ interface Props {
   clubs?: any[];
 }
 
-export const PrintExportCard = ({ specialists, blocks, schoolName, schoolYear, recessConfig, teachers, clubs }: Props) => {
+export const PrintExportCard = ({ specialists, blocks, schoolId, schoolName, schoolYear, recessConfig, teachers, clubs }: Props) => {
   const [specOpen, setSpecOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
 
@@ -54,6 +55,7 @@ export const PrintExportCard = ({ specialists, blocks, schoolName, schoolYear, r
         onOpenChange={setSpecOpen}
         specialists={specialists}
         blocks={blocks}
+        schoolId={schoolId}
         schoolName={schoolName}
         schoolYear={schoolYear}
         recessConfig={recessConfig}
@@ -63,6 +65,7 @@ export const PrintExportCard = ({ specialists, blocks, schoolName, schoolYear, r
         onOpenChange={setAdminOpen}
         specialists={specialists}
         blocks={blocks}
+        schoolId={schoolId}
         schoolName={schoolName}
         schoolYear={schoolYear}
         teachers={teachers}

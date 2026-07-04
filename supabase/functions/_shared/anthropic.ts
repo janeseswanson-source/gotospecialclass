@@ -74,13 +74,16 @@ export async function extractFromFile(opts: {
   userText: string;
   tool: { name: string; description: string; input_schema: any };
   maxTokens?: number;
+  /** Model tier — defaults to `deep` for back-compat. Document extraction with a
+   *  forced tool is well within `fast`'s reach, so parsers pass MODELS.fast. */
+  model?: string;
 }): Promise<Record<string, any>> {
   const isPdf = opts.mimeType === "application/pdf";
   const fileBlock = isPdf
     ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: opts.fileBase64 } }
     : { type: "image", source: { type: "base64", media_type: opts.mimeType, data: opts.fileBase64 } };
   const resp = await anthropicClient().messages.create({
-    model: CLAUDE_MODEL,
+    model: opts.model ?? CLAUDE_MODEL,
     max_tokens: opts.maxTokens ?? 4000,
     system: opts.system,
     tools: [opts.tool as any],

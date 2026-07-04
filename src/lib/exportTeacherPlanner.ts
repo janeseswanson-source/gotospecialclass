@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { SpecialistPlanner, type PlannerBlock, type RecessRow } from "@/pdf/SpecialistPlanner";
 import { enumerateWeeks, getMondayOf } from "@/pdf/lib/weekDates";
 import { logActivity } from "@/lib/activityLogger";
+import { resolveDisplayQuote } from "@/lib/quoteService";
 
 interface Options {
   schoolId: string;
@@ -52,6 +53,7 @@ export async function exportTeacherPlanner(opts: Options): Promise<boolean> {
     const hasAB = blocks.some((b) => !!b.week_label);
     const weekLabels: (undefined | "A" | "B")[] = hasAB ? ["A", "B"] : [undefined];
 
+    const quote = (await resolveDisplayQuote(schoolId)).text;
     const element = createElement(SpecialistPlanner, {
       specialists: specs.map((s) => ({ id: s.id, name: s.name, subject: s.subject })),
       blocks,
@@ -61,6 +63,7 @@ export async function exportTeacherPlanner(opts: Options): Promise<boolean> {
       recessConfig: (recess ?? []) as RecessRow[],
       includeNotesBox,
       calendarEvents: calEvents ?? [],
+      quote,
     });
 
     const blob = await pdf(element as any).toBlob();

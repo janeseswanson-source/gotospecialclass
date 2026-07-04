@@ -1,6 +1,8 @@
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { supabase } from "@/integrations/supabase/client";
+import { BRAND, BRAND_HEX } from "@/brand/brand";
+import { resolveDisplayQuote } from "@/lib/quoteService";
 
 interface ExportPdfOptions {
   schoolId: string;
@@ -21,6 +23,7 @@ export async function exportSchedulePDF({ schoolId, generationId }: ExportPdfOpt
   const teacherMap = new Map((teachers ?? []).map(t => [t.id, t]));
   const schoolName = school?.name ?? "School";
   const generatedDate = new Date().toLocaleDateString();
+  const quote = (await resolveDisplayQuote(schoolId)).text;
 
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri"];
   const dayLabels: Record<string, string> = {
@@ -46,6 +49,7 @@ export async function exportSchedulePDF({ schoolId, generationId }: ExportPdfOpt
     pdfWidth,
     pdfHeight,
     generatedDate,
+    quote,
   });
 
   // Per-specialist pages
@@ -68,6 +72,7 @@ export async function exportSchedulePDF({ schoolId, generationId }: ExportPdfOpt
       pdfWidth,
       pdfHeight,
       generatedDate,
+      quote,
     });
   }
 
@@ -86,10 +91,11 @@ interface RenderPageOptions {
   pdfWidth: number;
   pdfHeight: number;
   generatedDate: string;
+  quote?: string;
 }
 
 async function renderSchedulePage(pdf: jsPDF, opts: RenderPageOptions) {
-  const { blocks, title, subtitle, specialistMap, teacherMap, days, dayLabels, pdfWidth, pdfHeight, generatedDate } = opts;
+  const { blocks, title, subtitle, specialistMap, teacherMap, days, dayLabels, pdfWidth, pdfHeight, generatedDate, quote } = opts;
 
   // Build time slots with end times
   const timeSlotSet = new Map<string, string>();
@@ -101,16 +107,21 @@ async function renderSchedulePage(pdf: jsPDF, opts: RenderPageOptions) {
   const timeSlots = [...timeSlotSet.entries()].sort((a, b) => a[0].localeCompare(b[0]));
 
   const container = document.createElement("div");
-  container.style.cssText = "position:fixed;left:-9999px;top:0;width:1100px;background:white;padding:24px;font-family:Arial,sans-serif;";
+  container.style.cssText = `position:fixed;left:-9999px;top:0;width:1100px;background:${BRAND_HEX.white};padding:24px;font-family:Arial,sans-serif;`;
   container.innerHTML = `
-    <h1 style="font-size:20px;margin-bottom:2px;color:#000;">${title}</h1>
-    ${subtitle ? `<p style="font-size:11px;color:#666;margin-bottom:2px;">${subtitle}</p>` : ""}
-    <p style="font-size:10px;color:#888;margin-bottom:12px;">Generated ${generatedDate}</p>
+    <div style="background:${BRAND_HEX.ink};border-radius:6px 6px 0 0;padding:10px 16px;display:flex;align-items:baseline;justify-content:space-between;">
+      <span style="font-size:15px;font-weight:800;letter-spacing:0.3px;color:${BRAND_HEX.white};">${BRAND.name}</span>
+      <span style="font-size:10px;color:${BRAND_HEX.gold};">${BRAND.tagline}</span>
+    </div>
+    <div style="height:3px;background:${BRAND_HEX.gold};"></div>
+    <h1 style="font-size:20px;margin:10px 0 2px;color:${BRAND_HEX.ink};">${title}</h1>
+    ${subtitle ? `<p style="font-size:11px;color:${BRAND_HEX.mute};margin-bottom:2px;">${subtitle}</p>` : ""}
+    <p style="font-size:10px;color:${BRAND_HEX.mute};margin-bottom:12px;">Generated ${generatedDate}</p>
     <table style="width:100%;border-collapse:collapse;font-size:10px;">
       <thead>
         <tr>
-          <th style="border:1px solid #000;padding:6px;background:#f0f0f0;color:#000;text-align:left;font-weight:bold;">Time</th>
-          ${days.map(d => `<th style="border:1px solid #000;padding:6px;background:#f0f0f0;color:#000;text-align:center;font-weight:bold;">${dayLabels[d]}</th>`).join("")}
+          <th style="border:1px solid ${BRAND_HEX.ink};padding:6px;background:${BRAND_HEX.ink};color:${BRAND_HEX.white};text-align:left;font-weight:bold;">Time</th>
+          ${days.map(d => `<th style="border:1px solid ${BRAND_HEX.ink};padding:6px;background:${BRAND_HEX.ink};color:${BRAND_HEX.white};text-align:center;font-weight:bold;">${dayLabels[d]}</th>`).join("")}
         </tr>
       </thead>
       <tbody>
@@ -169,7 +180,7 @@ async function renderSchedulePage(pdf: jsPDF, opts: RenderPageOptions) {
         pdf.addImage(sliceData, "PNG", 5, 5, imgW, sliceH);
 
         // Footer on each page
-        addFooter(pdf, generatedDate, pageIndex + 1);
+        addFooter(pdf, pageIndex + 1, quote);
 
         yOffset += sliceHeight;
         pageIndex++;
@@ -178,19 +189,44 @@ async function renderSchedulePage(pdf: jsPDF, opts: RenderPageOptions) {
     }
 
     // Footer for single-page
-    addFooter(pdf, generatedDate, 1);
+    addFooter(pdf, 1, quote);
   } finally {
     document.body.removeChild(container);
   }
 }
 
-function addFooter(pdf: jsPDF, generatedDate: string, pageNum: number) {
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace("#", "");
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+
+function addFooter(pdf: jsPDF, pageNum: number, quote?: string) {
   const pageH = pdf.internal.pageSize.getHeight();
   const pageW = pdf.internal.pageSize.getWidth();
+  const [gr, gg, gb] = hexToRgb(BRAND_HEX.gold);
+  const [ir, ig, ib] = hexToRgb(BRAND_HEX.ink);
+  const [mr, mg, mb] = hexToRgb(BRAND_HEX.mute);
+
+  // Gold rule
+  pdf.setDrawColor(gr, gg, gb);
+  pdf.setLineWidth(0.5);
+  pdf.line(5, pageH - 7, pageW - 5, pageH - 7);
+
   pdf.setFontSize(7);
-  pdf.setTextColor(150);
-  pdf.text(`Generated ${generatedDate}`, 5, pageH - 3);
-  pdf.text(`Page ${pageNum}`, pageW - 20, pageH - 3);
+  // Domain (left)
+  pdf.setTextColor(ir, ig, ib);
+  pdf.text(BRAND.domain, 5, pageH - 3);
+
+  // Quote (center)
+  if (quote) {
+    pdf.setTextColor(mr, mg, mb);
+    const q = pdf.splitTextToSize(`"${quote}"`, pageW - 90)[0] ?? "";
+    pdf.text(q, pageW / 2, pageH - 3, { align: "center" });
+  }
+
+  // Page number (right)
+  pdf.setTextColor(mr, mg, mb);
+  pdf.text(`Page ${pageNum}`, pageW - 5, pageH - 3, { align: "right" });
 }
 
 function fmt(time: string): string {

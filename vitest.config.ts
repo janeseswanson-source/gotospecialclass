@@ -13,4 +13,14 @@ export default defineConfig({
   resolve: {
     alias: { "@": path.resolve(__dirname, "./src") },
   },
+  // Mirror vite.config's build-time defines so modules that import the Supabase
+  // client (via `__SUPABASE_*_FALLBACK__`) can be imported in unit tests.
+  define: {
+    __SUPABASE_URL_FALLBACK__: JSON.stringify(
+      process.env.VITE_SUPABASE_URL || "https://xfvablheccsoskokihkf.supabase.co"
+    ),
+    __SUPABASE_PUBLISHABLE_KEY_FALLBACK__: JSON.stringify(
+      process.env.VITE_SUPABASE_PUBLISHABLE_KEY || "test-anon-key"
+    ),
+  },
 });

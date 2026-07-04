@@ -8,12 +8,15 @@ import { renderPdfBlob, triggerDownload } from './exportShared';
 import { SpecialistPlanner, type RecessRow } from '@/pdf/SpecialistPlanner';
 import { getMondayOf, enumerateWeeks, enumerateWeeksBetween, addDays } from '@/pdf/lib/weekDates';
 import { getDayLabelFor, type SchoolCalendarEvent } from '@/pdf/lib/holidays';
+import { resolveDisplayQuote } from '@/lib/quoteService';
+import ExportQuoteCard from '@/components/schedule/ExportQuoteCard';
 
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   specialists: { id: string; name: string; subject: string }[];
   blocks: any[];
+  schoolId?: string | null;
   schoolName?: string;
   schoolYear?: string;
   recessConfig?: RecessRow[];
@@ -35,7 +38,7 @@ function isHolidayWeek(monday: Date, events?: SchoolCalendarEvent[]): boolean {
   return labeled === 5;
 }
 
-export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks, schoolName, schoolYear, recessConfig = [], calendarEvents }: Props) => {
+export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks, schoolId, schoolName, schoolYear, recessConfig = [], calendarEvents }: Props) => {
   const [selection, setSelection] = useState<string>('all');
   const [weeksMode, setWeeksMode] = useState<WeeksMode>('this');
   const [customStart, setCustomStart] = useState<string>(todayIso());
@@ -45,6 +48,7 @@ export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks,
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [blob, setBlob] = useState<Blob | null>(null);
   const [slow, setSlow] = useState(false);
+  const [quoteOverride, setQuoteOverride] = useState('');
   const slowTimer = useRef<number | null>(null);
 
   const hasAB = useMemo(
@@ -92,6 +96,7 @@ export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks,
         ? (abMode === 'both' ? ['A', 'B'] : [abMode])
         : [undefined];
 
+      const quote = quoteOverride.trim() || (await resolveDisplayQuote(schoolId)).text;
       const b = await renderPdfBlob(
         <SpecialistPlanner
           specialists={list}
@@ -102,6 +107,7 @@ export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks,
           weekLabels={labels}
           recessConfig={recessConfig}
           calendarEvents={calendarEvents}
+          quote={quote}
         />
       );
 
@@ -189,6 +195,8 @@ export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks,
                 </div>
               )}
             </div>
+
+            {schoolId && <ExportQuoteCard schoolId={schoolId} onQuoteChange={setQuoteOverride} />}
 
             <DialogFooter>
               <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>

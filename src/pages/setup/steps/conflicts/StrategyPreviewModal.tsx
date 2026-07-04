@@ -68,6 +68,11 @@ const PREVIEWS: Record<string, PreviewData> = {
   },
 };
 
+/** Plain-language "what your week will look like" line for a strategy (or null). */
+export function getStrategyPreviewBlurb(strategyKey: string): string | null {
+  return PREVIEWS[strategyKey]?.blurb ?? null;
+}
+
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;

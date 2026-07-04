@@ -8,6 +8,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { qualityPercent } from "../_shared/scoring-rubric.ts";
+import { reportEdgeError } from "../_shared/observability.ts";
 import {
   runInvocation, pickTimeLimitS, isSolverUnavailable,
   type InvocationDeps, type JobRow, type CpsatOutcome, type SearchOutcome, type RefineOutcome,
@@ -148,6 +149,7 @@ Deno.serve(async (req) => {
   } catch (e: any) {
     // Never leave a job wedged: record the error so the client stops waiting.
     await supabase.from("generation_jobs").update({ status: "failed", error: e?.message ?? "worker crashed", updated_at: new Date().toISOString() }).eq("id", job_id).neq("status", "complete");
+    reportEdgeError(e, { function: "run-generation-job", generation_id: job_id });
     return json(500, { error: e?.message ?? "worker error" });
   }
 });

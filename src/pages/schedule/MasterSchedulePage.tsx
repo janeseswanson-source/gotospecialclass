@@ -1,12 +1,10 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSchool } from "@/contexts/SchoolContext";
 import { Button } from "@/components/ui/button";
 import { GitCompare, AlertTriangle, X as XIcon, Sparkles, Loader2, MessageSquare, Check, RotateCcw } from "lucide-react";
-import { exportScheduleXlsx } from "@/lib/exportScheduleXlsx";
-import ScheduleChatPanel from "@/components/schedule/ScheduleChatPanel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatTime as formatTimeDisplay, cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -16,10 +14,10 @@ import QuoteBanner from "@/components/schedule/QuoteBanner";
 import { toast } from "@/hooks/use-toast";
 import { analyzeScheduleBlocks, type ScheduleWarning } from "@/lib/strategyFeasibility";
 import { warningMeta } from "@/lib/warningMeta";
-import SpecialistExportModal from "./exports/SpecialistExportModal";
-import AdminExportModal from "./exports/AdminExportModal";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds, computeConflictPairs, computeAutoFit, parseTime, swapPlacements } from "@/lib/scheduleGrid";
+import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds } from "@/lib/scheduleGrid";
+import { evaluateDrop } from "@/lib/gridTargets";
+import { buildWeekCycle } from "@/lib/weekCycle";
 import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
 import { breakdownToPercent } from "@/lib/optimizerScore";
 import QualityPanel from "@/components/schedule/QualityPanel";
@@ -31,6 +29,20 @@ import WeekGrid from "@/components/schedule/WeekGrid";
 import { diffSchedules, diffSummary } from "@/lib/scheduleDiff";
 import ApplyOpsBar, { type OpsDelta } from "@/components/schedule/ApplyOpsBar";
 import { buildGhostOverlay, toggleRejected, acceptedOps, type PreviewOp, type ProposalItem } from "@/lib/ghostPreview";
+import ScheduleCommandPalette, { type CommandAction } from "@/components/schedule/ScheduleCommandPalette";
+import KeyboardShortcutsSheet from "@/components/schedule/KeyboardShortcutsSheet";
+import WeekCyclePicker from "@/components/schedule/WeekCyclePicker";
+import MobileDayPager from "@/components/schedule/MobileDayPager";
+import FilterRail, { FilterRailSection } from "@/components/layout/FilterRail";
+import { getSubjectColorClass, getSubjectLeftBorderClass } from "@/lib/subjectColors";
+import { Undo2, Redo2, Wand2, Download, FileText, Printer, Keyboard } from "lucide-react";
+
+// Deferred: the AI chat (streamdown + shiki + mermaid) and the PDF export modals
+// (@react-pdf/renderer) are heavy and only used on demand, so they load as their
+// own async chunks rather than riding in the schedule route bundle.
+const ScheduleChatPanel = lazy(() => import("@/components/schedule/ScheduleChatPanel"));
+const SpecialistExportModal = lazy(() => import("./exports/SpecialistExportModal"));
+const AdminExportModal = lazy(() => import("./exports/AdminExportModal"));
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -87,6 +99,8 @@ export default function MasterSchedulePage() {
   const [specExportOpen, setSpecExportOpen] = useState(false);
   const [adminExportOpen, setAdminExportOpen] = useState(false);
   const [exportingXlsx, setExportingXlsx] = useState(false);
+  const [cmdOpen, setCmdOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [replanSuggestion, setReplanSuggestion] = useState<{ specialistId: string; specialistName: string } | null>(null);
   const [replanLoading, setReplanLoading] = useState(false);
   // Blocks recently changed by the AI editor — highlighted in the grid so the
@@ -178,6 +192,12 @@ export default function MasterSchedulePage() {
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); handleUndo(); }
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && e.shiftKey) { e.preventDefault(); handleRedo(); }
       if ((e.ctrlKey || e.metaKey) && e.key === 'y') { e.preventDefault(); handleRedo(); }
+      // "?" opens the shortcuts reference (ignored while typing in a field).
+      if (e.key === '?' && !e.ctrlKey && !e.metaKey) {
+        const el = e.target as HTMLElement | null;
+        const typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+        if (!typing) { e.preventDefault(); setShortcutsOpen((v) => !v); }
+      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -376,127 +396,61 @@ export default function MasterSchedulePage() {
   );
   const trayIds = useMemo(() => new Set(trayBlocks.map((b) => b.id)), [trayBlocks]);
 
-  /**
-   * After a proposed move/swap, check whether any of the moved blocks ended up
-   * in a bad spot, and return a plain-language reason (or null if it's fine).
-   * Catches the things that make a drop "not work": double-booking a teacher or
-   * specialist, landing on recess/lunch, or falling outside school hours.
-   */
-  function placementProblem(candidate: BlockData[], movedIds: string[]): string | null {
-    const conflictIds = computeConflictIds(candidate);
-    for (const id of movedIds) {
-      if (!conflictIds.has(id)) continue;
-      // Find a clashing partner for a specific message.
-      let partner: BlockData | null = null;
-      for (const { a, b } of computeConflictPairs(candidate)) {
-        if (a.id === id) { partner = b as BlockData; break; }
-        if (b.id === id) { partner = a as BlockData; break; }
-      }
-      const me = candidate.find((x) => x.id === id);
-      const who = partner?.teacher_name || partner?.specialist_name || partner?.subject || "another class";
-      return `${me?.subject ?? "That block"} would clash with ${who} at the same time. Try an empty slot.`;
-    }
-    for (const id of movedIds) {
-      const b = candidate.find((x) => x.id === id);
-      if (!b) continue;
-      const s = parseTime(b.start_time), e = parseTime(b.end_time);
-      if (recessBands.some((band) => s < parseTime(band.end_time) && parseTime(band.start_time) < e)) {
-        return `${b.subject ?? "That block"} would land on recess or lunch.`;
-      }
-      if (schoolStartTime && s < parseTime(schoolStartTime)) return `${b.subject ?? "That block"} would start before school opens.`;
-      if (schoolEndTime && e > parseTime(schoolEndTime)) return `${b.subject ?? "That block"} would run past the end of the day.`;
-    }
-    return null;
-  }
-
   async function handleBlockDrop(blockId: string, newDay: string, newTime: string) {
-    if (lockedIds.has(blockId)) {
-      toast({ title: "This block is locked", description: "Unlock it first to move it.", variant: "destructive" });
-      return;
-    }
     const block = blocks.find((b) => b.id === blockId);
     if (!block) return;
-    if (block.day_of_week === newDay && block.start_time === newTime) return;
 
-    // Is the target slot occupied? (interval-contains so compact rows still
-    // match a block that starts a few minutes earlier in that cell.)
-    const newTimeMin = parseTime(newTime);
-    const targetBlock = blocks.find((b) =>
-      b.id !== blockId && b.day_of_week === newDay &&
-      !(b.week_label && block.week_label && b.week_label !== block.week_label) &&
-      newTimeMin >= parseTime(b.start_time) && newTimeMin < parseTime(b.end_time),
-    );
+    // ONE decision, shared with the drag-time legal-target wash (gridTargets is the
+    // SSOT-mirror — the highlight and the commit can't disagree).
+    const evaln = evaluateDrop({
+      block, allBlocks: blocks, targetDay: newDay, targetTime: newTime, lockedIds,
+      recessBands, schoolStart: schoolStartTime, schoolEnd: schoolEndTime,
+    });
 
-    if (targetBlock) {
-      // ── SWAP: each block takes the OTHER's slot but keeps its OWN length ──
-      if (lockedIds.has(targetBlock.id)) {
-        toast({ title: "That block is locked", description: "Unlock it to swap.", variant: "destructive" });
-        return;
-      }
-      const swapped = swapPlacements(block, targetBlock);
-      const aNew = { ...swapped.a, is_override: true }; // block → target's slot, keeps block's length
-      const bNew = { ...swapped.b, is_override: true }; // target → block's slot, keeps target's length
-
-      const candidate = blocks.map((b) =>
-        b.id === block.id ? { ...b, ...aNew } : b.id === targetBlock.id ? { ...b, ...bNew } : b,
-      );
-      const problem = placementProblem(candidate, [block.id, targetBlock.id]);
-      if (problem) {
-        toast({ title: "Can't swap these", description: problem, variant: "destructive" });
-        return;
-      }
-      setBlocks(candidate);
-      pushHistory(candidate);
-      const [{ error: e1 }, { error: e2 }] = await Promise.all([
-        supabase.from("schedule_blocks").update(aNew).eq("id", block.id),
-        supabase.from("schedule_blocks").update(bNew).eq("id", targetBlock.id),
-      ]);
-      if (e1 || e2) {
-        toast({ title: "Swap couldn't be saved", variant: "destructive" });
-        loadBlocks(selectedGen);
-      } else {
-        toast({ title: "Swapped ✓", description: `${block.subject ?? "Block"} ⇄ ${targetBlock.subject ?? "block"}` });
-        // Make the swap visible in the grid: both blocks glow + scroll into view.
-        flagChangedBlocks([block.id, targetBlock.id]);
-        const spec = specialists.find(s => s.id === block.specialist_id);
-        if (spec) setReplanSuggestion({ specialistId: spec.id, specialistName: spec.name });
+    if (evaln.kind === "self") return;
+    if (!evaln.legal || !evaln.changes) {
+      if (evaln.reason) {
+        const title = evaln.kind === "locked" ? "This block is locked" : evaln.kind === "swap" ? "Can't swap these" : "Can't drop here";
+        toast({ title, description: evaln.reason, variant: "destructive" });
       }
       return;
     }
 
-    // ── MOVE to an empty slot: keep full length, validate, then commit ──
-    const fit = computeAutoFit({ movingBlock: block, targetDay: newDay, targetTime: newTime, allBlocks: blocks, recessBands, schoolEnd: schoolEndTime });
-    if (!fit.ok) {
-      toast({ title: "Can't drop here", description: fit.reason, variant: "destructive" });
-      return;
-    }
-    const moveNew = { day_of_week: newDay, start_time: fit.start, end_time: fit.end, is_override: true };
-    const candidate = blocks.map((b) => (b.id === blockId ? { ...b, ...moveNew } : b));
-    const problem = placementProblem(candidate, [blockId]);
-    if (problem) {
-      toast({ title: "Can't drop here", description: problem, variant: "destructive" });
-      return;
-    }
+    // Apply the SSOT-approved change(s) optimistically, then persist.
+    const changeById = new Map(evaln.changes.map((c) => [c.id, c]));
+    const candidate = blocks.map((b) => {
+      const c = changeById.get(b.id);
+      return c ? { ...b, day_of_week: c.day_of_week, start_time: c.start_time, end_time: c.end_time, is_override: true } : b;
+    });
     setBlocks(candidate);
     pushHistory(candidate);
-    const { error } = await supabase.from("schedule_blocks").update(moveNew).eq("id", blockId);
-    if (error) {
-      toast({ title: "Move couldn't be saved", variant: "destructive" });
+
+    const movedIds = evaln.changes.map((c) => c.id);
+    const results = await Promise.all(
+      evaln.changes.map((c) =>
+        supabase.from("schedule_blocks")
+          .update({ day_of_week: c.day_of_week, start_time: c.start_time, end_time: c.end_time, is_override: true })
+          .eq("id", c.id),
+      ),
+    );
+    if (results.some((r) => r.error)) {
+      toast({ title: evaln.kind === "swap" ? "Swap couldn't be saved" : "Move couldn't be saved", variant: "destructive" });
       loadBlocks(selectedGen);
-    } else {
-      toast({ title: "Moved ✓", description: fit.shortened ? `Shortened to ${fit.duration} min to fit.` : undefined });
-      flagChangedBlocks([blockId]);
-      const spec = specialists.find(s => s.id === block.specialist_id || s.name === block.specialist_name);
-      if (spec) setReplanSuggestion({ specialistId: spec.id, specialistName: spec.name });
+      return;
     }
+
+    if (evaln.kind === "swap") {
+      const targetBlock = blocks.find((b) => movedIds.includes(b.id) && b.id !== blockId);
+      toast({ title: "Swapped ✓", description: `${block.subject ?? "Block"} ⇄ ${targetBlock?.subject ?? "block"}` });
+    } else {
+      toast({ title: "Moved ✓", description: evaln.shortened ? `Shortened to ${evaln.shortenedTo} min to fit.` : undefined });
+    }
+    flagChangedBlocks(movedIds);
+    const spec = specialists.find((s) => s.id === block.specialist_id || s.name === block.specialist_name);
+    if (spec) setReplanSuggestion({ specialistId: spec.id, specialistName: spec.name });
   }
 
 
-  /** Drag handler used by the Scrabble tray. */
-  function handleTrayDragStart(e: React.DragEvent, block: BlockData) {
-    e.dataTransfer.setData("text/plain", block.id);
-    e.dataTransfer.effectAllowed = "move";
-  }
 
 
   async function handleSaveOverride(blockId: string, updates: { specialist_id?: string; room?: string; subject?: string }) {
@@ -794,6 +748,9 @@ export default function MasterSchedulePage() {
     if (!selectedGen || !selectedSchoolId || exportingXlsx) return;
     setExportingXlsx(true);
     try {
+      // Dynamic import keeps ExcelJS out of the schedule route chunk until the
+      // coordinator actually exports.
+      const { exportScheduleXlsx } = await import("@/lib/exportScheduleXlsx");
       const ok = await exportScheduleXlsx({ schoolId: selectedSchoolId, generationId: selectedGen, schoolName: selectedSchool?.name, schoolYear });
       if (ok) toast({ title: "Spreadsheet exported ✓", description: "A branded Excel file with the master schedule and each specialist's week." });
       else toast({ title: "Nothing to export", description: "Generate a schedule first.", variant: "destructive" });
@@ -855,6 +812,19 @@ export default function MasterSchedulePage() {
   const weekOptions: { value: string; label: string }[] = isAaBbStrategy
     ? [{ value: "all", label: "All" }, { value: "AA", label: "Weeks 1–2 (AA)" }, { value: "BB", label: "Weeks 3–4 (BB)" }]
     : [{ value: "all", label: "All" }, { value: "A", label: "Week A" }, { value: "B", label: "Week B" }];
+
+  // The DATED cycle (lib/weekCycle) — drives the WeekCyclePicker so the selector
+  // shows real Mon–Fri ranges with today highlighted, holiday-aware.
+  const weekCycle = useMemo(() => {
+    const strategy = isAbStrategy ? "ab_week" : isAaBbStrategy ? "aa_bb_week" : "standard";
+    return buildWeekCycle({
+      strategy,
+      startDate: (selectedSchool as any)?.school_year_start ?? null,
+      endDate: (selectedSchool as any)?.school_year_end ?? null,
+      schoolYear: selectedSchool?.school_year ?? null,
+      events: calendarEvents,
+    });
+  }, [isAbStrategy, isAaBbStrategy, selectedSchool, calendarEvents]);
   const weekFiltered = weekFilter === "all"
     ? blocks
     : blocks.filter((b: any) => !b.week_label || b.week_label === weekFilter);
@@ -889,6 +859,27 @@ export default function MasterSchedulePage() {
   });
 
   const filteredByDay = displayBlocks.filter((b) => b.day_of_week === filterDay);
+  const subjectLegend = Array.from(new Set(specialists.map((s) => s.subject).filter(Boolean)));
+
+  // Command palette actions (⌘K) — thin wrappers over existing handlers.
+  const commandActions = useMemo<CommandAction[]>(() => {
+    const base: CommandAction[] = [
+      { id: "undo", group: "Edit", label: "Undo", icon: Undo2, shortcut: "⌘Z", disabled: !canUndo, run: handleUndo },
+      { id: "redo", group: "Edit", label: "Redo", icon: Redo2, shortcut: "⌘⇧Z", disabled: !canRedo, run: handleRedo },
+      { id: "chat", group: "AI", label: "Edit with AI", icon: Wand2, keywords: ["chat", "assistant"], run: () => setChatOpen(true) },
+      { id: "fix", group: "AI", label: "Fix conflicts", icon: Wand2, keywords: ["resolve", "conflict"], disabled: conflictIds.size === 0 || resolvingAI, run: () => { void handleResolveWithAI(); } },
+      { id: "xlsx", group: "Export", label: "Export branded spreadsheet (XLSX)", icon: Download, disabled: blockingError.blocked || exportingXlsx, run: () => { void handleExportXlsx(); } },
+      { id: "spec-pdf", group: "Export", label: "Export specialist planner (PDF)", icon: FileText, disabled: blockingError.blocked, run: () => setSpecExportOpen(true) },
+      { id: "admin-pdf", group: "Export", label: "Export admin overview (PDF)", icon: FileText, disabled: blockingError.blocked, run: () => setAdminExportOpen(true) },
+      { id: "print", group: "Export", label: "Print schedule", icon: Printer, disabled: blockingError.blocked, run: () => window.print() },
+      { id: "shortcuts", group: "Help", label: "Keyboard shortcuts", icon: Keyboard, shortcut: "?", run: () => setShortcutsOpen(true) },
+    ];
+    const jumps: CommandAction[] = specialists.map((s) => ({
+      id: `jump-spec-${s.id}`, group: "Jump to specialist", label: `${s.name} · ${s.subject}`,
+      keywords: ["specialist", s.subject], run: () => setFilterSpecialist(s.id),
+    }));
+    return [...base, ...jumps];
+  }, [canUndo, canRedo, handleUndo, handleRedo, conflictIds.size, resolvingAI, blockingError.blocked, exportingXlsx, specialists]);
 
   if (loading) {
     return (
@@ -1122,7 +1113,7 @@ export default function MasterSchedulePage() {
         </div>
       )}
 
-      {quote && <QuoteBanner text={quote.text} author={quote.author} />}
+      {quote && <QuoteBanner text={quote.text} author={quote.author} schoolId={selectedSchoolId} canRegenerate />}
 
 
 
@@ -1258,22 +1249,61 @@ export default function MasterSchedulePage() {
         <ConflictResolver outcome={conflictOutcome} onDismiss={() => setConflictOutcome(null)} />
       )}
 
-      {/* ─── Schedule grid (hero) ─── */}
-      <WeekGrid
-          showWeekSelector={showWeekSelector}
-          isAbStrategy={isAbStrategy}
+      {/* ─── Schedule grid (hero) — three-pane on desktop, day pager on mobile ─── */}
+      <div className="md:flex md:items-start md:gap-4">
+        <FilterRail className="mb-4 md:mb-0">
+          {showWeekSelector && (
+            <FilterRailSection title="Week">
+              {weekCycle && (isAbStrategy || isAaBbStrategy) ? (
+                <WeekCyclePicker cycle={weekCycle} value={weekFilter} onChange={setWeekFilter} />
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {weekOptions.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => setWeekFilter(opt.value)}
+                      className={cn(
+                        "rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors motion-reduce:transition-none",
+                        weekFilter === opt.value ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background hover:border-primary/40",
+                      )}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </FilterRailSection>
+          )}
+          {subjectLegend.length > 0 && (
+            <FilterRailSection title="Subjects">
+              <ul className="flex flex-wrap gap-1.5">
+                {subjectLegend.map((s) => (
+                  <li key={s} className={cn("rounded border-l-2 px-1.5 py-0.5 text-[11px] font-medium", getSubjectColorClass(s), getSubjectLeftBorderClass(s))}>{s}</li>
+                ))}
+              </ul>
+            </FilterRailSection>
+          )}
+        </FilterRail>
+        <div className="min-w-0 flex-1">
+          <div className="hidden md:block">
+            <WeekGrid
+              showWeekSelector={false}
+              isAbStrategy={isAbStrategy}
           isAaBbStrategy={isAaBbStrategy}
           hasWeekLabels={hasWeekLabels}
           weekOptions={weekOptions}
+          weekCycle={weekCycle}
           weekFilter={weekFilter}
           onWeekFilterChange={setWeekFilter}
           masterBlocks={displayBlocks}
           specialistBlocks={filteredBySpecialist}
           teacherBlocks={filteredByTeacher}
           trayBlocks={trayBlocks}
-          onTrayDragStart={handleTrayDragStart}
           timeSlots={timeSlots}
           recessBands={recessBands}
+          schoolStart={schoolStartTime}
+          schoolEnd={schoolEndTime}
           conflictIds={conflictIds}
           trayIds={trayIds}
           highlightIds={recentChangedIds}
@@ -1292,7 +1322,22 @@ export default function MasterSchedulePage() {
           filterTeacher={filterTeacher}
           onFilterTeacher={setFilterTeacher}
           blockingError={blockingError}
-        />
+            />
+          </div>
+          <MobileDayPager
+            blocks={displayBlocks}
+            recessBands={recessBands}
+            day={filterDay}
+            onDayChange={setFilterDay}
+            specialists={specialists}
+            teachers={teachers}
+            filterSpecialist={filterSpecialist}
+            onFilterSpecialist={setFilterSpecialist}
+            filterTeacher={filterTeacher}
+            onFilterTeacher={setFilterTeacher}
+          />
+        </div>
+      </div>
 
       <BlockInspector
         block={editBlock ? (blocks.find((b) => b.id === editBlock.id) ?? editBlock) : null}
@@ -1312,38 +1357,48 @@ export default function MasterSchedulePage() {
         onRequestExplain={handleRequestExplain}
       />
 
-      <SpecialistExportModal
-        open={specExportOpen}
-        onOpenChange={setSpecExportOpen}
-        specialists={specialists}
-        blocks={blocks}
-        schoolName={selectedSchool?.name}
-        schoolYear={schoolYear}
-        recessConfig={recessConfig}
-        calendarEvents={calendarEvents}
-      />
-      <AdminExportModal
-        open={adminExportOpen}
-        onOpenChange={setAdminExportOpen}
-        specialists={specialists}
-        blocks={blocks}
-        schoolName={selectedSchool?.name}
-        schoolYear={schoolYear}
-        teachers={teachers}
-        clubs={clubs}
-        recessConfig={recessConfig}
-      />
+      <Suspense fallback={null}>
+        {specExportOpen && (
+          <SpecialistExportModal
+            open={specExportOpen}
+            onOpenChange={setSpecExportOpen}
+            specialists={specialists}
+            blocks={blocks}
+            schoolId={selectedSchoolId}
+            schoolName={selectedSchool?.name}
+            schoolYear={schoolYear}
+            recessConfig={recessConfig}
+            calendarEvents={calendarEvents}
+          />
+        )}
+        {adminExportOpen && (
+          <AdminExportModal
+            open={adminExportOpen}
+            onOpenChange={setAdminExportOpen}
+            specialists={specialists}
+            blocks={blocks}
+            schoolId={selectedSchoolId}
+            schoolName={selectedSchool?.name}
+            schoolYear={schoolYear}
+            teachers={teachers}
+            clubs={clubs}
+            recessConfig={recessConfig}
+          />
+        )}
+        {chatOpen && (
+          <ScheduleChatPanel
+            key={selectedGen || "no-gen"}
+            generationId={selectedGen || null}
+            onClose={() => setChatOpen(false)}
+            onScheduleChanged={() => selectedGen && loadBlocks(selectedGen)}
+            onApplied={flagChangedBlocks}
+            onPreviewOps={setChatPreviewOps}
+          />
+        )}
+      </Suspense>
 
-      {chatOpen && (
-        <ScheduleChatPanel
-          key={selectedGen || "no-gen"}
-          generationId={selectedGen || null}
-          onClose={() => setChatOpen(false)}
-          onScheduleChanged={() => selectedGen && loadBlocks(selectedGen)}
-          onApplied={flagChangedBlocks}
-          onPreviewOps={setChatPreviewOps}
-        />
-      )}
+      <ScheduleCommandPalette open={cmdOpen} onOpenChange={setCmdOpen} actions={commandActions} />
+      <KeyboardShortcutsSheet open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
 
     </div>
   );

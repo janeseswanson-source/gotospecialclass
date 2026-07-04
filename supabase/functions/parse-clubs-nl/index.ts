@@ -1,8 +1,9 @@
 // Parse a free-text description of clubs/events into structured rows.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { generateText } from "npm:ai";
-import { anthropicApiKey } from "../_shared/anthropic.ts";
+import { anthropicApiKey, MODELS } from "../_shared/anthropic.ts";
 import { anthropicModel } from "../_shared/anthropic-aisdk.ts";
+import { enforceRateLimit, rateLimitResponse } from "../_shared/rateLimit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -29,6 +30,10 @@ Deno.serve(async (req) => {
   const { data: userData, error: userErr } = await supabase.auth.getUser();
   if (userErr || !userData?.user) return json(401, { error: "Unauthorized" });
 
+  const admin = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const rl = await enforceRateLimit(admin, { userId: userData.user.id, feature: "parse_clubs_nl", limit: 20 });
+  if (!rl.allowed) return rateLimitResponse(rl, corsHeaders);
+
   if (!anthropicApiKey()) return json(500, { error: "Claude isn't set up yet — add the ANTHROPIC_API_KEY secret." });
 
   let body: { description?: string; kind?: "clubs" | "events" };
@@ -38,7 +43,7 @@ Deno.serve(async (req) => {
   if (!desc) return json(400, { error: "description required" });
   if (desc.length > 5000) return json(400, { error: "description too long (max 5000 chars)" });
 
-  const model = anthropicModel();
+  const model = anthropicModel(MODELS.fast);
 
   const schemaHint = kind === "clubs"
     ? `Each row: { "name": string, "day_of_week": "Mon"|"Tue"|"Wed"|"Thu"|"Fri"|null, "start_time": "HH:MM"|null, "end_time": "HH:MM"|null, "grades": string[] (e.g. ["3","4","5"]), "leader": string|null, "location": string|null }`

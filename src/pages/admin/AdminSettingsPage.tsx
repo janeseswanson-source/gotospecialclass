@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Settings, Upload, Trash2, FileText, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import SystemStatusCard from '@/components/admin/SystemStatusCard';
 
 const FLAGS = [
   { key: 'ff_ai_calendar', label: 'AI Calendar Parsing', description: 'Enable AI-powered calendar PDF parsing' },
@@ -103,6 +104,9 @@ const AdminSettingsPage = () => {
         <h1 className="text-2xl font-bold text-foreground">Admin Settings</h1>
         <p className="text-sm text-muted-foreground">Plans, feature flags, templates, and system configuration.</p>
       </div>
+
+      {/* System / dependency status */}
+      <SystemStatusCard />
 
       {/* Feature Flags */}
       <Card>

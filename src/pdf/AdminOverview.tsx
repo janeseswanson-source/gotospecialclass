@@ -1,6 +1,7 @@
 import { Document, Page, Text, View, Image, StyleSheet } from '@react-pdf/renderer';
 import { abbrevSubject, lastName } from './lib/subjectAbbrev';
 import { generateSessionRanges } from './lib/sessionCalendar';
+import { PDF, PDF_BRAND, pdfSubjectColors } from './lib/pdfTheme';
 import logoAsset from '@/assets/logo.png.asset.json';
 
 const LOGO_URL = (() => {
@@ -36,6 +37,7 @@ export interface AdminOverviewProps {
   recessConfig?: any[];
   schoolName?: string;
   schoolYear?: string;
+  quote?: string | null;
 }
 
 const DAYS: { key: string; label: string }[] = [
@@ -47,47 +49,38 @@ const DAYS: { key: string; label: string }[] = [
 ];
 
 const styles = StyleSheet.create({
-  page: { paddingTop: 28, paddingBottom: 42, paddingHorizontal: 24, fontSize: 8, fontFamily: 'Helvetica' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, paddingBottom: 6, borderBottom: '1.5pt solid #C5A55A' },
+  page: { paddingTop: 28, paddingBottom: 42, paddingHorizontal: 24, fontSize: 8, fontFamily: PDF.font },
+  headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, paddingBottom: 6, borderBottom: `1.5pt solid ${PDF.gold}` },
   headerLogo: { width: 26, height: 26, marginRight: 8 },
   headerTitleBlock: { flex: 1 },
-  headerTitle: { fontSize: 12, fontFamily: 'Helvetica-Bold', color: '#1B2A4A' },
-  headerSubtitle: { fontSize: 7, color: '#6b7280', letterSpacing: 1, textTransform: 'uppercase', marginTop: 1 },
-  headerPage: { fontSize: 8, color: '#555' },
-  brandFooter: { position: 'absolute', left: 24, right: 24, bottom: 14, flexDirection: 'row', justifyContent: 'space-between', borderTop: '0.8pt solid #C5A55A', paddingTop: 4, fontSize: 7.5, color: '#1B2A4A' },
-  brandFooterMute: { color: '#6b7280' },
-  table: { borderTop: '1pt solid #1B2A4A', borderLeft: '1pt solid #1B2A4A' },
-  colHeader: { flexDirection: 'row', backgroundColor: '#1B2A4A' },
-  colHeaderCell: { padding: 4, fontSize: 8, fontFamily: 'Helvetica-Bold', color: '#fff', borderRight: '1pt solid #fff', textAlign: 'center' },
-  row: { flexDirection: 'row', borderBottom: '1pt solid #1B2A4A', minHeight: 36 },
-  cell: { padding: 3, borderRight: '1pt solid #1B2A4A', fontSize: 7 },
-  timeCell: { padding: 3, borderRight: '1pt solid #1B2A4A', fontSize: 7, fontFamily: 'Helvetica-Bold', backgroundColor: '#F5EFE0', justifyContent: 'center', alignItems: 'center', textAlign: 'center' },
-  bandRow: { flexDirection: 'row', borderBottom: '1pt solid #1B2A4A', backgroundColor: '#F5EFE0', minHeight: 18 },
-  bandCell: { padding: 4, fontSize: 8, fontFamily: 'Helvetica-Bold', color: '#1B2A4A', textAlign: 'center', justifyContent: 'center' },
-  subHeader: { fontSize: 6, fontFamily: 'Helvetica-Bold', color: '#C5A55A', marginBottom: 1 },
+  headerTitle: { fontSize: 12, fontFamily: PDF.fontBold, color: PDF.ink },
+  headerSubtitle: { fontSize: 7, color: PDF.mute, letterSpacing: 1, textTransform: 'uppercase', marginTop: 1 },
+  headerPage: { fontSize: 8, color: PDF.mute },
+  brandFooter: { position: 'absolute', left: 24, right: 24, bottom: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTop: `0.8pt solid ${PDF.gold}`, paddingTop: 4, fontSize: 7.5, color: PDF.ink },
+  brandFooterMute: { color: PDF.mute, fontStyle: 'italic', flex: 1, textAlign: 'center', marginHorizontal: 8 },
+  table: { borderTop: `1pt solid ${PDF.ink}`, borderLeft: `1pt solid ${PDF.ink}` },
+  colHeader: { flexDirection: 'row', backgroundColor: PDF.ink },
+  colHeaderCell: { padding: 4, fontSize: 8, fontFamily: PDF.fontBold, color: PDF.white, borderRight: `1pt solid ${PDF.white}`, textAlign: 'center' },
+  row: { flexDirection: 'row', borderBottom: `1pt solid ${PDF.ink}`, minHeight: 36 },
+  cell: { padding: 3, borderRight: `1pt solid ${PDF.ink}`, fontSize: 7 },
+  timeCell: { padding: 3, borderRight: `1pt solid ${PDF.ink}`, fontSize: 7, fontFamily: PDF.fontBold, backgroundColor: PDF.cream, justifyContent: 'center', alignItems: 'center', textAlign: 'center' },
+  bandRow: { flexDirection: 'row', borderBottom: `1pt solid ${PDF.ink}`, backgroundColor: PDF.cream, minHeight: 18 },
+  bandCell: { padding: 4, fontSize: 8, fontFamily: PDF.fontBold, color: PDF.ink, textAlign: 'center', justifyContent: 'center' },
+  subHeader: { fontSize: 6, fontFamily: PDF.fontBold, color: PDF.gold, marginBottom: 1 },
   entry: { fontSize: 7, marginBottom: 1 },
-  footnote: { marginTop: 8, fontSize: 7, color: '#555', fontStyle: 'italic' },
-  legendPage: { paddingTop: 28, paddingBottom: 42, paddingHorizontal: 36, fontSize: 10, fontFamily: 'Helvetica' },
-  legendTitle: { fontSize: 16, fontFamily: 'Helvetica-Bold', color: '#1B2A4A', marginBottom: 12 },
+  footnote: { marginTop: 8, fontSize: 7, color: PDF.mute, fontStyle: 'italic' },
+  legendPage: { paddingTop: 28, paddingBottom: 42, paddingHorizontal: 36, fontSize: 10, fontFamily: PDF.font },
+  legendTitle: { fontSize: 16, fontFamily: PDF.fontBold, color: PDF.ink, marginBottom: 12 },
   legendGroup: { marginBottom: 8 },
-  legendSubject: { fontSize: 11, fontFamily: 'Helvetica-Bold', color: '#C5A55A', marginBottom: 3 },
+  legendSubject: { fontSize: 11, fontFamily: PDF.fontBold, color: PDF.gold, marginBottom: 3 },
   legendItem: { fontSize: 9, marginLeft: 12, marginBottom: 2 },
   sessionItem: { fontSize: 6.5, marginBottom: 2 },
 });
 
+// Subject accent from the shared brand band (same hue as grid + xlsx + planner).
 function getSubjectColor(subject?: string): string {
-  if (!subject) return '#1B2A4A';
-  const s = subject.toLowerCase();
-  if (s.includes('art')) return '#D97706';
-  if (s.includes('music')) return '#2563EB';
-  if (s.includes('pe') || s.includes('physical')) return '#16A34A';
-  if (s.includes('library') || s.includes('media')) return '#92400E';
-  if (s.includes('spanish') || s.includes('language') || s.includes('foreign')) return '#DC2626';
-  if (s.includes('stem') || s.includes('science')) return '#0369A1';
-  if (s.includes('tech') || s.includes('computer')) return '#7C3AED';
-  if (s.includes('drama') || s.includes('theater')) return '#9333EA';
-  if (s.includes('dance')) return '#BE185D';
-  return '#C5A55A';
+  if (!subject) return PDF.ink;
+  return pdfSubjectColors(subject).accent;
 }
 
 function uniqueTimeSlots(blocks: any[]): { start: string; end: string }[] {
@@ -202,6 +195,7 @@ export const AdminOverview = ({
   recessConfig = [],
   schoolName,
   schoolYear,
+  quote,
 }: AdminOverviewProps) => {
   const specialistsById = new Map(specialists.map((s) => [s.id, s]));
   const teachersById = new Map(teachers.map((t) => [t.id, t]));
@@ -314,12 +308,12 @@ export const AdminOverview = ({
             if (isLunchTime(slot.start)) {
               return (
                 <View key={`band-l-${slotIdx}`} style={styles.bandRow} wrap={false}>
-                  <View style={[styles.timeCell, { width: `${timeColW}%`, backgroundColor: '#F5EFE0' }]}>
+                  <View style={[styles.timeCell, { width: `${timeColW}%`, backgroundColor: PDF.cream }]}>
                     <Text>{fmtTime(slot.start)}–{fmtTime(lunchStarts.get(slot.start))}</Text>
                   </View>
                   {DAYS.map((d) => (
                     <View key={d.key} style={[styles.cell, { width: `${dayColW}%`, justifyContent: 'center' }]}>
-                      <Text style={{ fontSize: 7, textAlign: 'center', fontFamily: 'Helvetica-Bold' }}>
+                      <Text style={{ fontSize: 7, textAlign: 'center', fontFamily: PDF.fontBold }}>
                         {lunchLabelForDay(d.key)}
                       </Text>
                     </View>
@@ -329,8 +323,8 @@ export const AdminOverview = ({
             }
 
             return (
-              <View key={`row-${slotIdx}`} style={[styles.row, slotIdx % 2 === 1 ? { backgroundColor: '#F9FAFB' } : {}]} wrap={false}>
-                <View style={[styles.timeCell, { width: `${timeColW}%` }, slotIdx % 2 === 1 ? { backgroundColor: '#F5EFE0' } : {}]}>
+              <View key={`row-${slotIdx}`} style={[styles.row, slotIdx % 2 === 1 ? { backgroundColor: PDF.zebra } : {}]} wrap={false}>
+                <View style={[styles.timeCell, { width: `${timeColW}%` }, slotIdx % 2 === 1 ? { backgroundColor: PDF.cream } : {}]}>
                   <Text>{fmtTime(slot.start)}</Text>
                   <Text>{fmtTime(slot.end)}</Text>
                 </View>
@@ -360,9 +354,9 @@ export const AdminOverview = ({
         )}
 
         <View style={styles.brandFooter} fixed>
-          <Text>www.GoToSpecialClass.com</Text>
-          <Text style={styles.brandFooterMute}>Generated by Specialist Ops!  ♥  Next Specials Class</Text>
-          <Text>info@GoToSpecialClass.com</Text>
+          <Text>{PDF_BRAND.domain}</Text>
+          <Text style={styles.brandFooterMute}>{quote?.trim() ? `"${quote.trim()}"` : PDF_BRAND.footerTag}</Text>
+          <Text render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
         </View>
       </Page>
 
@@ -381,7 +375,7 @@ export const AdminOverview = ({
         </View>
         <Text style={styles.legendTitle}>Lunch Clubs</Text>
         {clubs.length === 0 ? (
-          <Text style={{ fontSize: 10, color: '#777' }}>No lunch clubs configured.</Text>
+          <Text style={{ fontSize: 10, color: PDF.mute }}>No lunch clubs configured.</Text>
         ) : (
           Object.entries(clubsBySubject).map(([subj, names]) => (
             <View key={subj} style={styles.legendGroup}>
@@ -414,9 +408,9 @@ export const AdminOverview = ({
         )}
 
         <View style={styles.brandFooter} fixed>
-          <Text>www.GoToSpecialClass.com</Text>
-          <Text style={styles.brandFooterMute}>Generated by Specialist Ops!  ♥  Next Specials Class</Text>
-          <Text>info@GoToSpecialClass.com</Text>
+          <Text>{PDF_BRAND.domain}</Text>
+          <Text style={styles.brandFooterMute}>{quote?.trim() ? `"${quote.trim()}"` : PDF_BRAND.footerTag}</Text>
+          <Text render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
         </View>
       </Page>
     </Document>

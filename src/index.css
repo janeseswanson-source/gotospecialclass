@@ -3,94 +3,111 @@
 @tailwind utilities;
 
 @layer base {
+  /* ── Navy + gold on warm paper. TOKENS ARE DERIVED FROM src/brand/brand.ts ──
+     (PALETTE, in HSL). If you change a value, change it in brand.ts too — the
+     brand-tokens vitest test asserts these stay in sync. AA-checked on paper. */
   :root {
-    /* Specialist Ops! brand palette — all HSL */
-    --background: 222 33% 97%;
-    --foreground: 215 50% 10%;
+    --background: 40 33% 97%;       /* paper */
+    --foreground: 219 45% 13%;      /* inkText */
 
-    --card: 0 0% 100%;
-    --card-foreground: 215 50% 10%;
+    --card: 40 25% 99%;             /* paperCard */
+    --card-foreground: 219 45% 13%;
 
-    --popover: 0 0% 100%;
-    --popover-foreground: 215 50% 10%;
+    --popover: 40 25% 99%;
+    --popover-foreground: 219 45% 13%;
 
-    --primary: 214 54% 40%;
+    --primary: 215 44% 30%;         /* navy */
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 220 30% 96%;
-    --secondary-foreground: 215 50% 10%;
+    --secondary: 40 22% 93%;
+    --secondary-foreground: 219 45% 13%;
 
-    --muted: 220 25% 94%;
-    --muted-foreground: 218 18% 44%;
+    --muted: 40 20% 93%;
+    --muted-foreground: 220 9% 40%; /* mute */
 
-    --accent: 28 91% 54%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 42 52% 55%;           /* gold */
+    --accent-foreground: 219 46% 20%; /* ink — dark on gold (AA) */
 
-    --destructive: 0 84% 60%;
+    --gold: 40 60% 38%;             /* goldDeep — AA-safe gold for small text */
+    --gold-foreground: 0 0% 100%;
+
+    --destructive: 0 68% 48%;
     --destructive-foreground: 0 0% 100%;
 
-    --success: 152 70% 42%;
+    --success: 152 55% 36%;
     --success-foreground: 0 0% 100%;
 
-    --warning: 43 87% 62%;
-    --warning-foreground: 215 50% 10%;
+    --warning: 38 82% 48%;
+    --warning-foreground: 219 46% 20%;
 
-    --purple: 262 100% 71%;
+    --purple: 276 58% 42%;
     --purple-foreground: 0 0% 100%;
 
-    --border: 218 33% 92%;
-    --input: 218 33% 92%;
-    --ring: 214 54% 40%;
+    --border: 40 18% 88%;
+    --input: 40 18% 88%;
+    --ring: 215 44% 30%;
 
     --radius: 0.625rem;
 
-    --sidebar-background: 214 58% 33%;
+    --sidebar-background: 219 46% 20%;   /* ink */
     --sidebar-foreground: 0 0% 100%;
-    --sidebar-primary: 0 0% 100%;
-    --sidebar-primary-foreground: 214 58% 33%;
-    --sidebar-accent: 214 58% 28%;
+    --sidebar-primary: 42 52% 55%;       /* gold */
+    --sidebar-primary-foreground: 219 46% 20%;
+    --sidebar-accent: 219 44% 26%;
     --sidebar-accent-foreground: 0 0% 100%;
-    --sidebar-border: 214 50% 38%;
-    --sidebar-ring: 28 91% 54%;
+    --sidebar-border: 219 40% 30%;
+    --sidebar-ring: 42 52% 55%;
   }
 
   .dark {
-    --background: 215 50% 7%;
-    --foreground: 220 20% 90%;
+    --background: 219 40% 8%;
+    --foreground: 40 20% 90%;
 
-    --card: 215 45% 10%;
-    --card-foreground: 220 20% 90%;
+    --card: 219 38% 11%;
+    --card-foreground: 40 20% 90%;
 
-    --popover: 215 45% 10%;
-    --popover-foreground: 220 20% 90%;
+    --popover: 219 38% 11%;
+    --popover-foreground: 40 20% 90%;
 
-    --primary: 214 54% 50%;
-    --primary-foreground: 0 0% 100%;
+    --primary: 214 62% 62%;         /* navyLift — bright navy-blue */
+    --primary-foreground: 219 46% 12%;
 
-    --secondary: 217 32% 17%;
-    --secondary-foreground: 220 20% 90%;
+    --secondary: 219 30% 17%;
+    --secondary-foreground: 40 20% 90%;
 
-    --muted: 217 32% 17%;
-    --muted-foreground: 218 18% 60%;
+    --muted: 219 30% 17%;
+    --muted-foreground: 220 12% 62%;
 
-    --accent: 28 91% 54%;
-    --accent-foreground: 0 0% 100%;
+    --accent: 42 55% 58%;           /* gold (lifted for dark) */
+    --accent-foreground: 219 46% 12%;
 
-    --destructive: 0 62% 30%;
+    --gold: 42 55% 58%;
+    --gold-foreground: 219 46% 12%;
+
+    --destructive: 0 62% 45%;
     --destructive-foreground: 0 0% 100%;
 
-    --border: 217 32% 17%;
-    --input: 217 32% 17%;
-    --ring: 214 54% 50%;
+    --success: 152 50% 45%;
+    --success-foreground: 219 46% 10%;
 
-    --sidebar-background: 215 50% 7%;
-    --sidebar-foreground: 220 20% 90%;
-    --sidebar-primary: 214 54% 50%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 217 32% 15%;
-    --sidebar-accent-foreground: 220 20% 90%;
-    --sidebar-border: 217 32% 17%;
-    --sidebar-ring: 28 91% 54%;
+    --warning: 38 80% 55%;
+    --warning-foreground: 219 46% 12%;
+
+    --purple: 276 55% 66%;
+    --purple-foreground: 219 46% 12%;
+
+    --border: 219 30% 18%;
+    --input: 219 30% 18%;
+    --ring: 214 62% 62%;
+
+    --sidebar-background: 219 42% 9%;
+    --sidebar-foreground: 40 20% 88%;
+    --sidebar-primary: 42 55% 58%;
+    --sidebar-primary-foreground: 219 46% 12%;
+    --sidebar-accent: 219 32% 15%;
+    --sidebar-accent-foreground: 40 20% 88%;
+    --sidebar-border: 219 30% 18%;
+    --sidebar-ring: 42 55% 58%;
   }
 }
 
@@ -116,7 +133,7 @@
   }
   .animate-hover-lift:hover {
     transform: translateY(-2px);
-    box-shadow: 0 8px 25px -8px hsl(214 54% 40% / 0.15);
+    box-shadow: 0 8px 25px -8px hsl(219 46% 20% / 0.18);
   }
   /* Attention glow for blocks just changed by the AI editor —
      pulses a sky-blue halo + background wash so the edits are unmissable. */
@@ -192,15 +209,15 @@
   }
 
   th {
-    background: #2c4a7c !important;
+    background: #1C2C4A !important; /* brand ink navy */
     color: white !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
 
   /* Preserve block cell colors */
-  .print\:text-muted-foreground\/60 { color: hsl(218 18% 44% / 0.6) !important; }
-  .print\:text-muted-foreground\/50 { color: hsl(218 18% 44% / 0.5) !important; }
+  .print\:text-muted-foreground\/60 { color: hsl(220 9% 40% / 0.6) !important; }
+  .print\:text-muted-foreground\/50 { color: hsl(220 9% 40% / 0.5) !important; }
 
   /* Force color printing for schedule blocks */
   * {

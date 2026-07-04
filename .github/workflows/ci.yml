@@ -35,6 +35,17 @@ jobs:
         run: deno test --no-check --allow-hrtime supabase/functions/generate-cpsat/_spec_builder_test.ts
       - name: generation-job state-machine tests
         run: deno test --no-check supabase/functions/run-generation-job/_stepJob_test.ts
+      - name: Rate-limit / observability / health type-check
+        run: deno check supabase/functions/_shared/rateLimit.ts supabase/functions/_shared/observability.ts supabase/functions/health/index.ts
+      - name: Parser smoke + RLS isolation tests (skip without secrets)
+        env:
+          # When these repo secrets are set the tests EXECUTE against real infra;
+          # otherwise each test ignores itself and the step still passes.
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: deno test --no-check --allow-env --allow-net supabase/functions/_tests/
 
   frontend:
     runs-on: ubuntu-latest
@@ -49,6 +60,69 @@ jobs:
         run: npm run test
       - name: Production build
         run: npm run build
+
+  # Lighthouse perf budget on the built SPA shell (the initial-load bundle every
+  # route boots from) — always runs, no secrets needed.
+  lighthouse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Lighthouse CI — SPA shell (perf >= 0.85)
+        run: npx --yes @lhci/cli@0.14.x autorun
+
+  # Lighthouse against the AUTHENTICATED dashboard + master schedule. Seeds a test
+  # user/session (scripts/ci-auth-setup.mjs) that the puppeteer hook injects into
+  # localStorage. No-ops cleanly if the SUPABASE_* secrets aren't configured.
+  lighthouse-authed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Seed auth session
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run ci:auth-setup
+      - name: Lighthouse CI — authed routes (perf >= 0.85)
+        run: npx --yes @lhci/cli@0.14.x autorun --config=lighthouserc.authed.json
+
+  # Accessibility (axe) sweep on the five main pages via Playwright. Fails on
+  # critical/serious violations. Authed pages self-skip without a seeded session.
+  a11y:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Build
+        run: npm run build
+      - name: Seed auth session
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: npm run ci:auth-setup
+      - name: axe a11y sweep
+        run: npm run test:a11y
 
   solver:
     runs-on: ubuntu-latest

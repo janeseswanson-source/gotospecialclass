@@ -1,41 +1,38 @@
-// Shared subject color tokens. Toned-down style: neutral surface for the
-// cell, with a colored left border + subject-tinted title as the only
-// "accent". Keeps the schedule readable without feeling like a rainbow.
+// On-screen subject colors — derived from the ONE brand source of truth
+// (src/brand/brand.ts). A subject's hue/saturation/lightness here is IDENTICAL
+// to its xlsx fill and pdf chip, so a subject is the same color on screen, in
+// the spreadsheet, and on paper. Toned-down: neutral cell surface, subject color
+// only as a left border + title accent (keeps the grid readable, not a rainbow).
+//
+// The color tokens (`subject-art`, `subject-art-dk`, `subject-art-fill`, …) are
+// registered in tailwind.config.ts from brand's SUBJECT_HUES/SUBJECT_BAND and
+// safelisted, so these template-literal class names resolve.
 
-const SUBJECT_STYLES: Array<{
-  keywords: string[];
-  accentText: string;
-  leftBorderClass: string;
-}> = [
-  { keywords: ['art'], accentText: 'text-purple', leftBorderClass: 'border-l-purple' },
-  { keywords: ['music'], accentText: 'text-primary', leftBorderClass: 'border-l-primary' },
-  { keywords: ['pe', 'physical', 'gym'], accentText: 'text-success', leftBorderClass: 'border-l-success' },
-  { keywords: ['library', 'media'], accentText: 'text-warning-foreground', leftBorderClass: 'border-l-warning' },
-  { keywords: ['tech', 'computer'], accentText: 'text-[hsl(190,70%,35%)] dark:text-[hsl(190,70%,55%)]', leftBorderClass: 'border-l-[hsl(190,70%,45%)]' },
-  { keywords: ['science', 'stem'], accentText: 'text-destructive', leftBorderClass: 'border-l-destructive' },
-  { keywords: ['spanish', 'language', 'foreign'], accentText: 'text-orange-700 dark:text-orange-400', leftBorderClass: 'border-l-orange-500' },
-  { keywords: ['drama', 'theater', 'theatre'], accentText: 'text-pink-700 dark:text-pink-400', leftBorderClass: 'border-l-pink-500' },
-  { keywords: ['dance'], accentText: 'text-rose-700 dark:text-rose-400', leftBorderClass: 'border-l-rose-500' },
-];
+import { subjectKey } from "@/brand/brand";
 
-function matchSubject(subject: string): typeof SUBJECT_STYLES[0] | undefined {
-  const s = subject.toLowerCase();
-  return SUBJECT_STYLES.find(entry => entry.keywords.some(k => s.includes(k)));
+/** Brand token name for a subject ("subject-art", … or "subject-gold"). */
+function token(subject?: string | null): string {
+  const k = subjectKey(subject);
+  return k ? `subject-${k}` : "subject-gold";
 }
 
 /** Neutral cell surface. Subject identity = left border + title color. */
 export function getSubjectColorClass(_subject?: string | null): string {
-  return 'bg-card hover:bg-muted/40 text-foreground border-border';
+  return "bg-card hover:bg-muted/40 text-foreground border-border";
 }
 
 export function getSubjectLeftBorderClass(subject?: string | null): string {
-  if (!subject) return 'border-l-[3px] border-l-border';
-  return `border-l-[3px] ${matchSubject(subject)?.leftBorderClass ?? 'border-l-accent'}`;
+  return `border-l-[3px] border-l-${token(subject)}`;
 }
 
 export function getSubjectAccentTextClass(subject?: string | null): string {
-  if (!subject) return 'text-foreground';
-  return matchSubject(subject)?.accentText ?? 'text-accent';
+  const t = token(subject);
+  return `text-${t} dark:text-${t}-dk`;
+}
+
+/** Soft subject fill (used where a tinted chip/cell is wanted). */
+export function getSubjectFillClass(subject?: string | null): string {
+  return `bg-${token(subject)}-fill`;
 }
 
 export function getSubjectBadgeClass(subject?: string | null): string {

@@ -27,7 +27,13 @@ import type {
   HighlighterGeneric,
   ThemedToken,
 } from "shiki";
-import { createHighlighter } from "shiki";
+// Use shiki/core with a curated language set instead of the full `shiki` bundle.
+// The bundle statically references every grammar as an async chunk (wolfram,
+// emacs-lisp, cpp, … — megabytes of never-used code); core + explicit imports
+// keeps only what the chat renders: JSON tool payloads and markdown. The JS regex
+// engine avoids shipping the oniguruma WASM too.
+import { createHighlighterCore } from "@shikijs/core";
+import { createJavaScriptRegexEngine } from "@shikijs/engine-javascript";
 
 // Shiki uses bitflags for font styles: 1=italic, 2=bold, 4=underline
 // oxlint-disable-next-line eslint(no-bitwise)
@@ -129,11 +135,10 @@ const CodeBlockContext = createContext<CodeBlockContextType>({
   code: "",
 });
 
-// Highlighter cache (singleton per language)
-const highlighterCache = new Map<
-  string,
-  Promise<HighlighterGeneric<BundledLanguage, BundledTheme>>
->();
+// Single core highlighter for the only languages the chat ever renders.
+let coreHighlighter: Promise<
+  HighlighterGeneric<BundledLanguage, BundledTheme>
+> | null = null;
 
 // Token cache
 const tokensCache = new Map<string, TokenizedCode>();
@@ -147,21 +152,26 @@ const getTokensCacheKey = (code: string, language: BundledLanguage) => {
   return `${language}:${code.length}:${start}:${end}`;
 };
 
-const getHighlighter = (
-  language: BundledLanguage
-): Promise<HighlighterGeneric<BundledLanguage, BundledTheme>> => {
-  const cached = highlighterCache.get(language);
-  if (cached) {
-    return cached;
+const getHighlighter = (): Promise<
+  HighlighterGeneric<BundledLanguage, BundledTheme>
+> => {
+  if (coreHighlighter) {
+    return coreHighlighter;
   }
 
-  const highlighterPromise = createHighlighter({
-    langs: [language],
-    themes: ["github-light", "github-dark"],
-  });
+  coreHighlighter = createHighlighterCore({
+    langs: [
+      import("@shikijs/langs/json"),
+      import("@shikijs/langs/markdown"),
+    ],
+    themes: [
+      import("@shikijs/themes/github-light"),
+      import("@shikijs/themes/github-dark"),
+    ],
+    engine: createJavaScriptRegexEngine(),
+  }) as Promise<HighlighterGeneric<BundledLanguage, BundledTheme>>;
 
-  highlighterCache.set(language, highlighterPromise);
-  return highlighterPromise;
+  return coreHighlighter;
 };
 
 // Create raw tokens for immediate display while highlighting loads
@@ -204,10 +214,11 @@ export const highlightCode = (
   }
 
   // Start highlighting in background - fire-and-forget async pattern
-  getHighlighter(language)
+  getHighlighter()
     // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then)
     .then((highlighter) => {
       const availableLangs = highlighter.getLoadedLanguages();
+      // Core only carries json + markdown; anything else falls back to plain text.
       const langToUse = availableLangs.includes(language) ? language : "text";
 
       const result = highlighter.codeToTokens(code, {

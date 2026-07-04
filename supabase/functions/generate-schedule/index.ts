@@ -2443,10 +2443,17 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // Phase 3A: deterministic quote pick (no Math.random in scheduler-touching code).
+    // Quote: prefer the latest AI-generated quote for this school (quotes table);
+    // fall back to a deterministic static pick so a schedule always ships with one.
     let quoteSeed = 0;
     for (let i = 0; i < school_id.length; i++) quoteSeed = (quoteSeed * 31 + school_id.charCodeAt(i)) >>> 0;
-    const quote = quotes[quoteSeed % quotes.length];
+    let quote: { text: string; author: string } = quotes[quoteSeed % quotes.length];
+    try {
+      const { data: latestQuote } = await supabase
+        .from("quotes").select("text").eq("school_id", school_id)
+        .order("created_at", { ascending: false }).limit(1).maybeSingle();
+      if (latestQuote?.text) quote = { text: latestQuote.text, author: "Specialist Ops!" };
+    } catch { /* keep the static fallback */ }
 
     // Allocate the next version, retrying on a UNIQUE(school_id, version) race so
     // two concurrent generations can't collide on the same version number.

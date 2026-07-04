@@ -18,9 +18,13 @@ export function useCalendarUpload(schoolId: string | null) {
   const [parsing, setParsing] = useState(false);
 
   const uploadAndParse = async (
-    input: UploadAndParseInput
+    input: UploadAndParseInput,
+    // Fresh school id when the caller created the school just now (Quick Setup)
+    // and the hook's captured `schoolId` is still stale.
+    schoolIdOverride?: string | null,
   ): Promise<UploadAndParseResult | null> => {
-    if (!schoolId) {
+    const sid = schoolIdOverride ?? schoolId;
+    if (!sid) {
       toast.error('School not set up yet. Please complete School Info first.');
       return null;
     }
@@ -53,7 +57,7 @@ export function useCalendarUpload(schoolId: string | null) {
       let recordFileSize: number;
 
       if (useFile && file) {
-        filePath = `${schoolId}/${Date.now()}_${file.name}`;
+        filePath = `${sid}/${Date.now()}_${file.name}`;
         const { error: storageError } = await supabase.storage
           .from('calendar-uploads')
           .upload(filePath, file);
@@ -74,7 +78,7 @@ export function useCalendarUpload(schoolId: string | null) {
       const { data: uploadRecord, error: insertError } = await supabase
         .from('calendar_uploads')
         .insert({
-          school_id: schoolId,
+          school_id: sid,
           file_name: recordFileName,
           file_path: recordFilePath,
           file_size: recordFileSize,
@@ -92,8 +96,8 @@ export function useCalendarUpload(schoolId: string | null) {
       setParsing(true);
 
       const body = useFile
-        ? { file_path: filePath, school_id: schoolId, upload_id: uploadRecord.id }
-        : { calendar_url: url, school_id: schoolId, upload_id: uploadRecord.id };
+        ? { file_path: filePath, school_id: sid, upload_id: uploadRecord.id }
+        : { calendar_url: url, school_id: sid, upload_id: uploadRecord.id };
 
       const { data: parseResult, error: parseError } = await supabase.functions.invoke(
         'parse-calendar',

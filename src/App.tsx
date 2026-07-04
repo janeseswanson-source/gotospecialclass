@@ -5,51 +5,64 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ThemeProvider } from "next-themes";
+import { Suspense } from "react";
 import ProtectedRoute from "@/components/ProtectedRoute";
 import GatedRoute from "@/components/GatedRoute";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { RouteFallback } from "@/components/RouteFallback";
+import { lazyWithRetry } from "@/lib/lazyWithRetry";
 
-// Legal pages
-import TermsPage from "@/pages/legal/TermsPage";
-import PrivacyPage from "@/pages/legal/PrivacyPage";
-
-// Layouts
+// Layouts + guards stay eager — they render the shell around every lazy route.
 import AppLayout from "@/components/layouts/AppLayout";
 import AdminLayout from "@/components/layouts/AdminLayout";
-
-// Auth pages
-import LoginPage from "@/pages/auth/LoginPage";
-import SignupPage from "@/pages/auth/SignupPage";
-import ForgotPasswordPage from "@/pages/auth/ForgotPasswordPage";
-import ResetPasswordPage from "@/pages/auth/ResetPasswordPage";
-import EmailConfirmationPage from "@/pages/auth/EmailConfirmationPage";
-
-// Public
-import LandingPage from "@/pages/LandingPage";
-
-// App pages
-import DashboardPage from "@/pages/dashboard/DashboardPage";
-import SetupPage from "@/pages/setup/SetupPage";
-import CoordinatorPrep from "@/pages/setup/CoordinatorPrep";
-import PrepPage from "@/pages/schedule/PrepPage";
-import MasterSchedulePage from "@/pages/schedule/MasterSchedulePage";
-import MasterAdminViewPage from "@/pages/schedule/MasterAdminViewPage";
-import SpecialistPlannerPage from "@/pages/schedule/SpecialistPlannerPage";
-import LessonPlannerPage from "@/pages/schedule/LessonPlannerPage";
-import ExportsPage from "@/pages/schedule/ExportsPage";
-import ScheduleSuccessPage from "@/pages/schedule/ScheduleSuccessPage";
-import BillingPage from "@/pages/app/BillingPage";
-import SettingsPage from "@/pages/app/SettingsPage";
-import SchoolsPage from "@/pages/app/SchoolsPage";
-
-// Admin pages
-import { AdminOverview, AdminRevenue, AdminUsers, AdminWorkspaces, AdminSchools, AdminCRM, AdminLicenses, AdminBilling, AdminCosts, AdminAICosts, AdminActivity, AdminSettings } from "@/pages/admin/AdminPages";
 import AdminProtectedRoute from "@/components/admin/AdminProtectedRoute";
 
-import AcceptInvitePage from "@/pages/auth/AcceptInvitePage";
-import HelpPage from "@/pages/app/HelpPage";
-import AdminSupportPage from "@/pages/admin/AdminSupportPage";
-import NotFound from "./pages/NotFound";
+// Every route group is code-split with React.lazy so the initial bundle carries
+// only the shell + the landing page. Heavy feature deps (schedule grid, PDF,
+// xlsx, AI chat) ride along in their own route chunks, loaded on navigation.
+
+// Public / auth
+const LandingPage = lazyWithRetry(() => import("@/pages/LandingPage"));
+const LoginPage = lazyWithRetry(() => import("@/pages/auth/LoginPage"));
+const SignupPage = lazyWithRetry(() => import("@/pages/auth/SignupPage"));
+const ForgotPasswordPage = lazyWithRetry(() => import("@/pages/auth/ForgotPasswordPage"));
+const ResetPasswordPage = lazyWithRetry(() => import("@/pages/auth/ResetPasswordPage"));
+const EmailConfirmationPage = lazyWithRetry(() => import("@/pages/auth/EmailConfirmationPage"));
+const AcceptInvitePage = lazyWithRetry(() => import("@/pages/auth/AcceptInvitePage"));
+const TermsPage = lazyWithRetry(() => import("@/pages/legal/TermsPage"));
+const PrivacyPage = lazyWithRetry(() => import("@/pages/legal/PrivacyPage"));
+
+// App pages
+const DashboardPage = lazyWithRetry(() => import("@/pages/dashboard/DashboardPage"));
+const SetupPage = lazyWithRetry(() => import("@/pages/setup/SetupPage"));
+const CoordinatorPrep = lazyWithRetry(() => import("@/pages/setup/CoordinatorPrep"));
+const PrepPage = lazyWithRetry(() => import("@/pages/schedule/PrepPage"));
+const MasterSchedulePage = lazyWithRetry(() => import("@/pages/schedule/MasterSchedulePage"));
+const MasterAdminViewPage = lazyWithRetry(() => import("@/pages/schedule/MasterAdminViewPage"));
+const SpecialistPlannerPage = lazyWithRetry(() => import("@/pages/schedule/SpecialistPlannerPage"));
+const LessonPlannerPage = lazyWithRetry(() => import("@/pages/schedule/LessonPlannerPage"));
+const ExportsPage = lazyWithRetry(() => import("@/pages/schedule/ExportsPage"));
+const ScheduleSuccessPage = lazyWithRetry(() => import("@/pages/schedule/ScheduleSuccessPage"));
+const BillingPage = lazyWithRetry(() => import("@/pages/app/BillingPage"));
+const SettingsPage = lazyWithRetry(() => import("@/pages/app/SettingsPage"));
+const SchoolsPage = lazyWithRetry(() => import("@/pages/app/SchoolsPage"));
+const HelpPage = lazyWithRetry(() => import("@/pages/app/HelpPage"));
+
+// Admin pages (each is a named export from the AdminPages barrel)
+const AdminOverview = lazyWithRetry(() => import("@/pages/admin/AdminPages").then((m) => ({ default: m.AdminOverview })));
+const AdminRevenue = lazyWithRetry(() => import("@/pages/admin/AdminPages").then((m) => ({ default: m.AdminRevenue })));
+const AdminUsers = lazyWithRetry(() => import("@/pages/admin/AdminPages").then((m) => ({ default: m.AdminUsers })));
+const AdminWorkspaces = lazyWithRetry(() => import("@/pages/admin/AdminPages").then((m) => ({ default: m.AdminWorkspaces })));
+const AdminSchools = lazyWithRetry(() => import("@/pages/admin/AdminPages").then((m) => ({ default: m.AdminSchools })));
+const AdminCRM = lazyWithRetry(() => import("@/pages/admin/AdminPages").then((m) => ({ default: m.AdminCRM })));
+const AdminLicenses = lazyWithRetry(() => import("@/pages/admin/AdminPages").then((m) => ({ default: m.AdminLicenses })));
+const AdminBilling = lazyWithRetry(() => import("@/pages/admin/AdminPages").then((m) => ({ default: m.AdminBilling })));
+const AdminCosts = lazyWithRetry(() => import("@/pages/admin/AdminPages").then((m) => ({ default: m.AdminCosts })));
+const AdminAICosts = lazyWithRetry(() => import("@/pages/admin/AdminPages").then((m) => ({ default: m.AdminAICosts })));
+const AdminActivity = lazyWithRetry(() => import("@/pages/admin/AdminPages").then((m) => ({ default: m.AdminActivity })));
+const AdminSettings = lazyWithRetry(() => import("@/pages/admin/AdminPages").then((m) => ({ default: m.AdminSettings })));
+const AdminSupportPage = lazyWithRetry(() => import("@/pages/admin/AdminSupportPage"));
+const NotFound = lazyWithRetry(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient();
 
@@ -62,6 +75,7 @@ const App = () => (
             <Toaster />
             <Sonner />
             <BrowserRouter>
+              <Suspense fallback={<RouteFallback />}>
               <Routes>
                 {/* Public routes */}
                 <Route path="/" element={<LandingPage />} />
@@ -112,6 +126,7 @@ const App = () => (
 
                 <Route path="*" element={<NotFound />} />
               </Routes>
+              </Suspense>
             </BrowserRouter>
           </TooltipProvider>
         </ThemeProvider>

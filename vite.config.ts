@@ -24,6 +24,37 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    // Route chunks are already split via React.lazy; group stable vendors so they
+    // cache across deploys and don't bloat any single feature chunk. Heavy,
+    // point-of-use libs (pdf, exceljs, mermaid/shiki via streamdown) are pulled in
+    // through dynamic import() and get their own async chunks automatically.
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "react-vendor": ["react", "react-dom", "react-router-dom"],
+          "ui-vendor": [
+            "@radix-ui/react-dialog",
+            "@radix-ui/react-dropdown-menu",
+            "@radix-ui/react-popover",
+            "@radix-ui/react-select",
+            "@radix-ui/react-tooltip",
+            "cmdk",
+            "vaul",
+          ],
+          "dnd-vendor": ["@dnd-kit/core", "@dnd-kit/sortable", "@dnd-kit/utilities"],
+          "charts-vendor": ["recharts"],
+          "supabase-vendor": ["@supabase/supabase-js"],
+        },
+      },
+    },
+    // The initial route (index ≈ 124 KB gz) is the number that matters and is
+    // enforced by React.lazy route-splitting. The remaining large chunks are all
+    // dynamic-import()'d, off-critical-path libraries — @react-pdf (~1.45 MB) and
+    // ExcelJS (~945 KB) — that only load when a coordinator exports. Set the warn
+    // limit above those so the build stays clean without hiding real regressions.
+    chunkSizeWarningLimit: 1600,
+  },
   define: {
     __SUPABASE_URL_FALLBACK__: JSON.stringify(
       process.env.VITE_SUPABASE_URL || FALLBACK_SUPABASE_URL

@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { anthropicApiKey, anthropicClient, CLAUDE_MODEL, firstToolUse, describeAnthropicError } from "../_shared/anthropic.ts";
+import { anthropicApiKey, anthropicClient, MODELS, firstToolUse, describeAnthropicError } from "../_shared/anthropic.ts";
+import { enforceRateLimit, rateLimitResponse } from "../_shared/rateLimit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -28,6 +29,11 @@ serve(async (req) => {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    // Per-user rate limit (20/hr) — logs the attempt to ai_usage_log as it checks.
+    const supabaseAdmin = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+    const rl = await enforceRateLimit(supabaseAdmin, { userId: user.id, feature: "parse_specialist_template", limit: 20 });
+    if (!rl.allowed) return rateLimitResponse(rl, corsHeaders);
 
     const { rows } = await req.json();
     if (!Array.isArray(rows) || rows.length === 0) {
@@ -93,7 +99,7 @@ Add a warning for anything ambiguous or unmapped.`;
     let extracted: any = { specialists: [], warnings: [] };
     try {
       const resp = await anthropicClient().messages.create({
-        model: CLAUDE_MODEL,
+        model: MODELS.fast,
         max_tokens: 4000,
         system: systemPrompt,
         tools: [EXTRACT_TOOL as any],
@@ -107,14 +113,6 @@ Add a warning for anything ambiguous or unmapped.`;
         status, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const supabaseAdmin = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
-    await supabaseAdmin.from("ai_usage_log").insert({
-      workspace_id: null,
-      feature: "parse_specialist_template",
-      tokens_used: 0,
-      cost_estimate: 0,
-    });
 
     return new Response(JSON.stringify(extracted), {
       status: 200,

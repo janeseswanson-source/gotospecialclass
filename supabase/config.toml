@@ -6,6 +6,14 @@ verify_jwt = false
 [functions.parse-calendar]
 verify_jwt = false
 
+# Setup-wizard AI ingestion — self-authenticate via the forwarded JWT (like
+# parse-calendar). Roster + recess natural-language quick-fill.
+[functions.parse-teacher-roster]
+verify_jwt = false
+
+[functions.parse-recess-nl]
+verify_jwt = false
+
 [functions.redeem-license]
 verify_jwt = false
 
@@ -26,3 +34,16 @@ verify_jwt = false
 
 [functions.replan-subgraph]
 verify_jwt = false
+
+# Authenticates the caller (uses their JWT to enforce quotes-table RLS), so keep
+# JWT verification ON — unlike the service-role/anon functions above.
+[functions.generate-quote]
+verify_jwt = true
+
+# Optional AI lesson-starter — signed-in users only (no DB access, but gate abuse).
+[functions.generate-lesson-starter]
+verify_jwt = true
+
+# Dependency health probe for the Admin status card — signed-in only.
+[functions.health]
+verify_jwt = true

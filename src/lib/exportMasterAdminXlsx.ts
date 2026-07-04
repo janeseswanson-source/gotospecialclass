@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { supabase } from '@/integrations/supabase/client';
 import { formatTime } from '@/lib/utils';
+import { NAVY, GOLD, CREAM, WHITE, MUTE, GRIDLINE } from '@/lib/exportColors';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const;
 
@@ -20,11 +21,11 @@ function classifyBlockType(subject: string | null | undefined): string {
   return 'rotation';
 }
 
-// Brand tokens (ARGB for xlsx).
-const BRAND_NAVY = 'FF1B2A4A';
-const BRAND_GOLD = 'FFC5A55A';
-const BRAND_CREAM = 'FFFBF5E6';
-const BRAND_WHITE = 'FFFFFFFF';
+// Brand tokens (ARGB for xlsx) — sourced from the ONE brand palette.
+const BRAND_NAVY = NAVY;
+const BRAND_GOLD = GOLD;
+const BRAND_CREAM = CREAM;
+const BRAND_WHITE = WHITE;
 
 const headerStyle = {
   fill: { patternType: 'solid', fgColor: { rgb: BRAND_NAVY } },
@@ -41,7 +42,7 @@ const titleStyle = {
 };
 
 const subTitleStyle = {
-  font: { name: 'Arial', sz: 9, italic: true, color: { rgb: 'FF6B7280' } },
+  font: { name: 'Arial', sz: 9, italic: true, color: { rgb: MUTE } },
   alignment: { vertical: 'center', horizontal: 'left' },
 };
 
@@ -61,10 +62,10 @@ const cellStyle = {
   font: { name: 'Arial', sz: 9, color: { rgb: BRAND_NAVY } },
   alignment: { vertical: 'top', horizontal: 'left', wrapText: true },
   border: {
-    top: { style: 'thin', color: { rgb: 'FFCFD3DC' } },
-    bottom: { style: 'thin', color: { rgb: 'FFCFD3DC' } },
-    left: { style: 'thin', color: { rgb: 'FFCFD3DC' } },
-    right: { style: 'thin', color: { rgb: 'FFCFD3DC' } },
+    top: { style: 'thin', color: { rgb: GRIDLINE } },
+    bottom: { style: 'thin', color: { rgb: GRIDLINE } },
+    left: { style: 'thin', color: { rgb: GRIDLINE } },
+    right: { style: 'thin', color: { rgb: GRIDLINE } },
   },
 };
 

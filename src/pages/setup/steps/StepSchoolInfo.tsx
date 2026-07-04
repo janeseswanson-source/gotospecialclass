@@ -15,6 +15,8 @@ import { toast } from 'sonner';
 import { Loader2, ChevronDown, Check, Sparkles, Users2, Coffee, ListOrdered } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
+import { useBlurValidation } from '@/components/setup/useBlurValidation';
+import { FieldError } from '@/components/setup/FieldError';
 
 const allGrades = ['K', '1', '2', '3', '4', '5', '6'];
 const presets = [
@@ -34,6 +36,12 @@ const StepSchoolInfo = () => {
   const [keepGradesTogether, setKeepGradesTogether] = useState<boolean>(true);
   const [suggestExtraPlt, setSuggestExtraPlt] = useState<boolean>(false);
   const [extraPltTargetMinutes, setExtraPltTargetMinutes] = useState<number | ''>('');
+
+  // Inline blur validation for the required / constrained fields.
+  const v = useBlurValidation();
+  const nameError = !data.schoolName.trim() ? 'School name is required.' : null;
+  const endError = data.startTime && data.endTime && data.endTime <= data.startTime ? 'End time must be after the start time.' : null;
+  const durationError = !data.classDuration || data.classDuration <= 0 ? 'Enter a class length in minutes.' : null;
 
   // Load existing school data from DB on mount
   useEffect(() => {
@@ -72,6 +80,8 @@ const StepSchoolInfo = () => {
             setupTime: existingSchool.setup_time || 15,
             gradeTimeConfig: (existingSchool.grade_time_config as Record<string, { passingTime?: number; resetTime?: number }>) || {},
             schoolYear: existingSchool.school_year || '2025-2026',
+            schoolYearStart: (existingSchool as any).school_year_start ? String((existingSchool as any).school_year_start).slice(0, 10) : '',
+            schoolYearEnd: (existingSchool as any).school_year_end ? String((existingSchool as any).school_year_end).slice(0, 10) : '',
             gradesServed: existingSchool.grades_served || [],
             notes: existingSchool.notes || '',
             earlyReleaseDay: (existingSchool as any).early_release_day || '',
@@ -120,6 +130,8 @@ const StepSchoolInfo = () => {
         setup_time: data.setupTime,
         grade_time_config: data.gradeTimeConfig,
         school_year: data.schoolYear,
+        school_year_start: data.schoolYearStart || null,
+        school_year_end: data.schoolYearEnd || null,
         grades_served: data.gradesServed,
         notes: data.notes || null,
         early_release_day: data.earlyReleaseDay || null,
@@ -165,7 +177,7 @@ const StepSchoolInfo = () => {
     } catch {
       setSaveStatus('idle');
     }
-  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, data.gradePreference, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, schoolId]);
+  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.schoolYearStart, data.schoolYearEnd, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, data.gradePreference, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, schoolId]);
 
   useFlushOnUnmount(saveTimer, () => { if (isLoaded.current) autoSave(); });
 
@@ -189,6 +201,7 @@ const StepSchoolInfo = () => {
   const rotationsBeforeSchool = Boolean(data.rotationsStartTime && data.startTime && data.rotationsStartTime < data.startTime);
 
   const handleContinue = () => {
+    v.touchAll(['schoolName', 'endTime', 'classDuration']);
     if (!data.schoolName.trim()) { toast.error('Please enter a school name'); return; }
     if (data.gradesServed.length === 0) { toast.error('Please select at least one grade'); return; }
     if (rotationsBeforeSchool) { toast.error("Rotations can't start before school does."); return; }
@@ -240,7 +253,13 @@ const StepSchoolInfo = () => {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <FieldLabel tooltip="Official school name used in reports and exports">School Name</FieldLabel>
-          <Input value={data.schoolName} onChange={(e) => updateData({ schoolName: e.target.value })} />
+          <Input
+            value={data.schoolName}
+            onChange={(e) => updateData({ schoolName: e.target.value })}
+            onBlur={() => v.touch('schoolName')}
+            aria-invalid={!!v.errorFor('schoolName', nameError)}
+          />
+          <FieldError error={v.errorFor('schoolName', nameError)} />
         </div>
         <div className="space-y-2">
           <FieldLabel tooltip="Used to fetch your school calendar if available">School Website (optional)</FieldLabel>
@@ -260,11 +279,25 @@ const StepSchoolInfo = () => {
         </div>
         <div className="space-y-2">
           <FieldLabel tooltip="Latest dismissal time on a regular day">School End Time</FieldLabel>
-          <Input type="time" value={data.endTime} onChange={(e) => updateData({ endTime: e.target.value })} />
+          <Input
+            type="time"
+            value={data.endTime}
+            onChange={(e) => updateData({ endTime: e.target.value })}
+            onBlur={() => v.touch('endTime')}
+            aria-invalid={!!v.errorFor('endTime', endError)}
+          />
+          <FieldError error={v.errorFor('endTime', endError)} />
         </div>
         <div className="space-y-2">
           <FieldLabel tooltip="Length of each specialist class in minutes (e.g. 45)">Class Duration (min)</FieldLabel>
-          <Input type="number" value={data.classDuration} onChange={(e) => updateData({ classDuration: Number(e.target.value) })} />
+          <Input
+            type="number"
+            value={data.classDuration}
+            onChange={(e) => updateData({ classDuration: Number(e.target.value) })}
+            onBlur={() => v.touch('classDuration')}
+            aria-invalid={!!v.errorFor('classDuration', durationError)}
+          />
+          <FieldError error={v.errorFor('classDuration', durationError)} />
         </div>
         <div className="space-y-2">
           <FieldLabel tooltip="Time classroom teachers are released while students are with a specialist, per week.">Planning Minutes/Week</FieldLabel>
@@ -299,6 +332,14 @@ const StepSchoolInfo = () => {
         <div className="space-y-2">
           <FieldLabel tooltip="Academic year label shown on exports (e.g. 2025–2026)">School Year</FieldLabel>
           <Input value={data.schoolYear} onChange={(e) => updateData({ schoolYear: e.target.value })} />
+        </div>
+        <div className="space-y-2">
+          <FieldLabel tooltip="First instructional day. Anchors A/B and AA/BB week labels to the real calendar. Optional — we estimate from the school year if left blank.">First Day of School (optional)</FieldLabel>
+          <Input type="date" value={data.schoolYearStart} onChange={(e) => updateData({ schoolYearStart: e.target.value })} />
+        </div>
+        <div className="space-y-2">
+          <FieldLabel tooltip="Last instructional day. Bounds the week cycle. Optional — we estimate from the school year if left blank.">Last Day of School (optional)</FieldLabel>
+          <Input type="date" value={data.schoolYearEnd} onChange={(e) => updateData({ schoolYearEnd: e.target.value })} />
         </div>
         <div className="space-y-2">
           <FieldLabel tooltip="Which weekday has early dismissal, if any">Early Release Day</FieldLabel>

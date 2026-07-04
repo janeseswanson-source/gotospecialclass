@@ -3,6 +3,10 @@ import logo from '@/assets/nsc-wordmark.png';
 import badge from '@/assets/logo.png';
 import { CalendarDays, Wand2, Users, Download, School, Shield, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { BRAND } from '@/brand/brand';
+
+// Two-letter monogram for the footer mark, derived from the brand name.
+const MONOGRAM = BRAND.name.replace(/[^A-Za-z]/g, '').slice(0, 2).toUpperCase() || 'SO';
 
 const features = [
   { icon: CalendarDays, title: 'AI Calendar Parsing', desc: 'Upload your school calendar and let AI extract holidays, early releases, and no-school days automatically.' },
@@ -39,7 +43,7 @@ const LandingPage = () => {
       <section className="relative overflow-hidden py-24 sm:py-32">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-accent/5" />
         <div className="relative mx-auto max-w-4xl px-6 text-center">
-          <img src={badge} alt="Specialist Ops! Class Scheduler badge" className="mx-auto mb-6 h-28 w-28 sm:h-32 sm:w-32 drop-shadow-lg" />
+          <img src={badge} alt={`${BRAND.name} Class Scheduler badge`} className="mx-auto mb-6 h-28 w-28 sm:h-32 sm:w-32 drop-shadow-lg" />
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-1.5 text-xs font-medium text-muted-foreground">
             <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
             Built for Grades K–6 Specials Coordinators
@@ -50,7 +54,7 @@ const LandingPage = () => {
             <span className="text-primary">Start Scheduling by AI.</span>
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-lg text-muted-foreground">
-            Specialist Ops! automates Grades K–6 specials scheduling — art, music, PE, library — so you can focus on what matters: your students.
+            {BRAND.name} automates Grades K–6 specials scheduling — art, music, PE, library — so you can focus on what matters: your students.
           </p>
           <div className="mt-10 flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
             <Button size="lg" className="gap-2 text-base px-8" asChild>
@@ -140,15 +144,15 @@ const LandingPage = () => {
       <footer className="border-t border-border bg-card py-10">
         <div className="mx-auto max-w-6xl px-6 flex flex-col items-center gap-6 sm:flex-row sm:justify-between">
           <div className="flex items-center gap-2">
-            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground font-bold text-xs">SO</div>
-            <span className="text-sm font-semibold text-card-foreground">Specialist Ops!</span>
+            <div className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-primary-foreground font-bold text-xs">{MONOGRAM}</div>
+            <span className="text-sm font-semibold text-card-foreground">{BRAND.name}</span>
           </div>
           <div className="flex items-center gap-6">
             <Link to="/terms" className="text-xs text-muted-foreground hover:text-foreground transition-colors">Terms of Service</Link>
             <Link to="/privacy" className="text-xs text-muted-foreground hover:text-foreground transition-colors">Privacy Policy</Link>
             <a href="mailto:support@gotospecialclass.com" className="text-xs text-muted-foreground hover:text-foreground transition-colors">Contact</a>
           </div>
-          <p className="text-xs text-muted-foreground">© {new Date().getFullYear()} Specialist Ops! All rights reserved.</p>
+          <p className="text-xs text-muted-foreground">© {new Date().getFullYear()} {BRAND.name} All rights reserved.</p>
         </div>
       </footer>
     </div>

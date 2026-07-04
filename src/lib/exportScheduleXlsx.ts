@@ -11,6 +11,7 @@ import ExcelJS from "exceljs";
 import { supabase } from "@/integrations/supabase/client";
 import { formatTime } from "@/lib/utils";
 import { NAVY, GOLD, CREAM, WHITE, MUTE, GRIDLINE, ZEBRA, subjectColors, parseMin } from "@/lib/exportColors";
+import { BRAND } from "@/brand/brand";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"] as const;
 const DAY_FULL: Record<string, string> = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday" };
@@ -30,7 +31,7 @@ interface Blk {
   specialist_id: string | null; teacher_id: string | null;
 }
 
-function buildBrandHeader(ws: ExcelJS.Worksheet, lastCol: number, title: string, sub: string) {
+export function buildBrandHeader(ws: ExcelJS.Worksheet, lastCol: number, title: string, sub: string) {
   const colLetter = ws.getColumn(lastCol).letter;
   // Title band (navy)
   ws.mergeCells(`A1:${colLetter}1`);
@@ -51,7 +52,7 @@ function buildBrandHeader(ws: ExcelJS.Worksheet, lastCol: number, title: string,
   ws.getRow(2).height = 22;
 }
 
-function headerCell(cell: ExcelJS.Cell, text: string) {
+export function headerCell(cell: ExcelJS.Cell, text: string) {
   cell.value = text;
   cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
   cell.font = { name: "Arial", size: 10, bold: true, color: { argb: WHITE } };
@@ -64,9 +65,12 @@ export async function exportScheduleXlsx(opts: {
   generationId: string | null;
   schoolName?: string;
   schoolYear?: string;
+  /** Motivational quote printed in the subtitle band of every sheet. */
+  quote?: string;
 }): Promise<boolean> {
-  const { schoolId, generationId } = opts;
+  const { schoolId, generationId, quote } = opts;
   if (!generationId) return false;
+  const quoteTail = quote && quote.trim() ? `  ·  "${quote.trim()}"` : "";
 
   const [{ data: school }, { data: specsData }, { data: teachData }, { data: blocksData }, { data: recessData }] = await Promise.all([
     supabase.from("schools").select("name, school_year, start_time, end_time").eq("id", schoolId).maybeSingle(),
@@ -102,7 +106,7 @@ export async function exportScheduleXlsx(opts: {
   // ── Sheet 1: Master Schedule grid ──
   const ms = wb.addWorksheet("Master Schedule", { views: [{ state: "frozen", xSplit: 1, ySplit: 4 }], properties: { defaultRowHeight: 18 } });
   ms.columns = [{ width: 16 }, ...DAYS.map(() => ({ width: 32 }))];
-  buildBrandHeader(ms, DAYS.length + 1, `Master Schedule — ${schoolName}`, `${schoolYear ? schoolYear + "  ·  " : ""}${school?.start_time ? formatTime(school.start_time) : ""}–${school?.end_time ? formatTime(school.end_time) : ""}  ·  GoToSpecialClass`);
+  buildBrandHeader(ms, DAYS.length + 1, `Master Schedule — ${schoolName}`, `${schoolYear ? schoolYear + "  ·  " : ""}${school?.start_time ? formatTime(school.start_time) : ""}–${school?.end_time ? formatTime(school.end_time) : ""}  ·  ${BRAND.name}${quoteTail}`);
 
   // Day header row (row 3 is spacer-free; put headers at row 3)
   const hdr = ms.getRow(3);
@@ -201,7 +205,7 @@ export async function exportScheduleXlsx(opts: {
     const safe = (spec.name as string).replace(/[\\/?*[\]:]/g, "").slice(0, 28) || "Specialist";
     const ws = wb.addWorksheet(safe, { views: [{ state: "frozen", xSplit: 1, ySplit: 4 }], properties: { defaultRowHeight: 18 } });
     ws.columns = [{ width: 16 }, ...DAYS.map(() => ({ width: 28 }))];
-    buildBrandHeader(ws, DAYS.length + 1, `${spec.name} — ${spec.subject}`, `${schoolName}${schoolYear ? "  ·  " + schoolYear : ""}  ·  GoToSpecialClass`);
+    buildBrandHeader(ws, DAYS.length + 1, `${spec.name} — ${spec.subject}`, `${schoolName}${schoolYear ? "  ·  " + schoolYear : ""}  ·  ${BRAND.name}${quoteTail}`);
     const h = ws.getRow(3);
     headerCell(h.getCell(1), "Time");
     DAYS.forEach((d, i) => headerCell(h.getCell(i + 2), DAY_FULL[d]));

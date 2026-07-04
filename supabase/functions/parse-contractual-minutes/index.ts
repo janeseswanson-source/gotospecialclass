@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { anthropicApiKey, anthropicClient, CLAUDE_MODEL, firstToolUse, describeAnthropicError } from "../_shared/anthropic.ts";
+import { anthropicApiKey, anthropicClient, MODELS, firstToolUse, describeAnthropicError } from "../_shared/anthropic.ts";
+import { enforceRateLimit, rateLimitResponse } from "../_shared/rateLimit.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,6 +44,10 @@ serve(async (req) => {
     }
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    const rl = await enforceRateLimit(supabase, { userId: user.id, feature: "parse_contractual_minutes", limit: 20 });
+    if (!rl.allowed) return rateLimitResponse(rl, corsHeaders);
+
     const { school_id } = await req.json();
     if (!school_id) {
       return new Response(JSON.stringify({ error: "school_id required" }), {
@@ -172,7 +177,7 @@ serve(async (req) => {
     let extracted: unknown = null;
     try {
       const resp = await anthropicClient().messages.create({
-        model: CLAUDE_MODEL,
+        model: MODELS.fast,
         max_tokens: 4000,
         system: SYSTEM_PROMPT,
         tools: [EXTRACT_TOOL as any],

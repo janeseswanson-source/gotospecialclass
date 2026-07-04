@@ -18,7 +18,7 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { CONFLICT_STRATEGIES as strategies, getCategoryTheme } from '@/lib/conflictStrategies';
-import { StrategyPreviewModal } from './conflicts/StrategyPreviewModal';
+import { StrategyPreviewModal, getStrategyPreviewBlurb } from './conflicts/StrategyPreviewModal';
 
 const allGrades = ['K', '1', '2', '3', '4', '5', '6'];
 
@@ -74,6 +74,11 @@ function SortableStrategyCard({ strategyKey, priority, onRemove, onPreview, stra
             )}
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">{s.desc}</p>
+          {getStrategyPreviewBlurb(strategyKey) && (
+            <p className="mt-1 text-xs italic text-foreground/70">
+              <span className="font-medium not-italic text-foreground/80">Your week:</span> {getStrategyPreviewBlurb(strategyKey)}
+            </p>
+          )}
         </div>
         <button
           onClick={(e) => { e.stopPropagation(); onPreview(strategyKey); }}
@@ -611,6 +616,11 @@ const StepConflict = () => {
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground mt-0.5">{s.desc}</p>
+                        {getStrategyPreviewBlurb(s.key) && (
+                          <p className="mt-1 text-xs italic text-foreground/60">
+                            <span className="font-medium not-italic text-foreground/75">Your week:</span> {getStrategyPreviewBlurb(s.key)}
+                          </p>
+                        )}
                       </div>
                       <Plus className="h-4 w-4 shrink-0 text-muted-foreground" />
                     </button>

@@ -124,6 +124,13 @@ const StepEvents = () => {
         ))}
       </div>
 
+      {events.length === 0 && (
+        <div className="rounded-lg border-2 border-dashed border-border bg-muted/20 p-6 text-center">
+          <p className="text-sm text-muted-foreground">No events yet — this step is optional.</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">Add one-off assemblies or field days, or describe them in plain English. You can skip this and continue.</p>
+        </div>
+      )}
+
       {events.map(e => (
         <div key={e.id} className="flex items-end gap-3 rounded-lg border border-border bg-background p-3">
           <div className="flex-[2] space-y-1">

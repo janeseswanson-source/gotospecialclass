@@ -12,10 +12,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { cjk } from "@streamdown/cjk";
-import { code } from "@streamdown/code";
-import { math } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
+import Markdown from "react-markdown";
 import type { UIMessage } from "ai";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import type { ComponentProps, HTMLAttributes, ReactElement } from "react";
@@ -28,7 +25,6 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Streamdown } from "streamdown";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: UIMessage["role"];
@@ -319,20 +315,28 @@ export const MessageBranchPage = ({
   );
 };
 
-export type MessageResponseProps = ComponentProps<typeof Streamdown>;
+export type MessageResponseProps = {
+  children?: string;
+  className?: string;
+  /** Accepted for source-compat with the previous Streamdown API; unused. */
+  isAnimating?: boolean;
+};
 
-const streamdownPlugins = { cjk, code, math, mermaid };
-
+// The scheduling assistant renders prose (paragraphs, bold, lists) — never code,
+// math, diagrams, or CJK. Rendering with react-markdown (already a dependency)
+// instead of Streamdown drops shiki's per-language chunks and the ~1.9 MB mermaid
+// bundle entirely, since Streamdown's core dynamic-imports both. Prose markdown
+// still streams fine because the growing text re-renders as it arrives.
 export const MessageResponse = memo(
-  ({ className, ...props }: MessageResponseProps) => (
-    <Streamdown
+  ({ className, children }: MessageResponseProps) => (
+    <div
       className={cn(
-        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+        "size-full prose prose-sm max-w-none dark:prose-invert [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
         className
       )}
-      plugins={streamdownPlugins}
-      {...props}
-    />
+    >
+      <Markdown>{children ?? ""}</Markdown>
+    </div>
   ),
   (prevProps, nextProps) =>
     prevProps.children === nextProps.children &&

@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { anthropicApiKey, extractFromFile, describeAnthropicError } from "../_shared/anthropic.ts";
+import { anthropicApiKey, extractFromFile, describeAnthropicError, MODELS } from "../_shared/anthropic.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -118,6 +118,7 @@ Mapping rules:
         system: systemPrompt,
         userText: `Extract the coordinator prep data from this filled sheet${school_name ? ` for ${school_name}` : ""}.`,
         tool: EXTRACT_TOOL,
+        model: MODELS.fast,
       });
     } catch (err) {
       const { status, message } = describeAnthropicError(err);

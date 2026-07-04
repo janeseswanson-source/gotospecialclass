@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { BRAND } from '@/brand/brand';
 
 const LoginPage = () => {
   const [email, setEmail] = useState('');
@@ -33,7 +34,7 @@ const LoginPage = () => {
         <div className="mb-8 text-center">
           <img src={logo} alt="Next Specials Class" className="mx-auto mb-4 h-12 w-auto" />
           <h1 className="text-2xl font-bold text-foreground">Welcome back</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Sign in to Specialist Ops! Scheduler</p>
+          <p className="mt-1 text-sm text-muted-foreground">Sign in to {BRAND.name} Scheduler</p>
         </div>
 
         <div className="rounded-xl border border-border bg-card p-8 shadow-sm">

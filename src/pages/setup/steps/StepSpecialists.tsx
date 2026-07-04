@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { Plus, Trash2, Upload, Download, Palette, Monitor, Dumbbell, FlaskConical, BookOpen, Sprout, Cog, Music, MoreHorizontal, Loader2, Check, ChevronDown, ChevronUp, HelpCircle, Sparkles } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
+import { aiErrorToast } from '@/lib/aiError';
 import { supabase } from '@/integrations/supabase/client';
 import { downloadTemplate } from '@/lib/templateDownload';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog';
@@ -601,7 +602,7 @@ const StepSpecialists = () => {
       toast.success(`AI auto-filled ${imported.length} specialist${imported.length === 1 ? '' : 's'} from your template.`);
     } catch (err: any) {
       console.error('AI parse error', err);
-      toast.error(err?.message || 'AI extraction failed.');
+      aiErrorToast(err, { retry: () => runAiFallback(rows), title: "Couldn't read that template" });
     } finally {
       setAiParsing(false);
     }

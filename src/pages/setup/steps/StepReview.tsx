@@ -13,6 +13,7 @@ import { track } from '@/lib/observability';
 import { generateBestSchedule } from '@/lib/generateBestSchedule';
 import { progressLabel } from '@/lib/genJobProgress';
 import { getStrategyTitle } from '@/lib/conflictStrategies';
+import { analyzeContractFeasibility } from '@/lib/contractFeasibility';
 import { cn } from '@/lib/utils';
 import { SafeSection } from '@/components/SafeSection';
 
@@ -33,6 +34,7 @@ const StepReview = () => {
   const [clubCount, setClubCount] = useState(0);
   const [eventCount, setEventCount] = useState(0);
   const [teacherCount, setTeacherCount] = useState(0);
+  const [teacherRows, setTeacherRows] = useState<any[]>([]);
   const [specialistRows, setSpecialistRows] = useState<any[]>([]);
   const [progressMsg, setProgressMsg] = useState(BUILD_MESSAGES[0]);
   const [genProgress, setGenProgress] = useState('');
@@ -44,8 +46,8 @@ const StepReview = () => {
       .then(({ count }) => setClubCount(count || 0));
     supabase.from('special_events').select('id', { count: 'exact', head: true }).eq('school_id', schoolId)
       .then(({ count }) => setEventCount(count || 0));
-    supabase.from('classroom_teachers').select('id', { count: 'exact', head: true }).eq('school_id', schoolId)
-      .then(({ count }) => setTeacherCount(count || 0));
+    supabase.from('classroom_teachers').select('id, name, grade').eq('school_id', schoolId)
+      .then(({ data: rows }) => { setTeacherRows(rows || []); setTeacherCount((rows || []).length); });
     supabase.from('specialists').select('*').eq('school_id', schoolId)
       .then(({ data: rows }) => setSpecialistRows(rows || []));
   }, [schoolId]);
@@ -74,6 +76,27 @@ const StepReview = () => {
   ];
   const missing = checks.filter(c => !c.ok);
   const okCount = checks.length - missing.length;
+
+  // Pre-flight feasibility (reuses the shared contractFeasibility lib). Error-level
+  // notes are HARD gaps that block Generate; warnings are advisory.
+  const feasibilityNotes = analyzeContractFeasibility(
+    {
+      start_time: data.startTime,
+      end_time: data.endTime,
+      class_duration: data.classDuration,
+      passing_time: data.passingTime,
+      grades_served: data.gradesServed,
+    },
+    specialistRows,
+    teacherRows,
+  );
+  const feasibilityErrors = feasibilityNotes.filter(n => n.level === 'error');
+  const feasibilityWarnings = feasibilityNotes.filter(n => n.level === 'warning');
+  // Generate is blocked by the basic checks OR any hard feasibility gap.
+  const blockingReasons = [
+    ...missing.map(m => m.label),
+    ...feasibilityErrors.map(n => n.suggestion || n.message),
+  ];
 
   const checkSteps = [
     SETUP_STEPS.SCHOOL_INFO,
@@ -233,6 +256,33 @@ const StepReview = () => {
           </div>
         </SafeSection>
 
+        {/* ─── Feasibility pre-flight (shared contractFeasibility lib) ─── */}
+        {(feasibilityErrors.length > 0 || feasibilityWarnings.length > 0) && (
+          <SafeSection label="feasibility">
+            <div className="rounded-xl border border-border bg-card p-5 space-y-2">
+              <p className="text-sm font-bold text-card-foreground">Before you generate</p>
+              {feasibilityErrors.map((n, i) => (
+                <div key={`e${i}`} className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-2.5">
+                  <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-destructive">{n.message}</p>
+                    {n.suggestion && <p className="text-xs text-muted-foreground mt-0.5">{n.suggestion}</p>}
+                  </div>
+                </div>
+              ))}
+              {feasibilityWarnings.map((n, i) => (
+                <div key={`w${i}`} className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-amber-700 dark:text-amber-300">{n.message}</p>
+                    {n.suggestion && <p className="text-xs text-muted-foreground mt-0.5">{n.suggestion}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </SafeSection>
+        )}
+
         {/* ─── "What will be generated" + generate button ─── */}
         <SafeSection label="generate">
           <div className="rounded-xl border border-border bg-card p-5 space-y-4">
@@ -268,7 +318,7 @@ const StepReview = () => {
 
             {/* Generate button */}
             <div className="pt-1">
-              {missing.length > 0 && !building ? (
+              {blockingReasons.length > 0 && !building ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span tabIndex={0} className="block w-full">
@@ -279,9 +329,9 @@ const StepReview = () => {
                     </span>
                   </TooltipTrigger>
                   <TooltipContent side="top" className="max-w-xs">
-                    <p className="text-xs font-medium mb-1">Complete the following first:</p>
+                    <p className="text-xs font-medium mb-1">Fix these first:</p>
                     <ul className="text-xs list-disc pl-4 space-y-0.5">
-                      {missing.map((m, i) => <li key={i}>{m.label}</li>)}
+                      {blockingReasons.map((m, i) => <li key={i}>{m}</li>)}
                     </ul>
                   </TooltipContent>
                 </Tooltip>

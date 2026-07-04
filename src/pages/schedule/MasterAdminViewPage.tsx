@@ -9,7 +9,10 @@ import { toast } from 'sonner';
 import { Printer, FileSpreadsheet, CalendarPlus } from 'lucide-react';
 import logo from '@/assets/logo.png';
 import { formatTime } from '@/lib/utils';
-import { exportMasterAdminXlsx } from '@/lib/exportMasterAdminXlsx';
+import { BRAND } from '@/brand/brand';
+import PageHeader from '@/components/layout/PageHeader';
+import WeekCyclePicker from '@/components/schedule/WeekCyclePicker';
+import { buildWeekCycle, type WeekStrategy } from '@/lib/weekCycle';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const;
 const DAY_SHORT: Record<string, typeof DAYS[number]> = {
@@ -90,6 +93,7 @@ export default function MasterAdminViewPage() {
   const [teachers, setTeachers] = useState<Teacher[]>([]);
   const [recess, setRecess] = useState<RecessRow[]>([]);
   const [genId, setGenId] = useState<string | null>(null);
+  const [weekFilter, setWeekFilter] = useState<string>('all');
 
   useEffect(() => {
     if (!user || schoolLoading || !selectedSchoolId) {
@@ -151,6 +155,23 @@ export default function MasterAdminViewPage() {
 
   const specialistById = new Map(specialists.map((s) => [s.id, s]));
   const teacherById = new Map(teachers.map((t) => [t.id, t]));
+
+  // Infer the week strategy from the labels present, then build the DATED cycle so
+  // this print-truth screen renders the SAME dated labels as the Master Schedule.
+  const weekLabelSet = new Set(blocks.map((b) => b.week_label).filter(Boolean) as string[]);
+  const strategy: WeekStrategy =
+    weekLabelSet.has('AA') || weekLabelSet.has('BB') ? 'aa_bb_week'
+      : weekLabelSet.has('A') || weekLabelSet.has('B') ? 'ab_week'
+        : 'standard';
+  const hasWeekCycle = strategy !== 'standard';
+  const weekCycle = buildWeekCycle({
+    strategy,
+    startDate: (school as { school_year_start?: string | null })?.school_year_start ?? null,
+    endDate: (school as { school_year_end?: string | null })?.school_year_end ?? null,
+    schoolYear: school?.school_year ?? null,
+  });
+  // Visible under the current week filter: no label (every week) or the chosen one.
+  const weekVisible = (label?: string | null) => weekFilter === 'all' || !label || label === weekFilter;
 
   // ── Planning & Prep band (live from class_rotations grouped by day+slot) ──
   // Falls back to school.admin_rotation labels when class_rotations is empty.
@@ -268,7 +289,8 @@ export default function MasterAdminViewPage() {
         (b) =>
           (b.day_of_week === day || b.day_of_week === dayShort) &&
           b.start_time === start &&
-          b.end_time === end
+          b.end_time === end &&
+          weekVisible(b.week_label)
       )
       .sort((a, b) => gradeRank(a.grade) - gradeRank(b.grade));
   };
@@ -276,6 +298,7 @@ export default function MasterAdminViewPage() {
   async function handleXlsx() {
     if (!selectedSchoolId) return;
     try {
+      const { exportMasterAdminXlsx } = await import('@/lib/exportMasterAdminXlsx');
       await exportMasterAdminXlsx({ schoolId: selectedSchoolId, generationId: genId });
       toast.success('Master Admin XLSX downloaded');
     } catch (e: any) {
@@ -305,21 +328,26 @@ export default function MasterAdminViewPage() {
   return (
     <div className="space-y-4 animate-fade-in">
       {/* Toolbar (hidden when printing) */}
-      <div className="flex flex-wrap items-center justify-between gap-3 print:hidden">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Master Admin View</h1>
-          <p className="text-sm text-muted-foreground">
-            Weekly grid mirroring your printable Specialist Schedule Planner.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => window.print()} disabled={!hasAnyData}>
-            <Printer className="h-4 w-4 mr-1.5" /> Print
-          </Button>
-          <Button size="sm" onClick={handleXlsx} disabled={!hasAnyData}>
-            <FileSpreadsheet className="h-4 w-4 mr-1.5" /> Download Master Admin XLSX
-          </Button>
-        </div>
+      <div className="print:hidden">
+        <PageHeader
+          title="Master Admin View"
+          subtitle="The coordinator's print-truth screen — the full week, every specialist, one page."
+          actions={
+            <>
+              <Button variant="outline" size="sm" onClick={() => window.print()} disabled={!hasAnyData}>
+                <Printer className="h-4 w-4 mr-1.5" /> Print
+              </Button>
+              <Button size="sm" onClick={handleXlsx} disabled={!hasAnyData}>
+                <FileSpreadsheet className="h-4 w-4 mr-1.5" /> Download Master Admin XLSX
+              </Button>
+            </>
+          }
+        />
+        {hasAnyData && hasWeekCycle && (
+          <div className="mt-3">
+            <WeekCyclePicker cycle={weekCycle} value={weekFilter} onChange={setWeekFilter} />
+          </div>
+        )}
       </div>
 
       {!hasAnyData ? (
@@ -347,7 +375,7 @@ export default function MasterAdminViewPage() {
                 Specialist Schedule Planner
               </h2>
               <p className="text-[11px] tracking-wider text-muted-foreground uppercase">
-                Weekly Master View · Specialist Ops!
+                Weekly Master View · {BRAND.name}
               </p>
             </div>
           </div>
@@ -394,10 +422,10 @@ export default function MasterAdminViewPage() {
               key={d}
               className="border-r last:border-r-0 border-border p-2 space-y-2 text-[11px]"
             >
-              {planningPerDay[d].length === 0 ? (
+              {planningPerDay[d].filter((slot) => weekVisible(slot.weekLabel)).length === 0 ? (
                 <div className="text-muted-foreground italic opacity-60">—</div>
               ) : (
-                planningPerDay[d].map((slot, i) => (
+                planningPerDay[d].filter((slot) => weekVisible(slot.weekLabel)).map((slot, i) => (
                   <div key={i} className="rounded border border-border/60 bg-background/60 p-1.5">
                     <div className="flex items-center justify-between">
                       <span className="text-accent font-semibold">{slot.label}</span>
@@ -528,23 +556,23 @@ export default function MasterAdminViewPage() {
         {/* Footer band */}
         <div className="bg-secondary/40 border-t-2 border-accent px-6 py-3 grid grid-cols-3 items-center text-[11px] text-primary">
           <a
-            href="https://www.GoToSpecialClass.com"
+            href={BRAND.url}
             target="_blank"
             rel="noreferrer"
             className="hover:underline"
           >
-            www.GoToSpecialClass.com
+            {BRAND.domain}
           </a>
           <div className="text-center text-muted-foreground">
-            Next Specials Class
-            <span className="mx-2 text-accent">♥</span>
-            Generated by Specialist Ops!
+            {weekFilter !== 'all' && weekCycle.currentWeekFor(new Date())
+              ? `${weekFilter} Week`
+              : <>Generated by {BRAND.name}</>}
           </div>
           <a
-            href="mailto:info@GoToSpecialClass.com"
+            href={`mailto:${BRAND.email}`}
             className="text-right hover:underline"
           >
-            info@GoToSpecialClass.com
+            {BRAND.email}
           </a>
         </div>
       </div>

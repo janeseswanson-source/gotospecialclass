@@ -10,7 +10,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import ScheduleGrid, { type BlockData, type RecessBand } from "@/components/schedule/ScheduleGrid";
 import { getSubjectBadgeClass } from "@/lib/subjectColors";
 import { cn } from "@/lib/utils";
+import { parseTime } from "@/lib/scheduleGrid";
 import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
+import WeekCyclePicker from "@/components/schedule/WeekCyclePicker";
+import { buildWeekCycle, type WeekStrategy } from "@/lib/weekCycle";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -101,7 +104,7 @@ function bandsForSpecialist(gradesServed: string[], rows: RecessRow[]): RecessBa
 
 export default function SpecialistPlannerPage() {
   const { user } = useAuth();
-  const { selectedSchoolId, loading: schoolLoading } = useSchool();
+  const { selectedSchoolId, schools, loading: schoolLoading } = useSchool();
   const [specialists, setSpecialists] = useState<SpecialistWithLoad[]>([]);
   const [blocks, setBlocks] = useState<BlockData[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -109,6 +112,7 @@ export default function SpecialistPlannerPage() {
   const [loadError, setLoadError] = useState(false);
   const [timeSlots, setTimeSlots] = useState<string[]>([]);
   const [recessRows, setRecessRows] = useState<RecessRow[]>([]);
+  const [weekFilter, setWeekFilter] = useState<string>("all");
 
   useEffect(() => {
     if (!user || schoolLoading) return;
@@ -245,12 +249,47 @@ export default function SpecialistPlannerPage() {
     );
   }
 
+  const activeSchool = schools.find((x) => x.id === selectedSchoolId);
+
+  // Infer the week strategy from the labels present → dated cycle for the selector.
+  const weekLabelSet = new Set(blocks.map((b) => b.week_label).filter(Boolean) as string[]);
+  const strategy: WeekStrategy =
+    weekLabelSet.has("AA") || weekLabelSet.has("BB") ? "aa_bb_week"
+      : weekLabelSet.has("A") || weekLabelSet.has("B") ? "ab_week"
+        : "standard";
+  const hasWeekCycle = strategy !== "standard";
+  const weekCycle = buildWeekCycle({
+    strategy,
+    startDate: (activeSchool as { school_year_start?: string | null })?.school_year_start ?? null,
+    endDate: (activeSchool as { school_year_end?: string | null })?.school_year_end ?? null,
+    schoolYear: (activeSchool as { school_year?: string | null })?.school_year ?? null,
+  });
+  const weekVisible = (label?: string | null) => weekFilter === "all" || !label || label === weekFilter;
+
   const selectedSpec = specialists.find((s) => s.id === selected) ?? null;
-  const selectedBlocks = selectedSpec ? blocks.filter((b) => b.specialist_name === selectedSpec.name) : [];
+  const selectedBlocks = selectedSpec
+    ? blocks.filter((b) => b.specialist_name === selectedSpec.name && weekVisible(b.week_label))
+    : [];
   const selectedBands = selectedSpec ? bandsForSpecialist(selectedSpec.gradesServed, recessRows) : [];
 
-  const { schools } = useSchool();
-  const activeSchool = schools.find((x) => x.id === selectedSchoolId);
+  // Per-day teaching load + internal planning gaps for the selected specialist —
+  // "their reality": how full each day is and where the open planning time falls.
+  const dayLoads = DAYS.map((d) => {
+    const dayBlocks = selectedBlocks
+      .filter((b) => b.day_of_week === d)
+      .sort((a, b) => parseTime(a.start_time) - parseTime(b.start_time));
+    let minutes = 0;
+    let gap = 0;
+    dayBlocks.forEach((b, i) => {
+      minutes += parseTime(b.end_time) - parseTime(b.start_time);
+      if (i > 0) {
+        const g = parseTime(b.start_time) - parseTime(dayBlocks[i - 1].end_time);
+        if (g > 0) gap += g;
+      }
+    });
+    return { day: d, classes: dayBlocks.length, minutes, gap };
+  });
+  const maxDayMinutes = Math.max(60, ...dayLoads.map((d) => d.minutes));
 
   return (
     <div className="space-y-5 animate-fade-in">
@@ -362,14 +401,47 @@ export default function SpecialistPlannerPage() {
               </div>
             </div>
 
+            {hasWeekCycle && (
+              <WeekCyclePicker cycle={weekCycle} value={weekFilter} onChange={setWeekFilter} />
+            )}
+
+            {/* Per-day load vs the busiest day, with the open planning time labelled. */}
+            <div className="rounded-xl border border-border bg-card p-4">
+              <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Weekly load</h3>
+              <ul className="space-y-2">
+                {dayLoads.map((d) => (
+                  <li key={d.day} className="flex items-center gap-3 text-xs">
+                    <span className="w-8 shrink-0 font-medium text-muted-foreground">{d.day}</span>
+                    <div className="h-2.5 flex-1 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full bg-primary transition-all motion-reduce:transition-none"
+                        style={{ width: `${Math.round((d.minutes / maxDayMinutes) * 100)}%` }}
+                      />
+                    </div>
+                    <span className="w-24 shrink-0 text-right tabular-nums text-muted-foreground">
+                      {d.classes} · {formatMinutes(d.minutes)}
+                    </span>
+                    <span className="hidden w-28 shrink-0 text-right sm:block">
+                      {d.gap > 0 ? <span className="text-accent-foreground/80">Planning · {formatMinutes(d.gap)}</span> : <span className="opacity-0">—</span>}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
             <ScheduleGrid blocks={selectedBlocks} timeSlots={timeSlots} recessBands={selectedBands} />
           </div>
         </div>
       ) : (
         <div className="space-y-6">
-          <p className="text-xs text-muted-foreground">Click a specialist to focus their week, or scroll through all below.</p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">Click a specialist to focus their week, or scroll through all below.</p>
+            {hasWeekCycle && (
+              <WeekCyclePicker cycle={weekCycle} value={weekFilter} onChange={setWeekFilter} />
+            )}
+          </div>
           {specialists.map((s) => {
-            const sBlocks = blocks.filter((b) => b.specialist_name === s.name);
+            const sBlocks = blocks.filter((b) => b.specialist_name === s.name && weekVisible(b.week_label));
             return (
               <div key={s.id} className="rounded-xl border border-border bg-card p-4 space-y-3">
                 <button

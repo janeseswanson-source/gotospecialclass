@@ -9,6 +9,7 @@
 // completion regardless.
 import { supabase } from "@/integrations/supabase/client";
 import { mapJobProgress, type GenProgress, type JobRowLite } from "@/lib/genJobProgress";
+import { captureError } from "@/lib/observability";
 
 export { mapJobProgress, type GenProgress };
 
@@ -66,6 +67,8 @@ export async function generateBestSchedule(opts: BestScheduleOptions): Promise<B
       } else if (job.status === "cancelled") {
         done(() => reject(new DOMException("Generation cancelled", "AbortError")));
       } else {
+        // Server-side job failure — surface to Sentry with the job context.
+        captureError(new Error(job.error ?? "Generation failed"), { jobId, status: job.status });
         done(() => reject(new Error(job.error ?? "Generation failed")));
       }
     };

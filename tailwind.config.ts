@@ -1,8 +1,22 @@
 import type { Config } from "tailwindcss";
+import { SUBJECT_HUES, SUBJECT_BAND, PALETTE, hslCss } from "./src/brand/brand";
+
+// Subject colors as STATIC named tokens (so `text-subject-art` etc. are
+// JIT-generated — runtime arbitrary values would not be). Same HSL band the
+// xlsx + pdf exports use, so a subject is the same color on every surface.
+const subjectColorTokens: Record<string, string> = { "subject-gold": hslCss(PALETTE.goldDeep) };
+for (const [k, h] of Object.entries(SUBJECT_HUES)) {
+  subjectColorTokens[`subject-${k}`] = hslCss({ h, s: SUBJECT_BAND.accent.s, l: SUBJECT_BAND.accent.l });
+  subjectColorTokens[`subject-${k}-dk`] = hslCss({ h, s: SUBJECT_BAND.accentDark.s, l: SUBJECT_BAND.accentDark.l });
+  subjectColorTokens[`subject-${k}-fill`] = hslCss({ h, s: SUBJECT_BAND.fill.s, l: SUBJECT_BAND.fill.l });
+}
 
 export default {
   darkMode: ["class"],
   content: ["./pages/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./app/**/*.{ts,tsx}", "./src/**/*.{ts,tsx}"],
+  // Subject color classes are built via template literals (`text-subject-${key}`),
+  // so the JIT scanner can't see them — safelist the full derived set.
+  safelist: Object.keys(subjectColorTokens).flatMap((name) => [`text-${name}`, `border-l-${name}`, `bg-${name}`]),
   prefix: "",
   theme: {
     container: {
@@ -17,6 +31,7 @@ export default {
         sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
       },
       colors: {
+        ...subjectColorTokens,
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
@@ -41,6 +56,10 @@ export default {
         accent: {
           DEFAULT: "hsl(var(--accent))",
           foreground: "hsl(var(--accent-foreground))",
+        },
+        gold: {
+          DEFAULT: "hsl(var(--gold))",
+          foreground: "hsl(var(--gold-foreground))",
         },
         success: {
           DEFAULT: "hsl(var(--success))",
@@ -94,5 +113,5 @@ export default {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [require("tailwindcss-animate"), require("@tailwindcss/typography")],
 } satisfies Config;

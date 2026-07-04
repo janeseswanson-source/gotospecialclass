@@ -6,11 +6,13 @@ import { useSetup } from '@/contexts/SetupContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ChevronDown, AlertCircle, Plus, Minus, Trash2, Sun, Utensils, Cloud, RefreshCw } from 'lucide-react';
+import { ChevronDown, AlertCircle, Plus, Minus, Trash2, Sun, Utensils, Cloud, RefreshCw, Sparkles, Loader2 } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import PeriodCard, { PeriodKey, PeriodRow } from './recessLunch/PeriodCard';
+import { aiErrorToast } from '@/lib/aiError';
 
 const PERIOD_META: Record<PeriodKey, { title: string; Icon: any; accent: string }> = {
   amRecess: { title: 'AM Recess', Icon: Sun, accent: 'text-amber-600 dark:text-amber-300' },
@@ -77,6 +79,9 @@ const StepRecessLunch = () => {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [cards, setCards] = useState<CardsState>({ amRecess: [], lunch: [], pmRecess: [] });
   const [erOpen, setErOpen] = useState(false);
+  const [nlOpen, setNlOpen] = useState(false);
+  const [nlText, setNlText] = useState('');
+  const [nlLoading, setNlLoading] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const isLoaded = useRef(false);
 
@@ -435,6 +440,70 @@ const StepRecessLunch = () => {
   };
 
   // ------- Render -------
+  // Expand a grade-band label ("K-2", "3-5", "all") to the grades it covers.
+  const expandBand = (band: string): string[] => {
+    const b = band.trim();
+    if (!b || b.toLowerCase() === 'all' || /whole/i.test(b)) return [...gradesServed];
+    const order = ['K', '1', '2', '3', '4', '5', '6', '7', '8'];
+    const norm = (x: string) => (/^k/i.test(x) ? 'K' : x.replace(/[^0-9]/g, ''));
+    const m = b.match(/^\s*([A-Za-z0-9]+)\s*[–-]\s*([A-Za-z0-9]+)\s*$/);
+    if (m) {
+      const a = order.indexOf(norm(m[1]));
+      const z = order.indexOf(norm(m[2]));
+      if (a >= 0 && z >= 0) {
+        const range = order.slice(Math.min(a, z), Math.max(a, z) + 1);
+        const kept = range.filter(g => gradesServed.includes(g));
+        return kept.length ? kept : range;
+      }
+    }
+    return b.split(',').map(s => norm(s.trim())).filter(Boolean);
+  };
+
+  // AI quick-fill: "K-2 recess 10:00-10:20, lunch 11:30…" → recess/lunch cards.
+  const applyRecessNl = async () => {
+    if (!nlText.trim() || nlLoading) return;
+    setNlLoading(true);
+    try {
+      const { data: res, error } = await supabase.functions.invoke('parse-recess-nl', { body: { description: nlText } });
+      if (error) throw error;
+      const rows = (res?.rows ?? []) as Array<Record<string, string | null>>;
+      if (rows.length === 0) { toast.error('No recess/lunch windows detected — add some times and try again.'); return; }
+      setCards(prev => {
+        // Drop empty placeholder rows, then append the parsed windows.
+        const next: CardsState = {
+          amRecess: prev.amRecess.filter(r => r.start || r.end),
+          lunch: prev.lunch.filter(r => r.start || r.end),
+          pmRecess: prev.pmRecess.filter(r => r.start || r.end),
+        };
+        rows.forEach(r => {
+          const band = String(r.grade_band || 'all').trim() || 'all';
+          const isAll = band.toLowerCase() === 'all' || /whole/i.test(band);
+          const bandKey = isAll ? 'all' : band.toLowerCase().replace(/\s+/g, '-');
+          const grades = expandBand(band);
+          const label = isAll ? 'Whole School' : band;
+          const push = (period: PeriodKey, start?: string | null, end?: string | null) => {
+            if (!start && !end) return;
+            next[period].push({ rowId: genRowId(), bandKey, label, grades, start: start || '', end: end || '' });
+          };
+          push('amRecess', r.am_recess_start, r.am_recess_end);
+          push('lunch', r.lunch_start, r.lunch_end);
+          push('pmRecess', r.pm_recess_start, r.pm_recess_end);
+        });
+        return next;
+      });
+      const distinctBands = new Set(rows.map(r => String(r.grade_band || 'all').toLowerCase()));
+      if (distinctBands.size > 1 && data.scheduleType !== 'staggered') updateData({ scheduleType: 'staggered' });
+      toast.success('Filled recess & lunch from your description — review below.');
+      setNlText('');
+      setNlOpen(false);
+    } catch (err: any) {
+      console.error('[RecessNL]', err);
+      aiErrorToast(err, { retry: applyRecessNl, title: "Couldn't read that" });
+    } finally {
+      setNlLoading(false);
+    }
+  };
+
   return (
     <div className="rounded-xl border border-border bg-card p-6 space-y-5">
       <div className="flex items-center justify-between">
@@ -444,6 +513,32 @@ const StepRecessLunch = () => {
         </div>
         <SaveStatusIndicator status={saveStatus} />
       </div>
+
+      {/* AI quick-fill */}
+      <Collapsible open={nlOpen} onOpenChange={setNlOpen}>
+        <CollapsibleTrigger className="inline-flex items-center gap-1.5 rounded-full border border-accent/40 bg-accent/5 px-3 py-1 text-xs font-medium text-accent hover:bg-accent/10">
+          <Sparkles className="h-3.5 w-3.5" /> Quick-fill with AI
+          <ChevronDown className={cn('h-3 w-3 transition-transform', nlOpen && 'rotate-180')} />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2">
+          <div className="rounded-lg border border-border bg-muted/20 p-3 space-y-2">
+            <Textarea
+              value={nlText}
+              onChange={(e) => setNlText(e.target.value)}
+              rows={3}
+              maxLength={2000}
+              placeholder="e.g. K-2 recess 10:00-10:20, lunch 11:30-12:00. Grades 3-5 lunch 12:00-12:30, PM recess 2:00."
+              disabled={nlLoading}
+            />
+            <div className="flex justify-end">
+              <Button size="sm" className="gap-1.5" onClick={applyRecessNl} disabled={!nlText.trim() || nlLoading}>
+                {nlLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                {nlLoading ? 'Reading…' : 'Fill windows'}
+              </Button>
+            </div>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Mode toggle */}
       <div className="flex gap-2">

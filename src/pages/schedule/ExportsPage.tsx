@@ -1,17 +1,18 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSchool } from "@/contexts/SchoolContext";
 import { CsvIcon, PdfIcon, DocIcon } from "@/components/icons/FileTypeIcons";
 import ExportCard from "@/components/schedule/ExportCard";
-import TeacherPlannerModal from "@/components/schedule/TeacherPlannerModal";
+import ExportQuoteCard from "@/components/schedule/ExportQuoteCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { logActivity } from "@/lib/activityLogger";
-import { exportSchedulePDF } from "@/lib/exportPdf";
-import { exportMasterAdminXlsx } from "@/lib/exportMasterAdminXlsx";
-import { exportScheduleXlsx } from "@/lib/exportScheduleXlsx";
 import { formatTime } from "@/lib/utils";
+
+// Heavy export libs (jsPDF/html2canvas, ExcelJS, xlsx, @react-pdf) load only when
+// an export is actually triggered, keeping the Exports route chunk lean.
+const TeacherPlannerModal = lazy(() => import("@/components/schedule/TeacherPlannerModal"));
 
 export default function ExportsPage() {
   const { user } = useAuth();
@@ -19,6 +20,7 @@ export default function ExportsPage() {
   const [genId, setGenId] = useState<string | null>(null);
   const [dataLoading, setDataLoading] = useState(true);
   const [plannerOpen, setPlannerOpen] = useState(false);
+  const [exportQuote, setExportQuote] = useState("");
 
   useEffect(() => {
     if (!user || schoolLoading || !selectedSchoolId) { setDataLoading(false); return; }
@@ -51,6 +53,7 @@ export default function ExportsPage() {
 
   async function exportPDF() {
     if (!genId || !selectedSchoolId) return;
+    const { exportSchedulePDF } = await import("@/lib/exportPdf");
     const success = await exportSchedulePDF({ schoolId: selectedSchoolId, generationId: genId });
     if (!success) { toast({ title: "No data to export", variant: "destructive" }); return; }
     toast({ title: "PDF exported!" });
@@ -70,6 +73,7 @@ export default function ExportsPage() {
   async function exportMasterAdminWorkbook() {
     if (!selectedSchoolId) return;
     try {
+      const { exportMasterAdminXlsx } = await import("@/lib/exportMasterAdminXlsx");
       await exportMasterAdminXlsx({ schoolId: selectedSchoolId, generationId: genId });
       toast({ title: "Master Admin XLSX downloaded" });
       await recordExport("master_admin_xlsx", "csv");
@@ -81,7 +85,8 @@ export default function ExportsPage() {
   async function exportBrandedWorkbook() {
     if (!selectedSchoolId) return;
     try {
-      const ok = await exportScheduleXlsx({ schoolId: selectedSchoolId, generationId: genId });
+      const { exportScheduleXlsx } = await import("@/lib/exportScheduleXlsx");
+      const ok = await exportScheduleXlsx({ schoolId: selectedSchoolId, generationId: genId, quote: exportQuote });
       if (!ok) { toast({ title: "Generate a schedule first.", variant: "destructive" }); return; }
       toast({ title: "Branded spreadsheet downloaded ✓" });
       await recordExport("branded_xlsx", "csv");
@@ -122,6 +127,10 @@ export default function ExportsPage() {
         <h1 className="text-2xl font-bold text-foreground">Export Center</h1>
         <p className="text-sm text-muted-foreground">Download your schedules in various formats. Print-friendly, minimal color.</p>
       </div>
+
+      {hasSchedule && !isLoading && (
+        <ExportQuoteCard schoolId={selectedSchoolId} onQuoteChange={setExportQuote} />
+      )}
 
       <div className="space-y-3">
         <h2 className="text-sm font-semibold text-foreground">Available Exports</h2>
@@ -166,12 +175,16 @@ export default function ExportsPage() {
         )}
       </div>
 
-      <TeacherPlannerModal
-        open={plannerOpen}
-        onOpenChange={setPlannerOpen}
-        schoolId={selectedSchoolId}
-        generationId={genId}
-      />
+      <Suspense fallback={null}>
+        {plannerOpen && (
+          <TeacherPlannerModal
+            open={plannerOpen}
+            onOpenChange={setPlannerOpen}
+            schoolId={selectedSchoolId}
+            generationId={genId}
+          />
+        )}
+      </Suspense>
     </div>
   );
 }

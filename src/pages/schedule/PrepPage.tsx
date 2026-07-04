@@ -458,7 +458,7 @@ export default function PrepPage() {
         </div>
       )}
 
-      {generatedQuote && <QuoteBanner text={generatedQuote.text} author={generatedQuote.author} />}
+      {generatedQuote && <QuoteBanner text={generatedQuote.text} author={generatedQuote.author} schoolId={selectedSchoolId} canRegenerate />}
 
       <Card>
         <CardContent className="p-6 space-y-4">

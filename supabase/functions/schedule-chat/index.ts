@@ -24,6 +24,7 @@ import { convertToModelMessages, streamText, stepCountIs, tool, type UIMessage }
 import { z } from "npm:zod";
 import { anthropicApiKey, MODELS } from "../_shared/anthropic.ts";
 import { anthropicModel } from "../_shared/anthropic-aisdk.ts";
+import { enforceRateLimit, rateLimitResponse } from "../_shared/rateLimit.ts";
 import { buildConstraintContext, violations as constraintViolations, describeViolation } from "../_shared/constraints.ts";
 import {
   enumerateFreeSlots, previewOps, conflictFixOptions, improveQualityScoped, qualityReport,
@@ -92,6 +93,11 @@ Deno.serve(async (req) => {
   });
   const { data: userData, error: userErr } = await supabase.auth.getUser();
   if (userErr || !userData?.user) return json(401, { error: "Unauthorized" });
+
+  // Per-user rate limit (30/hr) — the AI editor is the chattiest LLM surface.
+  const rlAdmin = createClient(supabaseUrl, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const rl = await enforceRateLimit(rlAdmin, { userId: userData.user.id, feature: "schedule_chat", limit: 30 });
+  if (!rl.allowed) return rateLimitResponse(rl, corsHeaders);
 
   if (!anthropicApiKey()) return json(500, { error: "Claude isn't set up yet — add the ANTHROPIC_API_KEY secret to enable the AI editor." });
 

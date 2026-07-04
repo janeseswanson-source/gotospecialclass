@@ -25,3 +25,6 @@ dist-ssr
 
 # Environment files
 .env
+
+# CI auth seed (holds a live Supabase session token)
+.ci-auth/

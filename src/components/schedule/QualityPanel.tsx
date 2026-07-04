@@ -5,10 +5,10 @@
 // plus a readable "what's working / what it cost" summary. The headline % still
 // comes from the shared rubric (breakdownToPercent) — we lead with meaning.
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, Sparkles, AlertTriangle, TrendingUp, Loader2, BrainCircuit, Wrench } from "lucide-react";
+import { CheckCircle2, Sparkles, AlertTriangle, TrendingUp, Loader2, BrainCircuit, Wrench, ChevronDown } from "lucide-react";
 import { scoreSummary, confidenceCopy, type ConfidenceTone, type QualityConfidence } from "@/lib/scoreSummary";
 
 /** Penalty keys the engine can attempt a one-click fix for. "errors"/"warnings"
@@ -46,42 +46,70 @@ export default function QualityPanel({ breakdown, confidence, refining, verifyRe
   const t = TONE[tone];
   const Icon = t.Icon;
 
+  // Slim by default (a header strip); expandable to the full breakdown.
+  const [expanded, setExpanded] = useState(false);
+
   const pct = summary.percent;
   const pctColor = pct == null ? "text-muted-foreground" : pct >= 95 ? "text-success" : pct >= 85 ? "text-amber-600 dark:text-amber-400" : "text-destructive";
+
+  // The single most impactful cost row, surfaced in the strip with its Fix button.
+  const topCost = summary.costs[0];
+  const topFixable = !!onFixIssue && topCost && FIXABLE_KEYS.has(topCost.key);
 
   return (
     <section
       aria-label="Schedule quality"
-      className={cn("rounded-2xl border p-5 sm:p-6 no-print", t.ring)}
+      className={cn("rounded-2xl border no-print", t.ring)}
     >
-      <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:gap-6">
-        {/* Confidence hero (power 1) */}
-        <div className="flex items-start gap-3 sm:max-w-sm">
-          <div className={cn("mt-0.5 grid h-10 w-10 shrink-0 place-items-center rounded-xl", t.chip)}>
-            <Icon className="h-5 w-5" aria-hidden />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className={cn("text-lg font-semibold leading-tight", t.text)}>
-                {copy.assessment === "unknown" && refining ? "Checking quality…" : copy.headline}
-              </h2>
-              {refining && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" aria-hidden />}
-            </div>
-            {copy.detail && <p className="mt-1 text-sm text-muted-foreground">{copy.detail}</p>}
-          </div>
+      {/* ── Slim header strip ── */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+        <div className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-lg", t.chip)}>
+          <Icon className="h-4 w-4" aria-hidden />
         </div>
-
-        {/* Headline % (power 2 lead-in) */}
-        <div className="flex items-center gap-2 sm:ml-auto sm:flex-col sm:items-end sm:gap-0.5">
-          <span className={cn("text-3xl font-bold tabular-nums leading-none", pctColor)}>
+        <div className="flex items-baseline gap-1.5">
+          <span className={cn("text-2xl font-bold tabular-nums leading-none", pctColor)}>
             {pct != null ? `${pct}%` : "—"}
           </span>
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">quality</span>
+          <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">quality</span>
         </div>
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold", t.chip)}>
+            {copy.assessment === "unknown" && refining ? "Checking…" : copy.headline}
+          </span>
+          {refining && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" aria-hidden />}
+        </div>
+
+        {/* Top issue + Fix — the one thing worth acting on, inline. */}
+        {topCost && !expanded && (
+          <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+            <span className="mt-px h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" aria-hidden />
+            <span className="truncate">{topCost.label}</span>
+            {topFixable && (
+              <Button variant="outline" size="sm" className="h-6 shrink-0 gap-1 px-2 text-[11px]" disabled={!!fixingKey} onClick={() => onFixIssue!(topCost.key)}>
+                {fixingKey === topCost.key ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden /> : <Wrench className="h-3 w-3" aria-hidden />}
+                Fix
+              </Button>
+            )}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-background/60 hover:text-foreground"
+        >
+          {expanded ? "Hide details" : "Details"}
+          <ChevronDown className={cn("h-3.5 w-3.5 transition-transform motion-reduce:transition-none", expanded && "rotate-180")} aria-hidden />
+        </button>
       </div>
 
+      {!expanded ? null : (
+      <div className="border-t border-border/60 p-4 sm:p-5">
+      {copy.detail && <p className="mb-4 text-sm text-muted-foreground">{copy.detail}</p>}
+
       {/* What's working / what it cost (power 2) */}
-      <div className="mt-5 grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">What's working</h3>
           {summary.working.length === 0 ? (
@@ -151,6 +179,8 @@ export default function QualityPanel({ breakdown, confidence, refining, verifyRe
             )}
           </p>
         </div>
+      )}
+      </div>
       )}
     </section>
   );
