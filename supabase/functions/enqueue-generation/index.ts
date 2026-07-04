@@ -30,8 +30,25 @@ Deno.serve(async (req) => {
     if (!school_id) return json(400, { error: "school_id required" });
 
     // RLS-checked: the user must be a member of the school's workspace to see it.
-    const { data: school } = await userClient.from("schools").select("id").eq("id", school_id).maybeSingle();
+    const { data: school } = await userClient.from("schools").select("id, grades_served").eq("id", school_id).maybeSingle();
     if (!school) return json(404, { error: "School not found or not accessible" });
+
+    // Authoritative preflight (the UI gates too, but never trust the client): the
+    // CP-SAT solver builds one class per classroom teacher and one time grid per
+    // served grade, so with no grades / specialists / teachers there is literally
+    // nothing to schedule. Refuse to enqueue with an actionable message instead of
+    // spawning a job that can only produce an empty schedule.
+    const [specCount, teachCount] = await Promise.all([
+      userClient.from("specialists").select("id", { count: "exact", head: true }).eq("school_id", school_id),
+      userClient.from("classroom_teachers").select("id", { count: "exact", head: true }).eq("school_id", school_id),
+    ]);
+    const missing: string[] = [];
+    if (((school.grades_served as string[] | null)?.length ?? 0) === 0) missing.push("at least one grade (School Info)");
+    if ((specCount.count ?? 0) === 0) missing.push("at least one specialist (Specialists step)");
+    if ((teachCount.count ?? 0) === 0) missing.push("at least one classroom teacher (Teachers step)");
+    if (missing.length > 0) {
+      return json(422, { code: "insufficient_inputs", error: `Add ${missing.join(", ")} before generating a schedule.` });
+    }
 
     const service = createClient(SUPABASE_URL, SERVICE_KEY);
 

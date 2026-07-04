@@ -105,18 +105,53 @@ export function analyzeContractFeasibility(
     }
   }
 
-  // Grade vs teacher coverage sanity
+  // Grade vs teacher coverage sanity.
   const grades = school.grades_served ?? [];
-  const gradesWithoutTeachers = grades.filter(
-    (g) => !teachers.some((t) => t.grade === g)
-  );
-  if (gradesWithoutTeachers.length > 0 && teachers.length > 0) {
+
+  // HARD gap: the optimal solver (CP-SAT) builds one class per classroom teacher,
+  // so with zero teachers it has literally nothing to place — generation yields an
+  // empty schedule (and the metaheuristic fallback can't recover a real one). The
+  // per-teacher planners also need these rows. So require at least one teacher.
+  if (teachers.length === 0) {
     notes.push({
-      level: "info",
-      message: `Grades without teachers: ${gradesWithoutTeachers.join(", ")}.`,
-      suggestion:
-        "The schedule will use grade-level blocks instead of per-teacher blocks for these.",
+      level: "error",
+      message: "No classroom teachers added — the scheduler has no classes to place.",
+      suggestion: "Add at least one classroom teacher (with its grade) in the Teachers step.",
     });
+  } else {
+    // Some grades have teachers, others don't. CP-SAT gives the teacher-less grades
+    // NO specialist coverage (it only schedules the grades that have a class), so
+    // this is a real coverage hole, not just a display detail — warn, don't inform.
+    const gradesWithoutTeachers = grades.filter(
+      (g) => !teachers.some((t) => t.grade === g)
+    );
+    if (gradesWithoutTeachers.length > 0) {
+      notes.push({
+        level: "warning",
+        message: `These grades have no classroom teacher: ${gradesWithoutTeachers.join(", ")}.`,
+        suggestion:
+          "Add a teacher for each so the optimal solver schedules their specialist classes; otherwise those grades may be left uncovered.",
+      });
+    }
+
+    // A teacher whose grade isn't in grades_served has no time grid to be placed in —
+    // that class silently can't be scheduled. Point the user at the mismatch.
+    const servedSet = new Set(grades);
+    const orphanGrades = Array.from(
+      new Set(
+        teachers
+          .map((t) => (t.grade ?? "").trim())
+          .filter((g) => g.length > 0 && !servedSet.has(g))
+      )
+    );
+    if (orphanGrades.length > 0) {
+      notes.push({
+        level: "warning",
+        message: `Teacher grade(s) not in the school's grade list: ${orphanGrades.join(", ")}.`,
+        suggestion:
+          "Add these to Grades Served in School Info, or fix the teacher's grade — otherwise those classes can't be scheduled.",
+      });
+    }
   }
 
   if (specialists.length === 0) {
@@ -124,6 +159,14 @@ export function analyzeContractFeasibility(
       level: "error",
       message: "No specialists configured — nothing to schedule.",
       suggestion: "Add at least one specialist in the Setup Wizard.",
+    });
+  }
+
+  if (grades.length === 0) {
+    notes.push({
+      level: "error",
+      message: "No grades selected — the scheduler has no grade time grids to fill.",
+      suggestion: "Choose the grades your school serves in School Info.",
     });
   }
 

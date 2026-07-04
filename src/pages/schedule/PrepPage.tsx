@@ -233,8 +233,8 @@ export default function PrepPage() {
         },
         {
           label: "Teachers",
-          status: (teachersRes.data?.length ?? 0) > 0 ? "ready" : "warning",
-          detail: (teachersRes.data?.length ?? 0) > 0 ? `${teachersRes.data!.length} teacher(s) added` : "No teachers — schedule will use grades only",
+          status: (teachersRes.data?.length ?? 0) > 0 ? "ready" : "missing",
+          detail: (teachersRes.data?.length ?? 0) > 0 ? `${teachersRes.data!.length} teacher(s) added` : "No teachers — the optimal solver builds one class per teacher, so it has nothing to place. Add at least one.",
         },
         {
           label: "Coverage Forecast",
@@ -408,7 +408,11 @@ export default function PrepPage() {
     setGenerating(false);
   }
 
-  const allReady = checks.length > 0 && checks.every((c) => c.status !== "missing");
+  // Generation is gated on BOTH the structural checklist (no "missing" items) AND
+  // the absence of hard feasibility gaps (e.g. no classroom teachers → CP-SAT has
+  // no classes to place). Error-level contract notes block; warnings are advisory.
+  const hasBlockingFeasibility = contractNotes.some((n) => n.level === "error");
+  const allReady = checks.length > 0 && checks.every((c) => c.status !== "missing") && !hasBlockingFeasibility;
 
   const strategyCtx: StrategyContext = useMemo(() => ({
     conflictGrades,
@@ -492,22 +496,33 @@ export default function PrepPage() {
               <h2 className="text-lg font-semibold text-foreground">Contract & Scheduling Preflight</h2>
             </div>
             <p className="text-xs text-muted-foreground">
-              Heads-up before you generate. These won't block scheduling but may show up as warnings after.
+              {hasBlockingFeasibility
+                ? "Fix the items marked in red before you can generate. Warnings are advisory and won't block."
+                : "Heads-up before you generate. These won't block scheduling but may show up as warnings after."}
             </p>
             <div className="space-y-2">
-              {contractNotes.map((n, i) => (
+              {[...contractNotes]
+                .sort((a, b) => {
+                  const rank = { error: 0, warning: 1, info: 2 } as const;
+                  return rank[a.level] - rank[b.level];
+                })
+                .map((n, i) => (
                 <div
                   key={i}
                   className={cn(
                     "flex items-start gap-3 rounded-lg border px-3 py-2 text-sm",
-                    n.level === "warning"
-                      ? "border-amber-500/30 bg-amber-50/40 dark:bg-amber-950/15"
-                      : "border-sky-500/30 bg-sky-50/40 dark:bg-sky-950/15"
+                    n.level === "error"
+                      ? "border-destructive/40 bg-destructive/5"
+                      : n.level === "warning"
+                        ? "border-amber-500/30 bg-amber-50/40 dark:bg-amber-950/15"
+                        : "border-sky-500/30 bg-sky-50/40 dark:bg-sky-950/15"
                   )}
                 >
-                  {n.level === "warning"
-                    ? <AlertCircle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
-                    : <Info className="h-4 w-4 text-primary mt-0.5 shrink-0" />}
+                  {n.level === "error"
+                    ? <XCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+                    : n.level === "warning"
+                      ? <AlertCircle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+                      : <Info className="h-4 w-4 text-primary mt-0.5 shrink-0" />}
                   <div className="flex-1 min-w-0">
                     <p className="text-foreground">{n.message}</p>
                     {n.suggestion && <p className="text-xs text-muted-foreground mt-0.5">{n.suggestion}</p>}
@@ -622,6 +637,23 @@ export default function PrepPage() {
         </Card>
       )}
 
+      {!allReady && !generating && checks.length > 0 && (
+        <div className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3">
+          <XCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0 text-sm">
+            <p className="text-foreground font-medium">Add the required info before generating:</p>
+            <ul className="mt-1 list-disc pl-5 text-muted-foreground space-y-0.5">
+              {checks.filter((c) => c.status === "missing").map((c, i) => (
+                <li key={`chk-${i}`}>{c.label}: {c.detail}</li>
+              ))}
+              {contractNotes.filter((n) => n.level === "error").map((n, i) => (
+                <li key={`fez-${i}`}>{n.message}{n.suggestion ? ` — ${n.suggestion}` : ""}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center gap-3">
         <Button
           size="lg"
@@ -663,7 +695,7 @@ export default function PrepPage() {
             <p className="text-sm text-amber-700 dark:text-amber-300">
               Generated with the fallback engine — the optimal solver was unreachable{fallbackInfo.reason ? ` (${fallbackInfo.reason})` : ''}.
             </p>
-            <Button variant="outline" size="sm" onClick={handleGenerate} disabled={generating} className="h-7 gap-1 text-xs">
+            <Button variant="outline" size="sm" onClick={handleGenerate} disabled={generating || !allReady} className="h-7 gap-1 text-xs">
               <RefreshCw className="h-3 w-3" /> Retry with solver
             </Button>
           </div>

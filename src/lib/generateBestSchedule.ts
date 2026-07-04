@@ -46,7 +46,17 @@ export async function generateBestSchedule(opts: BestScheduleOptions): Promise<B
 
   const { data, error } = await supabase.functions.invoke("enqueue-generation", { body: { school_id: schoolId } });
   const jobId = (data as any)?.job_id as string | undefined;
-  if (error || !jobId) throw new Error((data as any)?.error ?? error?.message ?? "Could not start schedule generation.");
+  if (error || !jobId) {
+    // On a non-2xx (e.g. the 422 insufficient-inputs preflight), supabase-js puts
+    // the Response on error.context — read its body so the user sees the actionable
+    // "add a specialist/teacher…" message rather than a generic HTTP error.
+    let serverMsg: string | undefined = (data as any)?.error;
+    const ctx = (error as any)?.context;
+    if (!serverMsg && ctx && typeof ctx.json === "function") {
+      try { serverMsg = (await ctx.json())?.error; } catch { /* body not JSON */ }
+    }
+    throw new Error(serverMsg ?? error?.message ?? "Could not start schedule generation.");
+  }
 
   return await new Promise<BestScheduleResult>((resolve, reject) => {
     let settled = false;
