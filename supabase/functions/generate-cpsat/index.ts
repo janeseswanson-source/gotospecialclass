@@ -139,7 +139,7 @@ Deno.serve(async (req) => {
       solverResp = await fetch(`${SOLVER_URL.replace(/\/$/, "")}/solve`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...(SOLVER_KEY ? { Authorization: `Bearer ${SOLVER_KEY}` } : {}) },
-        body: JSON.stringify(spec),
+        body: JSON.stringify({ school_id, time_limit_s: typeof time_limit_s === "number" ? time_limit_s : 60 }),
       });
     } catch (e) {
       return fail(503, "cpsat_unreachable", `CP-SAT solver unreachable: ${e instanceof Error ? e.message : e}`);
