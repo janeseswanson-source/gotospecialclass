@@ -1,42 +1,23 @@
-## Plan
+## Plan: resolve "CP-SAT rejected the model: School not found"
 
-1. **Add safe solver-call diagnostics**
-   - Update `generate-cpsat` to log non-secret credential metadata before calling `/solve`:
-     - solver URL origin/host only
-     - whether `CPSAT_SOLVER_KEY` is present
-     - key length and first/last 4 characters only
-   - Never log the full key.
+### Diagnosis
+- The `Unauthorized` error is gone — the solver is now authenticating our requests.
+- The external CP-SAT solver at `CPSAT_SOLVER_URL` returned `MODEL_INVALID` with message `"School not found"`.
+- This message is produced by the **external solver service**, not by our edge function. Our function is correctly sending the school's data in the spec payload.
+- The active school id is `8f9b400b-b235-49fa-870c-103bd2027afe`. The solver's registry does not include it.
 
-2. **Log the solver response shape**
-   - When `/solve` returns an error-like response or `MODEL_INVALID`, log:
-     - HTTP status
-     - returned solver `status`
-     - first 300 characters of the solver message/body
-   - This will confirm whether the local service is receiving the expected key or returning `MODEL_INVALID` for another validation path.
+### Action (no code change required)
+1. **You**: register school id `8f9b400b-b235-49fa-870c-103bd2027afe` in the CP-SAT solver service (the process at your ngrok URL).
+2. **You**: retry **Generate** from the app.
+3. **If it still fails**: come back with the new error string and I'll investigate the next layer (spec payload shape, solver logs, etc.).
 
-3. **Make solver-auth failures explicit**
-   - If the solver returns `MODEL_INVALID` with message `Unauthorized`, return a backend error like:
-     ```text
-     CP-SAT solver authorization failed
-     ```
-   - This avoids mislabeling it as a model/spec validation problem.
+### Fallback if registration isn't possible right now
+If registering the school on the solver isn't feasible in the short term, tell me and I'll switch the app to the non-CP-SAT heuristic generation path until the solver is provisioned. That would be a small code change gated behind a feature flag or a `CPSAT_ENABLED` secret.
 
-4. **Deploy and retest the function**
-   - Deploy `generate-cpsat` so the diagnostics and error classification are live.
-   - Ask you to retry Generate once.
-   - Then inspect fresh logs to determine the exact mismatch.
+### Why no code change now
+The app is behaving correctly:
+- Auth header is being sent.
+- The spec includes the school payload the solver needs.
+- The error is being surfaced clearly to the user (`cpsat_model_invalid` → visible message).
 
-5. **Apply the final auth fix from the log signal**
-   - If the key metadata shows the wrong/missing value: update `CPSAT_SOLVER_KEY` through the secure secret form.
-   - If the URL host is wrong: update `CPSAT_SOLVER_URL` again to the active ngrok URL.
-   - If the solver expects a different auth header on `/solve`: update the request header format in `generate-cpsat` and redeploy.
-
-## Technical details
-
-- The app already sends `Authorization: Bearer <CPSAT_SOLVER_KEY>` to `/solve`.
-- The current user-facing error is produced when the solver returns JSON with:
-  ```text
-  status = MODEL_INVALID
-  message = Unauthorized
-  ```
-- That means the backend is reaching something at `/solve`; the remaining issue is whether it is the right tunnel, the right key value, or the exact header format expected by the local solver.
+Editing our function won't teach the external solver about a school it hasn't been told about.
