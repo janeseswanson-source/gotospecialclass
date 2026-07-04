@@ -78,6 +78,10 @@ interface ScheduleGridProps {
   originIds?: Set<string>;
   /** Blocks proposed for deletion — rendered struck-through until Apply/Discard. */
   deletedIds?: Set<string>;
+  /** Pixel offset for the sticky day-header row. When the grid renders under
+   *  another sticky bar (e.g. WeekGrid's tabs at top-0), pass that bar's height
+   *  so the Mon–Fri header pins BELOW it instead of sliding underneath. */
+  stickyTopOffset?: number;
 }
 
 /** A droppable grid cell. Paints the legal-target wash while a drag is active. */
@@ -136,7 +140,7 @@ function DroppableCell({
 export default function ScheduleGrid({
   blocks, timeSlots, onBlockClick, onBlockDrop, lockedIds, onToggleLock,
   recessBands, schoolStart, schoolEnd, onNotesChange, notesEditable, conflictIds,
-  trayBlocks, liftedIds, highlightIds, ghostIds, originIds, deletedIds,
+  trayBlocks, liftedIds, highlightIds, ghostIds, originIds, deletedIds, stickyTopOffset,
 }: ScheduleGridProps) {
   // Touch/keyboard "pick up to move": the block waiting for a target slot.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -233,7 +237,7 @@ export default function ScheduleGrid({
           </div>
         )}
         <table className="w-full text-sm table-fixed" role="grid" aria-label="Master schedule, days across, times down">
-          <thead className="sticky top-0 z-10 bg-card">
+          <thead className="sticky z-10 bg-card" style={{ top: stickyTopOffset ?? 0 }}>
             <tr className="border-b border-border bg-muted/50">
               <th className="px-2 py-2 text-left font-medium text-muted-foreground w-16">Time</th>
               {DAYS.map((d) => (

@@ -176,6 +176,19 @@ Deno.test("specialist lunch is reserved into busy", () => {
   assert(spec.busy.every((b) => b.end > b.start && DAYS.includes(b.day)));
 });
 
+Deno.test("special events (wizard Events step) block EVERY specialist for their window", () => {
+  // 2026-09-07 is a Monday; 2026-09-12 a Saturday (ignored); timeless events ignored.
+  const events = [
+    { event_date: "2026-09-07", start_time: "09:00", end_time: "10:00", name: "Assembly" },
+    { event_date: "2026-09-12", start_time: "09:00", end_time: "10:00", name: "Weekend fair" },
+    { event_date: "2026-09-08", start_time: null, end_time: null, name: "Spirit day" },
+  ];
+  const { spec } = buildCpsatSpec(baseArgs({}, { specialEvents: events }));
+  const eventBusy = spec.busy.filter((b) => b.day === "Mon" && b.start === 540 && b.end === 600);
+  assertEquals(eventBusy.length, spec.specialists.length, "one Mon 9–10 busy window per specialist");
+  assert(!spec.busy.some((b) => b.day === "Sat"), "weekend event must contribute nothing");
+});
+
 // ─── SCORING PARITY: a solved fixture through the public pipeline ───────
 Deno.test("parity: a clean fully-covered fixture scores 100 via computeWarnings+scoreSchedule+qualityPercent", () => {
   const specialists = [mkSpecialist("pe", "PE"), mkSpecialist("art", "Art")];

@@ -84,6 +84,9 @@ export default function WeekGrid(props: WeekGridProps) {
     ghostIds, originIds, deletedIds,
     onBlockClick, onBlockDrop, onToggleLock, onNotesChange,
     notesEditable: true as const,
+    // The tabs bar below is sticky at top-0 (h-10 = 40px); pin the grid's day
+    // header just under it so it doesn't slide behind the tabs when scrolling.
+    stickyTopOffset: 40,
   };
 
   return (
@@ -114,11 +117,16 @@ export default function WeekGrid(props: WeekGridProps) {
       )}
 
       <Tabs defaultValue="master">
-        <TabsList className="no-print sticky top-0 z-20 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70">
-          <TabsTrigger value="master">Master Grid</TabsTrigger>
-          <TabsTrigger value="specialist">By Specialist</TabsTrigger>
-          <TabsTrigger value="teacher">By Teacher</TabsTrigger>
-        </TabsList>
+        {/* Full-width sticky bar (an inline-flex TabsList alone lets grid content
+            scroll past its right edge). The grid's day header pins just below
+            this bar via stickyTopOffset. */}
+        <div className="no-print sticky top-0 z-20 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/70">
+          <TabsList>
+            <TabsTrigger value="master">Master Grid</TabsTrigger>
+            <TabsTrigger value="specialist">By Specialist</TabsTrigger>
+            <TabsTrigger value="teacher">By Teacher</TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="master">
           <ScheduleGrid blocks={masterBlocks} trayBlocks={trayBlocks} liftedIds={trayIds} {...gridCommon} />

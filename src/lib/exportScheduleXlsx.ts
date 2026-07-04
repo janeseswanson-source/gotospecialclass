@@ -12,6 +12,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { formatTime } from "@/lib/utils";
 import { NAVY, GOLD, CREAM, WHITE, MUTE, GRIDLINE, ZEBRA, subjectColors, parseMin } from "@/lib/exportColors";
 import { BRAND } from "@/brand/brand";
+import { resolveDisplayQuote } from "@/lib/quoteService";
+import logoUrl from "@/assets/logo.png";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"] as const;
 const DAY_FULL: Record<string, string> = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday" };
@@ -60,6 +62,39 @@ export function headerCell(cell: ExcelJS.Cell, text: string) {
   cell.border = thinBorder(NAVY);
 }
 
+// ── Brand logo (top-right of every sheet's title band) ──────────────────────
+// The PNG is fetched once per session and registered once per workbook; failures
+// are swallowed — the logo is decorative and must never block an export.
+let logoBufPromise: Promise<ArrayBuffer | null> | null = null;
+const logoIdByWb = new WeakMap<ExcelJS.Workbook, number>();
+
+async function getLogoBuffer(): Promise<ArrayBuffer | null> {
+  logoBufPromise ??= fetch(logoUrl)
+    .then((r) => (r.ok ? r.arrayBuffer() : null))
+    .catch(() => null);
+  return logoBufPromise;
+}
+
+/** Place the brand logo inside the navy title band, anchored to the last column. */
+export async function addBrandLogo(wb: ExcelJS.Workbook, ws: ExcelJS.Worksheet, lastCol: number): Promise<void> {
+  try {
+    const buf = await getLogoBuffer();
+    if (!buf) return;
+    let id = logoIdByWb.get(wb);
+    if (id === undefined) {
+      id = wb.addImage({ buffer: buf as unknown as Buffer, extension: "png" });
+      logoIdByWb.set(wb, id);
+    }
+    ws.addImage(id, {
+      tl: { col: lastCol - 0.55, row: 0.12 },
+      ext: { width: 30, height: 30 },
+      editAs: "oneCell",
+    });
+  } catch {
+    /* decorative */
+  }
+}
+
 export async function exportScheduleXlsx(opts: {
   schoolId: string;
   generationId: string | null;
@@ -68,8 +103,11 @@ export async function exportScheduleXlsx(opts: {
   /** Motivational quote printed in the subtitle band of every sheet. */
   quote?: string;
 }): Promise<boolean> {
-  const { schoolId, generationId, quote } = opts;
+  const { schoolId, generationId } = opts;
   if (!generationId) return false;
+  // Every branded export carries the school's motivational quote — resolve the
+  // latest AI quote (static brand fallback) when the caller didn't pass one.
+  const quote = opts.quote ?? (await resolveDisplayQuote(schoolId).then((q) => q.text).catch(() => ""));
   const quoteTail = quote && quote.trim() ? `  ·  "${quote.trim()}"` : "";
 
   const [{ data: school }, { data: specsData }, { data: teachData }, { data: blocksData }, { data: recessData }] = await Promise.all([
@@ -107,6 +145,7 @@ export async function exportScheduleXlsx(opts: {
   const ms = wb.addWorksheet("Master Schedule", { views: [{ state: "frozen", xSplit: 1, ySplit: 4 }], properties: { defaultRowHeight: 18 } });
   ms.columns = [{ width: 16 }, ...DAYS.map(() => ({ width: 32 }))];
   buildBrandHeader(ms, DAYS.length + 1, `Master Schedule — ${schoolName}`, `${schoolYear ? schoolYear + "  ·  " : ""}${school?.start_time ? formatTime(school.start_time) : ""}–${school?.end_time ? formatTime(school.end_time) : ""}  ·  ${BRAND.name}${quoteTail}`);
+  await addBrandLogo(wb, ms, DAYS.length + 1);
 
   // Day header row (row 3 is spacer-free; put headers at row 3)
   const hdr = ms.getRow(3);
@@ -206,6 +245,7 @@ export async function exportScheduleXlsx(opts: {
     const ws = wb.addWorksheet(safe, { views: [{ state: "frozen", xSplit: 1, ySplit: 4 }], properties: { defaultRowHeight: 18 } });
     ws.columns = [{ width: 16 }, ...DAYS.map(() => ({ width: 28 }))];
     buildBrandHeader(ws, DAYS.length + 1, `${spec.name} — ${spec.subject}`, `${schoolName}${schoolYear ? "  ·  " + schoolYear : ""}  ·  ${BRAND.name}${quoteTail}`);
+    await addBrandLogo(wb, ws, DAYS.length + 1);
     const h = ws.getRow(3);
     headerCell(h.getCell(1), "Time");
     DAYS.forEach((d, i) => headerCell(h.getCell(i + 2), DAY_FULL[d]));

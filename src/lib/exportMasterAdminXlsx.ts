@@ -1,353 +1,337 @@
-import * as XLSX from 'xlsx';
-import { supabase } from '@/integrations/supabase/client';
-import { formatTime } from '@/lib/utils';
-import { NAVY, GOLD, CREAM, WHITE, MUTE, GRIDLINE } from '@/lib/exportColors';
+// Branded Master Admin workbook export.
+//
+// Uses ExcelJS — NOT the community `xlsx` package, which silently drops every
+// cell style on write (the old version of this file produced a colorless,
+// unbranded sheet). Same navy/gold/cream identity, brand header, logo and
+// embedded quote as exportScheduleXlsx, so every workbook we emit looks the same.
+//
+// Sheet 1 "Master Admin View": the whole-school week at a glance — Planning & Prep
+// (admin rotation), every teaching rotation (Time × Mon–Fri, subject-tinted),
+// recess/lunch bands. Sheets 2+ are the branded data sheets (Schools, Specialists,
+// Schedule Blocks, Rotations, Classrooms, PLUS Rotations).
+//
+// Day-name gotcha: schedule_blocks.day_of_week stores SHORT codes ("Mon"…"Fri"),
+// while the wizard's admin_rotation entries store FULL names ("Monday"…). The old
+// export compared full names against short codes, so every day cell came out
+// EMPTY. All matching below normalizes through DAY_SHORT/DAY_FULL.
+import ExcelJS from "exceljs";
+import { supabase } from "@/integrations/supabase/client";
+import { formatTime } from "@/lib/utils";
+import { NAVY, GOLD, CREAM, WHITE, MUTE, GRIDLINE, ZEBRA, subjectColors, parseMin } from "@/lib/exportColors";
+import { BRAND } from "@/brand/brand";
+import { resolveDisplayQuote } from "@/lib/quoteService";
+import { buildBrandHeader, headerCell, addBrandLogo } from "@/lib/exportScheduleXlsx";
 
-const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const;
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"] as const;
+const DAY_FULL: Record<string, string> = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday" };
+const DAY_SHORT: Record<string, string> = { monday: "Mon", tuesday: "Tue", wednesday: "Wed", thursday: "Thu", friday: "Fri", mon: "Mon", tue: "Tue", wed: "Wed", thu: "Thu", fri: "Fri" };
+
+function toShortDay(d: string | null | undefined): string | null {
+  return d ? (DAY_SHORT[d.trim().toLowerCase()] ?? null) : null;
+}
+
+function thinBorder(color = GRIDLINE) {
+  return {
+    top: { style: "thin" as const, color: { argb: color } },
+    bottom: { style: "thin" as const, color: { argb: color } },
+    left: { style: "thin" as const, color: { argb: color } },
+    right: { style: "thin" as const, color: { argb: color } },
+  };
+}
 
 function splitName(full: string | null | undefined): [string, string] {
-  if (!full) return ['', ''];
+  if (!full) return ["", ""];
   const parts = full.trim().split(/\s+/);
-  if (parts.length === 1) return [parts[0], ''];
-  return [parts[0], parts.slice(1).join(' ')];
+  if (parts.length === 1) return [parts[0], ""];
+  return [parts[0], parts.slice(1).join(" ")];
 }
 
-function classifyBlockType(subject: string | null | undefined): string {
-  const s = (subject ?? '').toLowerCase();
-  if (/planning|prep/.test(s)) return 'planning_prep';
-  if (/recess/.test(s)) return 'recess';
-  if (/lunch/.test(s)) return 'lunch';
-  if (/dismiss/.test(s)) return 'dismissal';
-  return 'rotation';
+/** A full-width cream band row (section separators: P&P, RECESS, LUNCH…). */
+function bandRow(ws: ExcelJS.Worksheet, cols: number, label: string) {
+  const row = ws.addRow([]);
+  ws.mergeCells(row.number, 1, row.number, cols);
+  const c = row.getCell(1);
+  c.value = label;
+  c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CREAM } };
+  c.font = { name: "Arial", size: 9, bold: true, color: { argb: NAVY } };
+  c.alignment = { vertical: "middle", horizontal: "center" };
+  c.border = { top: { style: "thin", color: { argb: GOLD } }, bottom: { style: "thin", color: { argb: GOLD } } };
+  row.height = 22;
+  return row;
 }
 
-// Brand tokens (ARGB for xlsx) — sourced from the ONE brand palette.
-const BRAND_NAVY = NAVY;
-const BRAND_GOLD = GOLD;
-const BRAND_CREAM = CREAM;
-const BRAND_WHITE = WHITE;
-
-const headerStyle = {
-  fill: { patternType: 'solid', fgColor: { rgb: BRAND_NAVY } },
-  font: { name: 'Arial', sz: 11, bold: true, color: { rgb: BRAND_WHITE } },
-  alignment: { vertical: 'center', horizontal: 'center', wrapText: true },
-  border: {
-    bottom: { style: 'medium', color: { rgb: BRAND_GOLD } },
-  },
-};
-
-const titleStyle = {
-  font: { name: 'Arial', sz: 16, bold: true, color: { rgb: BRAND_NAVY } },
-  alignment: { vertical: 'center', horizontal: 'left' },
-};
-
-const subTitleStyle = {
-  font: { name: 'Arial', sz: 9, italic: true, color: { rgb: MUTE } },
-  alignment: { vertical: 'center', horizontal: 'left' },
-};
-
-const dayHeaderStyle = {
-  fill: { patternType: 'solid', fgColor: { rgb: BRAND_NAVY } },
-  font: { name: 'Arial', sz: 10, bold: true, color: { rgb: BRAND_WHITE } },
-  alignment: { vertical: 'center', horizontal: 'center' },
-};
-
-const bandStyle = {
-  fill: { patternType: 'solid', fgColor: { rgb: BRAND_CREAM } },
-  font: { name: 'Arial', sz: 10, bold: true, color: { rgb: BRAND_NAVY } },
-  alignment: { vertical: 'center', horizontal: 'left', wrapText: true },
-};
-
-const cellStyle = {
-  font: { name: 'Arial', sz: 9, color: { rgb: BRAND_NAVY } },
-  alignment: { vertical: 'top', horizontal: 'left', wrapText: true },
-  border: {
-    top: { style: 'thin', color: { rgb: GRIDLINE } },
-    bottom: { style: 'thin', color: { rgb: GRIDLINE } },
-    left: { style: 'thin', color: { rgb: GRIDLINE } },
-    right: { style: 'thin', color: { rgb: GRIDLINE } },
-  },
-};
-
-const footerStyle = {
-  fill: { patternType: 'solid', fgColor: { rgb: BRAND_CREAM } },
-  font: { name: 'Arial', sz: 9, color: { rgb: BRAND_NAVY }, italic: true },
-  alignment: { vertical: 'center', horizontal: 'center' },
-  border: { top: { style: 'medium', color: { rgb: BRAND_GOLD } } },
-};
-
-function setCellStyle(ws: XLSX.WorkSheet, ref: string, style: any) {
-  const cell = (ws as any)[ref];
-  if (cell) cell.s = style;
-}
-
-function sheetFromAOA(aoa: any[][], colWidths?: number[]): XLSX.WorkSheet {
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
-  if (colWidths) (ws as any)['!cols'] = colWidths.map((w) => ({ wch: w }));
+/** Branded data sheet: title band + navy header row + zebra data rows. */
+function addDataSheet(
+  wb: ExcelJS.Workbook,
+  name: string,
+  sub: string,
+  headers: string[],
+  rows: (string | number)[][],
+  colWidth = 18,
+) {
+  const ws = wb.addWorksheet(name, { views: [{ state: "frozen", ySplit: 3 }] });
+  ws.columns = headers.map(() => ({ width: colWidth }));
+  buildBrandHeader(ws, headers.length, name, sub);
+  const h = ws.getRow(3);
+  headers.forEach((t, i) => headerCell(h.getCell(i + 1), t));
+  h.height = 24;
+  rows.forEach((r, ri) => {
+    const row = ws.addRow(r.map((v) => v ?? ""));
+    row.eachCell({ includeEmpty: true }, (cell) => {
+      cell.font = { name: "Arial", size: 9, color: { argb: NAVY } };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: ri % 2 ? ZEBRA : WHITE } };
+      cell.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
+      cell.border = thinBorder();
+    });
+  });
   return ws;
 }
 
-function applyHeaderRow(ws: XLSX.WorkSheet, rowIdx: number, cols: number, style: any = headerStyle) {
-  for (let c = 0; c < cols; c++) {
-    const ref = XLSX.utils.encode_cell({ r: rowIdx, c });
-    if (!(ws as any)[ref]) (ws as any)[ref] = { t: 's', v: '' };
-    (ws as any)[ref].s = style;
-  }
+interface Blk {
+  id: string; day_of_week: string; start_time: string; end_time: string;
+  subject: string | null; grade: string | null; week_label: string | null;
+  specialist_id: string | null; teacher_id: string | null; notes?: string | null;
 }
 
 export async function exportMasterAdminXlsx(opts: {
   schoolId: string;
   generationId: string | null;
+  /** Motivational quote for the title band; the latest AI quote is resolved when omitted. */
+  quote?: string;
 }) {
   const { schoolId, generationId } = opts;
 
-  const [{ data: school }, { data: specialists }, { data: teachers }, { data: blocksData }, { data: rotationsData }, { data: clubsData }] =
+  const [{ data: school }, { data: specialists }, { data: teachers }, { data: blocksData }, { data: rotationsData }, { data: clubsData }, { data: recessData }] =
     await Promise.all([
-      supabase.from('schools').select('*').eq('id', schoolId).maybeSingle(),
-      supabase.from('specialists').select('*').eq('school_id', schoolId),
-      supabase.from('classroom_teachers').select('*').eq('school_id', schoolId),
+      supabase.from("schools").select("*").eq("id", schoolId).maybeSingle(),
+      supabase.from("specialists").select("*").eq("school_id", schoolId),
+      supabase.from("classroom_teachers").select("*").eq("school_id", schoolId),
       generationId
-        ? supabase.from('schedule_blocks').select('*').eq('generation_id', generationId)
+        ? supabase.from("schedule_blocks").select("*").eq("generation_id", generationId)
         : Promise.resolve({ data: [] as any[] }),
-      supabase.from('class_rotations').select('*').eq('school_id', schoolId),
-      supabase.from('clubs').select('*').eq('school_id', schoolId),
+      supabase.from("class_rotations").select("*").eq("school_id", schoolId),
+      supabase.from("clubs").select("*").eq("school_id", schoolId),
+      supabase.from("recess_lunch_config").select("*").eq("school_id", schoolId),
     ]);
 
-  const sp = specialists ?? [];
-  const tc = teachers ?? [];
-  const blocks = (blocksData ?? []) as any[];
+  const quote = opts.quote ?? (await resolveDisplayQuote(schoolId).then((q) => q.text).catch(() => ""));
+  const quoteTail = quote && quote.trim() ? `  ·  "${quote.trim()}"` : "";
+
+  const sp = (specialists ?? []) as any[];
+  const tc = (teachers ?? []) as any[];
+  const blocks = (blocksData ?? []) as Blk[];
   const rotations = (rotationsData ?? []) as any[];
   const clubs = (clubsData ?? []) as any[];
+  const specialistById = new Map(sp.map((s) => [s.id, s]));
+  const teacherById = new Map(tc.map((t) => [t.id, t]));
 
-  const specialistById: Record<string, any> = Object.fromEntries(sp.map((s: any) => [s.id, s]));
-  const teacherById: Record<string, any> = Object.fromEntries(tc.map((t: any) => [t.id, t]));
+  const schoolName = school?.name ?? "School";
+  const schoolYear = (school as any)?.school_year ?? "";
+  const daySpan = school?.start_time && school?.end_time
+    ? `${formatTime(school.start_time)}–${formatTime(school.end_time)}`
+    : "";
+  const sub = `${schoolYear ? schoolYear + "  ·  " : ""}${daySpan ? daySpan + "  ·  " : ""}${BRAND.name}${quoteTail}`;
 
-  const wb = XLSX.utils.book_new();
+  const wb = new ExcelJS.Workbook();
+  wb.creator = BRAND.name;
+  wb.created = new Date();
 
-  // === Sheet 1: Master Admin View ===
-  const adminRotation: any[] = Array.isArray(school?.admin_rotation) ? school!.admin_rotation : [];
-  const planningByDay: Record<string, any[]> = Object.fromEntries(DAYS.map((d) => [d, []]));
-  for (const ar of adminRotation) {
-    const key = DAYS.find((d) => d.toLowerCase() === (ar.day || '').toLowerCase());
-    if (key) planningByDay[key].push(ar);
-  }
-  const grouped: Record<string, any[]> = {};
-  for (const b of blocks) {
-    if (classifyBlockType(b.subject) !== 'rotation') continue;
-    const k = `${b.start_time}|${b.end_time}`;
-    (grouped[k] ??= []).push(b);
-  }
-  const slotKeys = Object.keys(grouped).sort();
+  // ═══ Sheet 1: Master Admin View ═══
+  const COLS = DAYS.length + 1; // Time + Mon–Fri
+  const ws = wb.addWorksheet("Master Admin View", {
+    views: [{ state: "frozen", xSplit: 1, ySplit: 3 }],
+    pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
+    properties: { defaultRowHeight: 18 },
+  });
+  ws.columns = [{ width: 14 }, ...DAYS.map(() => ({ width: 30 }))];
+  buildBrandHeader(ws, COLS, `Master Admin View — ${schoolName}`, sub);
+  await addBrandLogo(wb, ws, COLS);
 
-  const masterAoa: any[][] = [];
-  masterAoa.push([`Specialist Schedule Planner — ${school?.name ?? ''}`, '', '', '', '']);
-  masterAoa.push([
-    `Year: ${school?.school_year ?? ''}`,
-    '',
-    `Day: ${school?.start_time ? formatTime(school.start_time) : ''} – ${school?.end_time ? formatTime(school.end_time) : ''}`,
-    '',
-    'www.GoToSpecialClass.com',
-  ]);
-  masterAoa.push([...DAYS]);
-  masterAoa.push(['Planning and Prep', '', '', '', '']);
-  // P&P rows
-  for (const day of DAYS) {
-    const cells = planningByDay[day].map((ar) => {
-      const lines: string[] = [];
-      if (ar.rotationLabel) lines.push(`${ar.rotationLabel}${ar.weekLabel ? `  (${ar.weekLabel})` : ''}`);
-      if (ar.startTime && ar.endTime) lines.push(`${formatTime(ar.startTime)} – ${formatTime(ar.endTime)}`);
-      sp.slice(0, 4).forEach((s: any) => lines.push(`${s.subject ?? ''}  ${s.name ?? ''}`));
-      return lines.join('\n');
-    });
-    masterAoa.push(DAYS.map((d, i) => (d === day ? cells.join('\n\n') : '')));
-  }
-  // Rotation slot rows
-  for (const k of slotKeys) {
-    const [s, e] = k.split('|');
-    masterAoa.push([`${formatTime(s)} – ${formatTime(e)}`, '', '', '', '']);
-    const row: string[] = [];
-    for (const day of DAYS) {
-      const cell = grouped[k]
-        .filter((b) => b.day_of_week === day)
-        .map((b) => {
-          const spec = specialistById[b.specialist_id]?.name ?? '';
-          const sub = b.subject ?? specialistById[b.specialist_id]?.subject ?? '';
-          const grade = b.grade ?? '';
-          const t = teacherById[b.teacher_id]?.name ?? '';
-          const wk = b.week_label ? ` (${b.week_label})` : '';
-          return `${grade}  ${sub}${wk}\n${spec}${t ? ` · ${t}` : ''}`;
+  const hdr = ws.getRow(3);
+  headerCell(hdr.getCell(1), "Time");
+  DAYS.forEach((d, i) => headerCell(hdr.getCell(i + 2), DAY_FULL[d]));
+  hdr.height = 26;
+
+  // ── Planning & Prep (the wizard's admin rotation) ──
+  const adminRotation: any[] = Array.isArray((school as any)?.admin_rotation) ? (school as any).admin_rotation : [];
+  if (adminRotation.length > 0) {
+    bandRow(ws, COLS, "PLANNING & PREP");
+    const row = ws.addRow([]);
+    const t = row.getCell(1);
+    t.value = "P&P";
+    t.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CREAM } };
+    t.font = { name: "Arial", size: 9, bold: true, color: { argb: NAVY } };
+    t.alignment = { vertical: "middle", horizontal: "center" };
+    t.border = thinBorder();
+    let maxEntries = 1;
+    DAYS.forEach((day, i) => {
+      const cell = row.getCell(i + 2);
+      const entries = adminRotation.filter((ar) => toShortDay(ar.day) === day);
+      cell.value = entries
+        .map((ar) => {
+          const label = ar.rotationLabel ? `${ar.rotationLabel}${ar.weekLabel ? ` (Wk ${ar.weekLabel})` : ""}` : "Rotation";
+          const time = ar.startTime && ar.endTime ? `${formatTime(ar.startTime)}–${formatTime(ar.endTime)}` : "";
+          return [label, time].filter(Boolean).join("\n");
         })
-        .join('\n\n');
-      row.push(cell);
-    }
-    masterAoa.push(row);
-  }
-  // Chrome rows
-  for (const kind of ['recess', 'lunch', 'dismissal'] as const) {
-    const chromeBlocks = blocks.filter((b) => classifyBlockType(b.subject) === kind);
-    if (!chromeBlocks.length) continue;
-    masterAoa.push([kind.toUpperCase(), '', '', '', '']);
-    masterAoa.push(
-      DAYS.map((d) =>
-        chromeBlocks
-          .filter((b) => b.day_of_week === d)
-          .map((b) => `${b.grade ?? ''} Graders\n${formatTime(b.start_time)} – ${formatTime(b.end_time)}`)
-          .join('\n\n')
-      )
-    );
+        .join("\n\n");
+      cell.font = { name: "Arial", size: 9, color: { argb: NAVY } };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: WHITE } };
+      cell.alignment = { vertical: "top", horizontal: "left", wrapText: true, indent: 1 };
+      cell.border = thinBorder();
+      if (entries.length > maxEntries) maxEntries = entries.length;
+    });
+    row.height = Math.max(34, maxEntries * 30);
   }
 
-  const masterWs = sheetFromAOA(masterAoa, [22, 22, 22, 22, 22]);
-  // Title + meta rows merged across all 5 columns.
-  (masterWs as any)['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
-    { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } },
-  ];
-  // Row heights: tall title rows, normal day header.
-  (masterWs as any)['!rows'] = [{ hpt: 26 }, { hpt: 16 }, { hpt: 22 }];
+  // ── Teaching rotations, grouped by (start,end), sorted by start ──
+  const isTeaching = (b: Blk) =>
+    !!b.specialist_id && !/lunch|planning|plc|recess|dismiss/i.test(b.subject ?? "") && (b.grade ?? "").toLowerCase() !== "lunch";
+  const slotKeys = Array.from(new Set(blocks.filter(isTeaching).map((b) => `${b.start_time}|${b.end_time}`)))
+    .sort((a, b) => parseMin(a.split("|")[0]) - parseMin(b.split("|")[0]));
 
-  // Apply brand styling.
-  setCellStyle(masterWs, 'A1', titleStyle);
-  setCellStyle(masterWs, 'A2', subTitleStyle);
-  // Day header row (index 2 -> row 3).
-  applyHeaderRow(masterWs, 2, 5, dayHeaderStyle);
+  for (const key of slotKeys) {
+    const [s, e] = key.split("|");
+    const row = ws.addRow([]);
+    const t = row.getCell(1);
+    t.value = `${formatTime(s)}\n${formatTime(e)}`;
+    t.fill = { type: "pattern", pattern: "solid", fgColor: { argb: CREAM } };
+    t.font = { name: "Arial", size: 9, bold: true, color: { argb: NAVY } };
+    t.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    t.border = thinBorder();
 
-  // Style band/data rows.
-  for (let r = 3; r < masterAoa.length; r++) {
-    const isBand =
-      typeof masterAoa[r][0] === 'string' &&
-      /^(Planning and Prep|RECESS|LUNCH|DISMISSAL|\d)/.test(masterAoa[r][0] ?? '');
-    for (let c = 0; c < 5; c++) {
-      const ref = XLSX.utils.encode_cell({ r, c });
-      if (!(masterWs as any)[ref]) (masterWs as any)[ref] = { t: 's', v: '' };
-      (masterWs as any)[ref].s = isBand && c === 0 ? bandStyle : cellStyle;
-    }
+    let maxLines = 1;
+    DAYS.forEach((day, i) => {
+      const cell = row.getCell(i + 2);
+      const cellBlocks = blocks.filter(
+        (b) => isTeaching(b) && b.day_of_week === day && b.start_time === s && b.end_time === e,
+      );
+      if (cellBlocks.length === 0) {
+        cell.border = thinBorder();
+        return;
+      }
+      // Dedupe by grade+subject+teacher (mirrors the on-screen stack cell).
+      const seen = new Set<string>();
+      const rows = cellBlocks.filter((b) => {
+        const k = `${b.grade ?? ""}|${(b.subject ?? "").toLowerCase()}|${b.teacher_id ?? ""}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      const head = rows[0];
+      const headSubj = head.subject ?? specialistById.get(head.specialist_id!)?.subject ?? "";
+      const { accent, fill } = subjectColors(headSubj);
+      const rich: ExcelJS.RichText[] = [];
+      rows.forEach((b, ri) => {
+        const spec = b.specialist_id ? specialistById.get(b.specialist_id) : null;
+        const teach = b.teacher_id ? teacherById.get(b.teacher_id) : null;
+        const subj = b.subject ?? spec?.subject ?? "";
+        if (ri > 0) rich.push({ text: "\n", font: { size: 6 } });
+        if (b.grade) rich.push({ text: `${b.grade}  `, font: { name: "Arial", size: 9, bold: true, color: { argb: accent } } });
+        rich.push({ text: subj, font: { name: "Arial", size: 9, bold: true, color: { argb: accent } } });
+        if (b.week_label) rich.push({ text: `  (${b.week_label})`, font: { name: "Arial", size: 8, italic: true, color: { argb: MUTE } } });
+        const who = [spec?.name, teach?.name].filter(Boolean).join(" · ");
+        if (who) rich.push({ text: `\n${who}`, font: { name: "Arial", size: 9, color: { argb: NAVY } } });
+      });
+      cell.value = { richText: rich };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fill } };
+      cell.alignment = { vertical: "top", horizontal: "left", wrapText: true, indent: 1 };
+      cell.border = thinBorder();
+      const lines = rows.length * 2;
+      if (lines > maxLines) maxLines = lines;
+    });
+    row.height = Math.max(36, maxLines * 15);
   }
 
-  // Landscape + print area.
-  (masterWs as any)['!pageSetup'] = { orientation: 'landscape', fitToWidth: 1, fitToHeight: 0 };
+  // ── Recess / Lunch bands (from the wizard's recess & lunch config) ──
+  const bandLabels: string[] = [];
+  for (const r of (recessData ?? []) as any[]) {
+    const gb = r.grade_band ? ` (${r.grade_band})` : "";
+    if (r.am_recess_start && r.am_recess_end) bandLabels.push(`AM RECESS${gb}  ·  ${formatTime(r.am_recess_start)}–${formatTime(r.am_recess_end)}`);
+    if (r.lunch_start && r.lunch_end) bandLabels.push(`LUNCH${gb}  ·  ${formatTime(r.lunch_start)}–${formatTime(r.lunch_end)}`);
+    if (r.pm_recess_start && r.pm_recess_end) bandLabels.push(`PM RECESS${gb}  ·  ${formatTime(r.pm_recess_start)}–${formatTime(r.pm_recess_end)}`);
+  }
+  for (const label of bandLabels) bandRow(ws, COLS, label);
 
-  XLSX.utils.book_append_sheet(wb, masterWs, 'Master Admin View');
-
-  // === Sheet 2: Schools ===
-  const schoolsAoa = [
-    [
-      'school_id', 'school_name', 'site_url', 'district', 'principal_name', 'principal_email',
-      'admin_contact', 'admin_email', 'phone', 'address', 'city', 'state', 'zip', 'timezone',
-      'regular_dismissal_time', 'early_dismissal_time', 'early_dismissal_day', 'notes',
-    ],
+  // ═══ Data sheets ═══
+  addDataSheet(wb, "Schools", sub,
+    ["school_id", "school_name", "year", "start_time", "end_time", "early_release_day", "early_release_end", "grades_served", "class_duration", "passing_time", "conflict_strategies", "notes"],
     school
-      ? (() => {
-          const s = school as any;
-          return [
-            s.id, s.name, s.website ?? '', s.district ?? '', s.principal_name ?? '',
-            s.principal_email ?? '', s.admin_contact ?? '', s.admin_email ?? '',
-            s.phone ?? '', s.address ?? '', s.city ?? '', s.state ?? '', s.zip ?? '',
-            s.timezone ?? '', s.end_time ?? '', s.early_release_end_time ?? '',
-            s.early_release_day ?? '', s.notes ?? '',
-          ];
-        })()
-      : [],
-  ];
-  const schoolsWs = sheetFromAOA(schoolsAoa, Array(18).fill(18));
-  applyHeaderRow(schoolsWs, 0, 18);
-  XLSX.utils.book_append_sheet(wb, schoolsWs, 'Schools');
+      ? [[
+          (school as any).id, schoolName, schoolYear,
+          school.start_time ?? "", school.end_time ?? "",
+          (school as any).early_release_day ?? "", (school as any).early_release_end_time ?? "",
+          Array.isArray(school.grades_served) ? school.grades_served.join("|") : "",
+          (school as any).class_duration ?? "", (school as any).passing_time ?? "",
+          Array.isArray((school as any).conflict_strategies) ? (school as any).conflict_strategies.join("|") : "",
+          (school as any).notes ?? "",
+        ]]
+      : []);
 
-  // === Sheet 3: Specialists ===
-  const specialistsAoa: any[][] = [[
-    'specialist_id', 'school_id', 'first_name', 'last_name', 'email', 'subject', 'room_number',
-    'uses_cart', 'is_part_time', 'part_time_days', 'serves_multiple_schools', 'second_school_id',
-    'grades_served', 'custom_grade_preference', 'notes',
-  ]];
-  for (const s of sp as any[]) {
-    const [first, last] = splitName(s.name);
-    specialistsAoa.push([
-      s.id, s.school_id, first, last, s.email ?? '', s.subject ?? '', s.location ?? s.room ?? '',
-      s.uses_cart ? 'TRUE' : 'FALSE',
-      s.is_part_time ? 'TRUE' : 'FALSE',
-      Array.isArray(s.part_time_days) ? s.part_time_days.join('|') : (s.days ? (Array.isArray(s.days) ? s.days.join('|') : s.days) : ''),
-      s.two_schools ? 'TRUE' : 'FALSE',
-      s.second_school_id ?? s.second_school_name ?? '',
-      Array.isArray(s.grades_served) ? s.grades_served.join('|') : (s.grades_served ?? ''),
-      s.custom_grade_preference ?? s.grade_preference ?? '',
-      s.notes ?? '',
-    ]);
-  }
-  const specialistsWs = sheetFromAOA(specialistsAoa, Array(15).fill(18));
-  applyHeaderRow(specialistsWs, 0, 15);
-  XLSX.utils.book_append_sheet(wb, specialistsWs, 'Specialists');
+  addDataSheet(wb, "Specialists", sub,
+    ["specialist_id", "first_name", "last_name", "subject", "room", "working_days", "class_duration", "uses_cart", "is_part_time", "two_schools", "weekly_planning_min", "notes"],
+    sp.map((s) => {
+      const [first, last] = splitName(s.name);
+      return [
+        s.id, first, last, s.subject ?? "", s.location ?? s.room ?? "",
+        Array.isArray(s.working_days) ? s.working_days.join("|") : "",
+        s.class_duration ?? "", s.uses_cart ? "TRUE" : "FALSE",
+        s.is_part_time ? "TRUE" : "FALSE", s.two_schools ? "TRUE" : "FALSE",
+        s.weekly_planning_minutes ?? "", s.notes ?? "",
+      ];
+    }));
 
-  // === Sheet 4: Schedule Blocks ===
-  const blocksAoa: any[][] = [[
-    'block_id', 'school_id', 'block_name', 'start_time', 'end_time', 'block_type', 'days_active',
-    'grade_group', 'notes',
-  ]];
-  for (const b of blocks) {
-    blocksAoa.push([
-      b.id, schoolId, b.subject ?? '', b.start_time ?? '', b.end_time ?? '',
-      classifyBlockType(b.subject), b.day_of_week ?? '', b.grade ?? '', b.notes ?? '',
-    ]);
-  }
-  const blocksWs = sheetFromAOA(blocksAoa, Array(9).fill(18));
-  applyHeaderRow(blocksWs, 0, 9);
-  XLSX.utils.book_append_sheet(wb, blocksWs, 'Schedule Blocks');
+  addDataSheet(wb, "Schedule Blocks", sub,
+    ["block_id", "day", "start_time", "end_time", "subject", "grade", "week", "specialist", "teacher", "notes"],
+    blocks.map((b) => [
+      b.id, DAY_FULL[b.day_of_week] ?? b.day_of_week, b.start_time ?? "", b.end_time ?? "",
+      b.subject ?? "", b.grade ?? "", b.week_label ?? "",
+      b.specialist_id ? (specialistById.get(b.specialist_id)?.name ?? "") : "",
+      b.teacher_id ? (teacherById.get(b.teacher_id)?.name ?? "") : "",
+      b.notes ?? "",
+    ]), 14);
 
-  // === Sheet 5: Rotations ===
-  const rotationsAoa: any[][] = [[
-    'rotation_id', 'school_id', 'block_id', 'specialist_id', 'rotation_label', 'grade_group',
-    'classroom_teacher', 'day_of_week', 'room_or_location', 'week_pattern', 'start_date', 'end_date', 'notes',
-  ]];
-  for (const r of rotations) {
-    rotationsAoa.push([
-      r.id, r.school_id, '', r.specialist_id ?? '', r.rotation_type ?? '',
-      r.grade ?? '', teacherById[r.teacher_id]?.name ?? '', r.day_of_week ?? '',
-      '', r.week_label ?? '', '', '', r.notes ?? '',
-    ]);
-  }
-  const rotationsWs = sheetFromAOA(rotationsAoa, Array(13).fill(16));
-  applyHeaderRow(rotationsWs, 0, 13);
-  XLSX.utils.book_append_sheet(wb, rotationsWs, 'Rotations');
+  addDataSheet(wb, "Rotations", sub,
+    ["rotation_id", "rotation_type", "grade", "teacher", "specialist", "day", "week", "notes"],
+    rotations.map((r) => [
+      r.id, r.rotation_type ?? "", r.grade ?? "",
+      teacherById.get(r.teacher_id)?.name ?? "",
+      specialistById.get(r.specialist_id)?.name ?? "",
+      r.day_of_week ?? "", r.week_label ?? "", r.notes ?? "",
+    ]));
 
-  // === Sheet 6: Classrooms ===
-  const classroomsAoa: any[][] = [[
-    'classroom_id', 'school_id', 'teacher_first_name', 'teacher_last_name', 'teacher_email',
-    'grade', 'room_number', 'homeroom_label', 'student_count', 'special_notes',
-  ]];
-  for (const t of tc as any[]) {
-    const [first, last] = splitName(t.name);
-    classroomsAoa.push([
-      t.id, t.school_id, first, last, t.email ?? '', t.grade ?? '', t.room ?? '',
-      t.team ?? '', '', '',
-    ]);
-  }
-  const classroomsWs = sheetFromAOA(classroomsAoa, Array(10).fill(18));
-  applyHeaderRow(classroomsWs, 0, 10);
-  XLSX.utils.book_append_sheet(wb, classroomsWs, 'Classrooms');
+  addDataSheet(wb, "Classrooms", sub,
+    ["classroom_id", "teacher_first_name", "teacher_last_name", "grade", "room", "team"],
+    tc.map((t) => {
+      const [first, last] = splitName(t.name);
+      return [t.id, first, last, t.grade ?? "", t.room ?? "", t.team ?? ""];
+    }));
 
-  // === Sheet 7: PLUS Rotations ===
-  const plusAoa: any[][] = [[
-    'plus_id', 'school_id', 'plus_name', 'days_active', 'start_time', 'end_time',
-    'grades_included', 'specialist_id', 'notes',
-  ]];
-  for (const ar of adminRotation) {
-    plusAoa.push([
-      '', schoolId, ar.rotationLabel || 'Admin Rotation', ar.day ?? '',
-      ar.startTime ?? '', ar.endTime ?? '',
-      Array.isArray(ar.grades) ? ar.grades.join('|') : '', '', ar.weekLabel ? `Week ${ar.weekLabel}` : '',
+  addDataSheet(wb, "PLUS Rotations", sub,
+    ["plus_name", "day", "start_time", "end_time", "grades", "week", "notes"],
+    [
+      ...adminRotation.map((ar) => [
+        ar.rotationLabel || "Admin Rotation", ar.day ?? "",
+        ar.startTime ?? "", ar.endTime ?? "",
+        Array.isArray(ar.grades) ? ar.grades.join("|") : "",
+        ar.weekLabel ? `Week ${ar.weekLabel}` : "", "",
+      ]),
+      ...clubs.map((c) => [
+        c.name ?? "", Array.isArray(c.days) ? c.days.join("|") : (c.day_of_week ?? c.day ?? ""),
+        c.start_time ?? "", c.end_time ?? "",
+        Array.isArray(c.grades) ? c.grades.join("|") : (c.grade ?? ""),
+        "", c.notes ?? "",
+      ]),
     ]);
-  }
-  for (const c of clubs as any[]) {
-    plusAoa.push([
-      c.id, c.school_id, c.name ?? '', Array.isArray(c.days) ? c.days.join('|') : (c.day ?? ''),
-      c.start_time ?? '', c.end_time ?? '',
-      Array.isArray(c.grades) ? c.grades.join('|') : (c.grade ?? ''),
-      c.specialist_id ?? '', c.notes ?? '',
-    ]);
-  }
-  const plusWs = sheetFromAOA(plusAoa, Array(9).fill(16));
-  applyHeaderRow(plusWs, 0, 9);
-  XLSX.utils.book_append_sheet(wb, plusWs, 'PLUS Rotations');
 
-  const safeName = (school?.name ?? 'school').replace(/[^a-z0-9]+/gi, '_');
-  XLSX.writeFile(wb, `MasterAdminView_${safeName}.xlsx`);
+  const safeName = schoolName.replace(/[^a-z0-9]+/gi, "_");
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf as BlobPart], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `MasterAdminView_${safeName}.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

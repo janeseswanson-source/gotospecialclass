@@ -113,13 +113,16 @@ Deno.serve(async (req) => {
     const { school_id, time_limit_s } = await req.json();
     if (!school_id) return fail(400, "bad_request", "school_id required");
 
-    const [schoolRes, specRes, teachRes, recessRes, clubsRes, weightRes] = await Promise.all([
+    const [schoolRes, specRes, teachRes, recessRes, clubsRes, weightRes, eventsRes] = await Promise.all([
       supabase.from("schools").select("*").eq("id", school_id).single(),
       supabase.from("specialists").select("*").eq("school_id", school_id),
       supabase.from("classroom_teachers").select("*").eq("school_id", school_id),
       supabase.from("recess_lunch_config").select("*").eq("school_id", school_id),
       supabase.from("clubs").select("*").eq("school_id", school_id),
       supabase.from("scoring_weight_profiles").select("*").eq("school_id", school_id).maybeSingle(),
+      // Dated special events (wizard Events step) — their windows block all
+      // specialists, same as generate-schedule's occupancy booking.
+      supabase.from("special_events").select("*").eq("school_id", school_id),
     ]);
     const school = schoolRes.data;
     if (!school) return fail(404, "school_not_found", "School not found");
@@ -151,6 +154,7 @@ Deno.serve(async (req) => {
     const defaultDur = (school.class_duration && school.class_duration > 0) ? school.class_duration : 45;
     const { spec, adminBlocks, plusBlocks, lunchBlocks, strategies } = buildCpsatSpec({
       school, specialists, teachers, recessConfigs, grades, learnedWeights,
+      specialEvents: eventsRes.data ?? [],
       timeLimitS: typeof time_limit_s === "number" ? time_limit_s : 60,
     });
 

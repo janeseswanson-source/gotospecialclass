@@ -73,9 +73,34 @@ export interface BuildSpecArgs {
   teachers: Teacher[];
   recessConfigs: any[];
   grades: string[];
+  /** Dated special events (assemblies, photos…) from the wizard's Events step.
+   *  Their time windows block ALL specialists on that weekday — parity with
+   *  generate-schedule's occupancy booking. (parsed_calendar_events are
+   *  validation-only holidays in BOTH engines and are deliberately not here.) */
+  specialEvents?: any[];
   /** Learned weights (scoring_weight_profiles.weights) when sample_count >= 5. */
   learnedWeights?: Record<string, number> | null;
   timeLimitS?: number;
+}
+
+/** Day-of-week busy windows for every specialist from dated special events —
+ *  mirrors generate-schedule's getBlockedDayTimeRanges + occupancy.book loop. */
+export function specialEventBusy(
+  specialEvents: any[] | null | undefined,
+  specialists: Specialist[],
+): Array<{ specialist_id: string; day: string; start: number; end: number }> {
+  const busy: Array<{ specialist_id: string; day: string; start: number; end: number }> = [];
+  const dayMap = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  for (const ev of specialEvents ?? []) {
+    if (!ev?.start_time || !ev?.end_time || !ev?.event_date) continue;
+    const day = dayMap[new Date(ev.event_date + "T00:00:00").getDay()];
+    if (!day || !DAYS.includes(day)) continue;
+    const start = timeToMinutes(ev.start_time) ?? 0;
+    const end = timeToMinutes(ev.end_time) ?? 0;
+    if (end <= start) continue;
+    for (const s of specialists) busy.push({ specialist_id: s.id, day, start, end });
+  }
+  return busy;
 }
 
 /** Resolve the school's active conflict strategies (multi first, else single). */
@@ -153,9 +178,14 @@ export function buildCpsatSpec(args: BuildSpecArgs): BuildSpecResult {
   }
 
   // PLUS + specialist lunch → `busy` so CP-SAT schedules the rotation around them.
-  const busy = [...plusBlocks, ...lunchBlocks]
-    .filter((b) => b.specialist_id)
-    .map((b) => ({ specialist_id: b.specialist_id as string, day: b.day_of_week, start: timeToMinutes(b.start_time) ?? 0, end: timeToMinutes(b.end_time) ?? 0 }));
+  // Special events (assemblies, photos…) block EVERY specialist for their window —
+  // parity with generate-schedule's occupancy booking of the same events.
+  const busy = [
+    ...[...plusBlocks, ...lunchBlocks]
+      .filter((b) => b.specialist_id)
+      .map((b) => ({ specialist_id: b.specialist_id as string, day: b.day_of_week, start: timeToMinutes(b.start_time) ?? 0, end: timeToMinutes(b.end_time) ?? 0 })),
+    ...specialEventBusy(args.specialEvents, specialists),
+  ];
 
   // Per-duration slot grids: every distinct specialist class length gets its own
   // grid per grade so a 30-min quick-30 specialist and a 45-min specialist can
