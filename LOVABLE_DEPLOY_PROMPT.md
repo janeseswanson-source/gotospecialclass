@@ -38,11 +38,20 @@ per-user rate limiting, and Sentry error reporting.
 **4. Secrets (set these in the Supabase Edge Function secrets):**
 - `SENTRY_DSN` — (optional) my Sentry project DSN, to turn on edge-function error
   reporting. Leave unset to keep it off.
-- `CPSAT_SOLVER_URL` and `CPSAT_SOLVER_KEY` — I'll set these later once my Render
-  CP-SAT solver is deployed. Until then the app correctly falls back to the JS
-  solver, so leave them unset for now.
+- `CPSAT_SOLVER_URL` = `https://cpsat-solver.onrender.com` (no trailing slash).
+- `CPSAT_SOLVER_KEY` = my Render solver's SOLVER_API_KEY value.
+- Confirm `SUPABASE_SERVICE_ROLE_KEY` is present in the Edge Function secrets —
+  `run-generation-job` uses it to call `generate-cpsat` internally, and
+  `generate-cpsat` uses it to bypass RLS on the school lookup. If it's missing,
+  generation fails with "School not found".
 - Confirm `ANTHROPIC_API_KEY` is already set (all AI features + the new
   generate-quote / lesson-starter / parsers depend on it).
+
+**IMPORTANT — setting secrets does NOT redeploy function code.** After setting the
+secrets above, REDEPLOY `generate-cpsat`, `run-generation-job`, and
+`generate-schedule` from the current main branch. If you skip this, the old code
+keeps running and generation fails with "CP-SAT rejected the model: School not
+found" even though the secrets are correct.
 
 After applying, confirm: the migrations succeeded, all functions are deployed, and
 the `health` function returns 200 for a signed-in user.
