@@ -1,19 +1,19 @@
-## Problem
+## Fix: CP-SAT Unauthorized
 
-The "Generate" button calls `supabase.functions.invoke("enqueue-generation", ...)` (see `src/lib/generateBestSchedule.ts:47`), but the `enqueue-generation` edge function has never been deployed — its logs are empty and it wasn't in the previous deployment batch. Supabase returns "Failed to send a request to the Edge Function" because the function URL 404s.
+The 401 is from a stale tunnel URL, not a key mismatch. Verified locally that the current key works against the new ngrok tunnel.
 
-## Fix
+## Change
 
-Deploy `enqueue-generation` to Lovable Cloud in one call:
-
-- `supabase--deploy_edge_functions(["enqueue-generation"])`
-
-It already has proper CORS + auth handling and only needs `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`, which are all present. The `generation_jobs` table it writes to was created in the earlier migration batch, so no schema work is needed.
+- Update the `CPSAT_SOLVER_URL` secret to:
+  `https://ayaan-nonnitrogenized-undefinitely.ngrok-free.dev`
+- Leave `CPSAT_SOLVER_KEY` unchanged (the `b246…` value).
+- No code changes; edge functions read the secret at request time, so no redeploy needed.
 
 ## Verify
 
-After deploy, ask the user to retry Generate. If it still fails, pull `enqueue-generation` logs to see the real error (auth, schema, or worker chain to `run-generation-job`).
+- Retry Generate from the app.
+- If it still fails, pull `generate-cpsat` logs to see whether the solver returns 200 or a different error.
 
-## Out of scope
+## Note
 
-No code changes, no other function redeploys, no secret changes.
+Ngrok free tunnels change URL every restart. Whenever the tunnel is restarted, `CPSAT_SOLVER_URL` will need to be updated again.
