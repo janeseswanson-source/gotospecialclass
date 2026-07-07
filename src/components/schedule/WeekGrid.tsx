@@ -57,6 +57,8 @@ interface WeekGridProps {
   onBlockDrop: (blockId: string, newDay: string, newTime: string) => void;
   onToggleLock: (blockId: string) => void;
   onNotesChange: (blockId: string, notes: string) => Promise<boolean>;
+  /** Empty-cell "+" → the page's Add-class dialog (master grid only). */
+  onAddBlock?: (day: string, time: string) => void;
 
   // Filters
   specialists: { id: string; name: string; subject: string }[];
@@ -75,7 +77,7 @@ export default function WeekGrid(props: WeekGridProps) {
     masterBlocks, specialistBlocks, teacherBlocks, trayBlocks,
     timeSlots, recessBands, schoolStart, schoolEnd, conflictIds, trayIds, highlightIds, lockedIds,
     ghostIds, originIds, deletedIds,
-    onBlockClick, onBlockDrop, onToggleLock, onNotesChange,
+    onBlockClick, onBlockDrop, onToggleLock, onNotesChange, onAddBlock,
     specialists, teachers, filterSpecialist, onFilterSpecialist, filterTeacher, onFilterTeacher, blockingError,
   } = props;
 
@@ -129,7 +131,9 @@ export default function WeekGrid(props: WeekGridProps) {
         </div>
 
         <TabsContent value="master">
-          <ScheduleGrid blocks={masterBlocks} trayBlocks={trayBlocks} liftedIds={trayIds} {...gridCommon} />
+          {/* onAddBlock only on the master grid — the filtered per-specialist /
+              per-teacher views hide blocks, so "empty" there can be occupied. */}
+          <ScheduleGrid blocks={masterBlocks} trayBlocks={trayBlocks} liftedIds={trayIds} onAddBlock={onAddBlock} {...gridCommon} />
         </TabsContent>
 
         <TabsContent value="specialist">

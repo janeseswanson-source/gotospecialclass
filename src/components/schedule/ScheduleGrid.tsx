@@ -82,6 +82,9 @@ interface ScheduleGridProps {
    *  another sticky bar (e.g. WeekGrid's tabs at top-0), pass that bar's height
    *  so the Mon–Fri header pins BELOW it instead of sliding underneath. */
   stickyTopOffset?: number;
+  /** When set, empty cells show a hover "+" that asks the page to open its
+   *  Add-class flow for (day, time). The page owns legality + persistence. */
+  onAddBlock?: (day: string, time: string) => void;
 }
 
 /** A droppable grid cell. Paints the legal-target wash while a drag is active. */
@@ -141,6 +144,7 @@ export default function ScheduleGrid({
   blocks, timeSlots, onBlockClick, onBlockDrop, lockedIds, onToggleLock,
   recessBands, schoolStart, schoolEnd, onNotesChange, notesEditable, conflictIds,
   trayBlocks, liftedIds, highlightIds, ghostIds, originIds, deletedIds, stickyTopOffset,
+  onAddBlock,
 }: ScheduleGridProps) {
   // Touch/keyboard "pick up to move": the block waiting for a target slot.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -307,6 +311,16 @@ export default function ScheduleGrid({
                               dndEnabled={!!onBlockDrop}
                               activeDragId={activeId}
                             />
+                          ) : onAddBlock && !moveMode ? (
+                            <button
+                              type="button"
+                              onClick={() => onAddBlock(day, time)}
+                              className="group/add flex h-10 w-full items-center justify-center rounded-md bg-muted/20 text-transparent transition-colors hover:bg-primary/10 hover:text-primary focus-visible:bg-primary/10 focus-visible:text-primary"
+                              aria-label={`Add a class on ${day} at ${time}`}
+                              title="Add a class here"
+                            >
+                              <span className="text-sm font-semibold leading-none">+</span>
+                            </button>
                           ) : (
                             <div className="h-10 rounded-md bg-muted/20" />
                           )}

@@ -15,8 +15,9 @@ import { toast } from "@/hooks/use-toast";
 import { analyzeScheduleBlocks, type ScheduleWarning } from "@/lib/strategyFeasibility";
 import { warningMeta } from "@/lib/warningMeta";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds } from "@/lib/scheduleGrid";
-import { evaluateDrop } from "@/lib/gridTargets";
+import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds, computeAutoFit, minToHMS, parseTime } from "@/lib/scheduleGrid";
+import { evaluateDrop, placementProblem } from "@/lib/gridTargets";
+import AddBlockDialog, { type AddBlockPayload } from "@/components/schedule/AddBlockDialog";
 import { buildWeekCycle } from "@/lib/weekCycle";
 import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
 import { breakdownToPercent } from "@/lib/optimizerScore";
@@ -448,6 +449,81 @@ export default function MasterSchedulePage() {
     flagChangedBlocks(movedIds);
     const spec = specialists.find((s) => s.id === block.specialist_id || s.name === block.specialist_name);
     if (spec) setReplanSuggestion({ specialistId: spec.id, specialistName: spec.name });
+  }
+
+  // ── Add a NEW class tile on an empty slot (the "+" on empty grid cells). ──
+  // Legality runs through the SAME primitives as drag-and-drop: computeAutoFit
+  // sizes the block against neighbors/recess/school end, placementProblem
+  // rejects specialist/teacher clashes — then the row persists as an override.
+  const [addSlot, setAddSlot] = useState<{ day: string; time: string } | null>(null);
+
+  async function handleAddBlock(p: AddBlockPayload): Promise<boolean> {
+    if (!addSlot || !selectedGen) return false;
+    const spec = specialists.find((s) => s.id === p.specialistId);
+    if (!spec) return false;
+
+    const draft: BlockData = {
+      id: `new-${crypto.randomUUID()}`,
+      day_of_week: addSlot.day,
+      start_time: addSlot.time,
+      end_time: minToHMS(parseTime(addSlot.time) + p.durationMin).slice(0, 5),
+      subject: spec.subject,
+      specialist_id: spec.id,
+      specialist_name: spec.name,
+      teacher_id: p.teacherId,
+      teacher_name: p.teacherId ? (teachers.find((t) => t.id === p.teacherId)?.name ?? null) : null,
+      grade: p.grade || null,
+      week_label: null,
+    };
+
+    // Fit the duration into the gap (next block / recess band / school end).
+    const fit = computeAutoFit({
+      movingBlock: draft, targetDay: addSlot.day, targetTime: addSlot.time,
+      allBlocks: blocks, recessBands, schoolEnd: schoolEndTime,
+    });
+    if (!fit.ok) {
+      toast({ title: "Can't add a class here", description: fit.reason, variant: "destructive" });
+      return false;
+    }
+    const candidateBlock = { ...draft, start_time: fit.start, end_time: fit.end };
+
+    // Same clash rules the drag wash uses (specialist/teacher overlap, recess,
+    // school hours) against the full current schedule.
+    const problem = placementProblem([...blocks, candidateBlock], [candidateBlock.id], {
+      recessBands, schoolStart: schoolStartTime, schoolEnd: schoolEndTime,
+    });
+    if (problem) {
+      toast({ title: "Can't add a class here", description: problem, variant: "destructive" });
+      return false;
+    }
+
+    const { data: inserted, error } = await supabase.from("schedule_blocks").insert({
+      generation_id: selectedGen,
+      day_of_week: candidateBlock.day_of_week,
+      start_time: candidateBlock.start_time,
+      end_time: candidateBlock.end_time,
+      subject: candidateBlock.subject,
+      specialist_id: candidateBlock.specialist_id,
+      teacher_id: candidateBlock.teacher_id,
+      grade: candidateBlock.grade,
+      week_label: null,
+      is_override: true,
+    }).select("id").single();
+    if (error || !inserted) {
+      toast({ title: "Couldn't save the new class", description: error?.message, variant: "destructive" });
+      return false;
+    }
+
+    const next = [...blocks, { ...candidateBlock, id: inserted.id, is_override: true }];
+    setBlocks(next);
+    pushHistory(next);
+    flagChangedBlocks([inserted.id]);
+    toast({
+      title: "Class added ✓",
+      description: `${spec.subject} · ${candidateBlock.teacher_name ?? `Grade ${candidateBlock.grade}`}${fit.shortened ? ` — shortened to ${fit.duration} min to fit` : ""}`,
+    });
+    manualEditCountRef.current++;
+    return true;
   }
 
 
@@ -1315,6 +1391,7 @@ export default function MasterSchedulePage() {
           onBlockDrop={handleBlockDrop}
           onToggleLock={toggleLock}
           onNotesChange={handleNotesChange}
+          onAddBlock={(day, time) => setAddSlot({ day, time })}
           specialists={specialists}
           teachers={teachers}
           filterSpecialist={filterSpecialist}
@@ -1356,6 +1433,18 @@ export default function MasterSchedulePage() {
         onConflictFixed={handleConflictFixApplied}
         onRequestExplain={handleRequestExplain}
       />
+
+      {addSlot && (
+        <AddBlockDialog
+          open={!!addSlot}
+          onOpenChange={(open) => { if (!open) setAddSlot(null); }}
+          day={addSlot.day}
+          time={addSlot.time}
+          specialists={specialists}
+          teachers={teachers}
+          onAdd={handleAddBlock}
+        />
+      )}
 
       <Suspense fallback={null}>
         {specExportOpen && (
