@@ -20,6 +20,9 @@ import StepReview from './steps/StepReview';
 import WizardStepShell from '@/components/setup/WizardStepShell';
 
 interface StepDef {
+  /** Optional steps can be skipped — badged in the rail so a coordinator knows
+   *  requiredness up front instead of discovering it at Review. */
+  optional?: boolean;
   label: string;
   blurb: string;
   Component: React.ComponentType;
@@ -30,7 +33,7 @@ interface StepDef {
 const STEPS: StepDef[] = [
   {
     label: 'Welcome', blurb: 'Quick intro and what you’ll set up.', Component: StepWelcome,
-    why: 'A 5-minute tour of the 11 steps so you know what’s ahead.',
+    why: 'A 5-minute tour of the 12 steps so you know what’s ahead.',
   },
   {
     label: 'School Info', blurb: 'Bell times, grades, planning minutes.', Component: StepSchoolInfo,
@@ -42,7 +45,7 @@ const STEPS: StepDef[] = [
     ],
   },
   {
-    label: 'Calendar', blurb: 'Upload or paste your school calendar.', Component: StepCalendarUpload,
+    label: 'Calendar', optional: true, blurb: 'Upload or paste your school calendar.', Component: StepCalendarUpload,
     why: 'Holidays and early-release days are pulled out automatically so the engine can skip them.',
     bullets: [{ label: 'AI parsing', detail: 'Upload PDF/image — events extracted for you' }],
   },
@@ -68,20 +71,20 @@ const STEPS: StepDef[] = [
     ],
   },
   {
-    label: 'Contractual Minutes', blurb: 'Upload contract — AI extracts required minutes.', Component: StepContractualMinutes,
+    label: 'Contractual Minutes', optional: true, blurb: 'Upload contract — AI extracts required minutes.', Component: StepContractualMinutes,
     why: 'Union/district contracts dictate weekly minutes per subject. AI reads the PDF so you don’t have to.',
   },
   {
-    label: 'Admin Rotation', blurb: 'PLC, admin duties, and other rotations.', Component: StepAdminRotation,
+    label: 'Admin Rotation', optional: true, blurb: 'PLC, admin duties, and other rotations.', Component: StepAdminRotation,
     why: 'Seeds the scheduler with non-teaching blocks (PLC, meetings) so they aren’t double-booked.',
   },
   {
-    label: 'Clubs', blurb: 'Lunch clubs and recurring activities.', Component: StepClubs,
+    label: 'Clubs', optional: true, blurb: 'Lunch clubs and recurring activities.', Component: StepClubs,
     why: 'Recurring lunch/enrichment blocks. Can double as a relief valve for tough conflicts.',
     bullets: [{ label: 'AI import', detail: 'Describe clubs in plain English' }],
   },
   {
-    label: 'Events', blurb: 'One-off events and assemblies.', Component: StepEvents,
+    label: 'Events', optional: true, blurb: 'One-off events and assemblies.', Component: StepEvents,
     why: 'One-off blocks (assemblies, picture day) that override the normal schedule on a date.',
     bullets: [{ label: 'AI import', detail: 'Describe events in plain English' }],
   },
@@ -214,8 +217,11 @@ const SetupWizardContent = () => {
                         {isDone ? <CheckCircle2 className="h-3 w-3" /> : isLocked ? <Lock className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className={cn('block text-sm font-medium leading-tight', isActive && 'text-foreground')}>
+                        <span className={cn('flex items-center gap-1.5 text-sm font-medium leading-tight', isActive && 'text-foreground')}>
                           {s.label}
+                          {s.optional && (
+                            <span className="rounded bg-muted px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Optional</span>
+                          )}
                         </span>
                         <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{s.blurb}</span>
                       </span>

@@ -315,7 +315,8 @@ const StepSpecialists = () => {
       const existingIds = (existing || []).map(e => e.id);
       const toDelete = existingIds.filter(id => !keepIds.includes(id));
       if (toDelete.length > 0) {
-        await supabase.from('specialists').delete().in('id', toDelete);
+        const { error: delErr } = await supabase.from('specialists').delete().in('id', toDelete);
+        if (delErr) throw delErr;
       }
 
       // Upsert remaining specialists (preserves existing UUIDs)
@@ -353,11 +354,14 @@ const StepSpecialists = () => {
       } as any));
       if (rows.length > 0) {
         const { error } = await supabase.from('specialists').upsert(rows, { onConflict: 'id' });
-        if (error) console.error('Save specialists error:', error);
+        if (error) throw error;
       }
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
-    } catch {
+    } catch (err: any) {
+      // A failed save must never look like a successful one.
+      console.error('Save specialists error:', err);
+      toast.error(`Couldn't save specialists${err?.message ? ` — ${err.message}` : ''}. Check your connection and try again.`);
       setSaveStatus('idle');
     }
   }, [schoolId]);
@@ -760,7 +764,7 @@ const StepSpecialists = () => {
               </div>
               <div className="space-y-1">
                 <FieldLabel className="text-xs" tooltip="Total weekly planning time — auto-calculated from daily, but editable.">Weekly Planning (min)</FieldLabel>
-                <Input className="h-8 text-xs" type="number" value={s.weeklyPlanningMinutes} onChange={(e) => update(s.id, 'weeklyPlanningMinutes', Number(e.target.value))} />
+                <Input className="h-8 text-xs" type="number" min={0} value={s.weeklyPlanningMinutes} onChange={(e) => update(s.id, 'weeklyPlanningMinutes', Math.max(0, Number(e.target.value)))} />
               </div>
               <div className="space-y-1">
                 <FieldLabel className="text-xs" tooltip="When this specialist's planning time occurs. Defaults to the school-wide setting from step 2.">Planning Time Occurs</FieldLabel>
@@ -772,7 +776,7 @@ const StepSpecialists = () => {
               </div>
               <div className="space-y-1">
                 <FieldLabel className="text-xs" tooltip="Length of the duty-free lunch period for this specialist.">Lunch (min)</FieldLabel>
-                <Input className="h-8 text-xs" type="number" value={s.lunchMinutes} onChange={(e) => update(s.id, 'lunchMinutes', Number(e.target.value))} />
+                <Input className="h-8 text-xs" type="number" min={0} value={s.lunchMinutes} onChange={(e) => update(s.id, 'lunchMinutes', Math.max(0, Number(e.target.value)))} />
               </div>
               <div className="space-y-1">
                 <FieldLabel className="text-xs" tooltip="Length of each PLUS class. Leave blank to use the school-wide default from School Info.">Class Duration (min)</FieldLabel>

@@ -162,6 +162,21 @@ export function analyzeContractFeasibility(
     });
   }
 
+  // Role balance: classes need subjects to visit. When far more classes share
+  // one specialist than a week can hold, even a perfect schedule can't serve
+  // everyone weekly — the coordinator should add subjects/specialists or a
+  // rotation, and should hear that BEFORE generating.
+  if (specialists.length > 0 && teachers.length > 0) {
+    const ratio = teachers.length / specialists.length;
+    if (ratio > 8) {
+      notes.push({
+        level: "warning",
+        message: `${teachers.length} classes share only ${specialists.length} specialist${specialists.length === 1 ? "" : "s"} — most classes won't get a weekly session.`,
+        suggestion: "Add more specialist subjects (Art, Music, PE, Library…) to fill the week, or choose an A/B rotation so classes alternate weeks.",
+      });
+    }
+  }
+
   if (grades.length === 0) {
     notes.push({
       level: "error",

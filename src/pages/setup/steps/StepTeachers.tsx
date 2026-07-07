@@ -193,7 +193,8 @@ const StepTeachers = () => {
       const existingIds = (existing || []).map(e => e.id);
       const toDelete = existingIds.filter(id => !keepIds.includes(id));
       if (toDelete.length > 0) {
-        await supabase.from('classroom_teachers').delete().in('id', toDelete);
+        const { error: delErr } = await supabase.from('classroom_teachers').delete().in('id', toDelete);
+        if (delErr) throw delErr;
       }
 
       // Upsert remaining teachers (preserves existing UUIDs)
@@ -216,11 +217,14 @@ const StepTeachers = () => {
       } as any));
       if (rows.length > 0) {
         const { error } = await supabase.from('classroom_teachers').upsert(rows, { onConflict: 'id' });
-        if (error) console.error('Save teachers error:', error);
+        if (error) throw error;
       }
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
-    } catch {
+    } catch (err: any) {
+      // A failed save must never look like a successful one.
+      console.error('Save teachers error:', err);
+      toast.error(`Couldn't save teachers${err?.message ? ` — ${err.message}` : ''}. Check your connection and try again.`);
       setSaveStatus('idle');
     }
   }, [schoolId]);
@@ -455,15 +459,15 @@ const StepTeachers = () => {
         <div className="grid grid-cols-3 gap-3 sm:grid-cols-5 items-end">
           <div className="space-y-1">
             <FieldLabel className="text-xs" tooltip="Time the classroom teacher is released while students are with a specialist.">Daily Plan (min)</FieldLabel>
-            <Input className="h-8 text-xs" type="number" value={t.planningMinutes} onChange={(e) => update(t.id, 'planningMinutes', Number(e.target.value))} />
+            <Input className="h-8 text-xs" type="number" min={0} value={t.planningMinutes} onChange={(e) => update(t.id, 'planningMinutes', Math.max(0, Number(e.target.value)))} />
           </div>
           <div className="space-y-1">
             <FieldLabel className="text-xs" tooltip="Total weekly planning time this teacher is contractually guaranteed.">Weekly Plan (min)</FieldLabel>
-            <Input className="h-8 text-xs" type="number" value={t.weeklyPlanningMinutes} onChange={(e) => update(t.id, 'weeklyPlanningMinutes', Number(e.target.value))} />
+            <Input className="h-8 text-xs" type="number" min={0} value={t.weeklyPlanningMinutes} onChange={(e) => update(t.id, 'weeklyPlanningMinutes', Math.max(0, Number(e.target.value)))} />
           </div>
           <div className="space-y-1">
             <FieldLabel className="text-xs" tooltip="Length of the duty-free lunch period for this teacher.">Lunch (min)</FieldLabel>
-            <Input className="h-8 text-xs" type="number" value={t.lunchMinutes} onChange={(e) => update(t.id, 'lunchMinutes', Number(e.target.value))} />
+            <Input className="h-8 text-xs" type="number" min={0} value={t.lunchMinutes} onChange={(e) => update(t.id, 'lunchMinutes', Math.max(0, Number(e.target.value)))} />
           </div>
           <div className="space-y-1">
             <FieldLabel className="text-xs" tooltip="Choose whether this teacher prefers morning or afternoon specialist classes. Overrides global setting.">AM/PM Pref</FieldLabel>

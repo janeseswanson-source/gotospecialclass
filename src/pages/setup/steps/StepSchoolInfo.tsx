@@ -145,14 +145,16 @@ const StepSchoolInfo = () => {
       };
 
       if (schoolId) {
-        await supabase.from('schools').update(schoolData as any).eq('id', schoolId);
+        const { error } = await supabase.from('schools').update(schoolData as any).eq('id', schoolId);
+        if (error) throw error;
       } else {
         const { data: newSchool, error } = await supabase
           .from('schools')
           .insert({ ...schoolData, setup_step: 1 } as any)
           .select('id')
           .single();
-        if (!error && newSchool) setSchoolId(newSchool.id);
+        if (error) throw error;
+        if (newSchool) setSchoolId(newSchool.id);
       }
 
       // Mirror Daily sequence selection into coordinator_prep so the prep sheet stays in sync.
@@ -174,7 +176,10 @@ const StepSchoolInfo = () => {
 
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
-    } catch {
+    } catch (err: any) {
+      // A failed save must never look like a successful one.
+      console.error('School info save failed:', err);
+      toast.error(`Couldn't save school info${err?.message ? ` — ${err.message}` : ''}. Check your connection and try again.`);
       setSaveStatus('idle');
     }
   }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.schoolYearStart, data.schoolYearEnd, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, data.gradePreference, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, schoolId]);
@@ -301,10 +306,10 @@ const StepSchoolInfo = () => {
         </div>
         <div className="space-y-2">
           <FieldLabel tooltip="Time classroom teachers are released while students are with a specialist, per week.">Planning Minutes/Week</FieldLabel>
-          <Input type="number" value={data.planningMinutes} onChange={(e) => updateData({ planningMinutes: Number(e.target.value) })} />
+          <Input type="number" min={0} value={data.planningMinutes} onChange={(e) => updateData({ planningMinutes: Math.max(0, Number(e.target.value)) })} />
         </div>
         <div className="space-y-2">
-          <FieldLabel tooltip="This sets the default. You can override it per specialist on step 4.">When does planning time occur?</FieldLabel>
+          <FieldLabel tooltip="This sets the default. You can override it per specialist in the Specialists step.">When does planning time occur?</FieldLabel>
           <Select value={data.planningTimeWhen || 'during_rotations'} onValueChange={(v) => updateData({ planningTimeWhen: v })}>
             <SelectTrigger className="h-10">
               <SelectValue />
@@ -319,15 +324,15 @@ const StepSchoolInfo = () => {
         </div>
         <div className="space-y-2">
           <FieldLabel tooltip="Required duty-free lunch break length for all staff.">Contractual Lunch Minutes</FieldLabel>
-          <Input type="number" value={data.lunchMinutes} onChange={(e) => updateData({ lunchMinutes: Number(e.target.value) })} />
+          <Input type="number" min={0} value={data.lunchMinutes} onChange={(e) => updateData({ lunchMinutes: Math.max(0, Number(e.target.value)) })} />
         </div>
         <div className="space-y-2">
           <FieldLabel tooltip="Minutes between classes for students to transition in hallways.">Passing Time (min)</FieldLabel>
-          <Input type="number" value={data.passingTime} onChange={(e) => updateData({ passingTime: Number(e.target.value) })} />
+          <Input type="number" min={0} value={data.passingTime} onChange={(e) => updateData({ passingTime: Math.max(0, Number(e.target.value)) })} />
         </div>
         <div className="space-y-2">
           <FieldLabel tooltip="Minutes a specialist needs to reset the room between classes.">Reset Time (min)</FieldLabel>
-          <Input type="number" value={data.setupTime} onChange={(e) => updateData({ setupTime: Number(e.target.value) })} />
+          <Input type="number" min={0} value={data.setupTime} onChange={(e) => updateData({ setupTime: Math.max(0, Number(e.target.value)) })} />
         </div>
         <div className="space-y-2">
           <FieldLabel tooltip="Academic year label shown on exports (e.g. 2025–2026)">School Year</FieldLabel>

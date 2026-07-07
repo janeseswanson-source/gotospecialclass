@@ -15,6 +15,7 @@ import { getStrategyNote, getRecommendedStrategies, type StrategyContext } from 
 import { analyzeContractFeasibility, type FeasibilityNote } from "@/lib/contractFeasibility";
 import { generateBestSchedule } from "@/lib/generateBestSchedule";
 import { progressLabel } from "@/lib/genJobProgress";
+import { CONFLICT_STRATEGIES } from "@/lib/conflictStrategies";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -25,15 +26,8 @@ interface CheckItem {
   detail: string;
 }
 
-const ALL_STRATEGIES = [
-  { key: "ab_week", label: "A/B Week" },
-  { key: "aa_bb_week", label: "AA/BB (4-Week Rotation)" },
-  { key: "quick_30", label: "Quick 30-Min Class" },
-  { key: "lunch_clubs", label: "Lunch Clubs" },
-  { key: "event_planning", label: "Event Planning Blocks" },
-  { key: "big_group", label: "Big Group Split" },
-  { key: "makeup", label: "Make-Up Sessions" },
-];
+// Labels come from the ONE canonical strategy list so every page reads the same.
+const ALL_STRATEGIES = CONFLICT_STRATEGIES.map((s) => ({ key: s.key, label: s.title }));
 
 const BASE_ROTATION_KEYS = ["ab_week", "aa_bb_week"];
 
@@ -134,7 +128,7 @@ export default function PrepPage() {
       const [specialistsRes, teachersRes, recessRes, eventsRes, clubsRes, specialEvRes] = await Promise.all([
         supabase.from("specialists").select("id, name, subject, working_days, class_duration, lunch_minutes, weekly_planning_minutes, is_part_time").eq("school_id", school.id),
         supabase.from("classroom_teachers").select("id, name, grade").eq("school_id", school.id),
-        supabase.from("recess_lunch_config").select("id").eq("school_id", school.id),
+        supabase.from("recess_lunch_config").select("*").eq("school_id", school.id),
         supabase.from("parsed_calendar_events").select("id").eq("school_id", school.id),
         supabase.from("clubs").select("id").eq("school_id", school.id),
         supabase.from("special_events").select("id").eq("school_id", school.id).limit(1),
@@ -177,23 +171,55 @@ export default function PrepPage() {
       const dayMinutes = Math.max(0, endMin - startMin);
       const passing = school.passing_time ?? 5;
       const defaultClassDur = school.class_duration ?? 45;
-      // Total weekly specialist slot supply
+
+      // Average AM+PM recess minutes across grade bands (the lunch window is
+      // already covered by the specialist's own lunch reservation — subtracting
+      // both would double-count).
+      const recessRows = (recessRes.data ?? []) as any[];
+      let recessPerDay = 0;
+      if (recessRows.length > 0) {
+        let total = 0;
+        for (const r of recessRows) {
+          const win = (a?: string | null, b?: string | null) => {
+            const s = toMin(a), e = toMin(b);
+            return s != null && e != null && e > s ? e - s : 0;
+          };
+          total += win(r.am_recess_start, r.am_recess_end) + win(r.pm_recess_start, r.pm_recess_end);
+        }
+        recessPerDay = Math.round(total / recessRows.length);
+      }
+      // Weekly all-specialists meeting eats slots once a week.
+      const meeting = (school as any).specialist_meeting as { day?: string; start_time?: string; end_time?: string } | null;
+      const meetingMin = meeting?.start_time && meeting?.end_time
+        ? Math.max(0, (toMin(meeting.end_time) ?? 0) - (toMin(meeting.start_time) ?? 0)) : 0;
+
+      // Total weekly specialist slot supply — mirrors the engine's model:
+      // day − lunch − recess − small transition reserve, minus planning +
+      // meeting slots per week.
       let totalSupply = 0;
       for (const s of specialists) {
         const dur = (s.class_duration ?? defaultClassDur) || 45;
         const workingDays = (s.working_days ?? ["Mon","Tue","Wed","Thu","Fri"]).length;
         const lunchPerDay = s.lunch_minutes ?? 30;
         const planningPerWeek = s.weekly_planning_minutes ?? 0;
-        const usableDay = Math.max(0, dayMinutes - lunchPerDay - 30); // 30min reserve for transitions/admin
+        const usableDay = Math.max(0, dayMinutes - lunchPerDay - recessPerDay - 15);
         const slotsPerDay = Math.max(0, Math.floor(usableDay / (dur + passing)));
-        const weekly = slotsPerDay * workingDays - Math.ceil(planningPerWeek / (dur + passing));
+        const weekly = slotsPerDay * workingDays
+          - Math.ceil(planningPerWeek / (dur + passing))
+          - Math.ceil(meetingMin / (dur + passing));
         totalSupply += Math.max(0, weekly);
       }
-      // Demand per grade = teachers × number of specialists (one weekly session per subject)
+      // Demand per grade = teachers × number of specialists (one weekly session
+      // per subject). An A/B or AA/BB rotation halves weekly demand — each class
+      // visits every other week — matching the engine's capacity math, so this
+      // forecast can't scare a rotation school that's actually fine.
+      const chosenStrategies = (school.conflict_strategies as string[]) ?? [];
+      const rotationHalves = chosenStrategies.includes("ab_week") || chosenStrategies.includes("aa_bb_week");
       const demandByGrade: Record<string, number> = {};
       let totalDemand = 0;
       for (const g of orderedGrades) {
-        const d = (tByG[g] ?? 1) * Math.max(1, specialists.length);
+        const raw = (tByG[g] ?? 1) * Math.max(1, specialists.length);
+        const d = rotationHalves ? Math.ceil(raw / 2) : raw;
         demandByGrade[g] = d;
         totalDemand += d;
       }
@@ -237,14 +263,14 @@ export default function PrepPage() {
         {
           label: "Teachers",
           status: (teachersRes.data?.length ?? 0) > 0 ? "ready" : "missing",
-          detail: (teachersRes.data?.length ?? 0) > 0 ? `${teachersRes.data!.length} teacher(s) added` : "No teachers — the optimal solver builds one class per teacher, so it has nothing to place. Add at least one.",
+          detail: (teachersRes.data?.length ?? 0) > 0 ? `${teachersRes.data!.length} teacher(s) added` : "No teachers — the scheduler creates one class per teacher, so it has nothing to schedule. Add at least one.",
         },
         {
           label: "Coverage Forecast",
           status: shortGrades.length === 0 ? "ready" : "warning",
           detail: shortGrades.length === 0
-            ? `Supply ~${totalSupply} sessions/week covers demand ~${totalDemand}.`
-            : `Demand ~${totalDemand} > supply ~${totalSupply}. Short grades: ${shortGrades.join(", ")}.`,
+            ? `Specialists can offer ~${totalSupply} sessions/week; your classes need ~${totalDemand}${rotationHalves ? " (A/B rotation counted — each class visits every other week)" : ""}.`
+            : `Your classes need ~${totalDemand} sessions/week but specialists can only offer ~${totalSupply}. Short grades: ${shortGrades.join(", ")}. Add specialist days/hours${rotationHalves ? "" : ", or pick an A/B week rotation (halves weekly demand)"}, or use 30-minute classes for younger grades.`,
         },
         ...coverageItems,
         {
@@ -697,10 +723,10 @@ export default function PrepPage() {
           <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0 space-y-1">
             <p className="text-sm text-amber-700 dark:text-amber-300">
-              Generated with the fallback engine — the optimal solver wasn't available{fallbackInfo.reason ? ` (${fallbackInfo.reason})` : ''}.
+              Built with the backup scheduler — the optimizer wasn't reachable{fallbackInfo.reason ? ` (${fallbackInfo.reason})` : ''}.
             </p>
             <Button variant="outline" size="sm" onClick={handleGenerate} disabled={generating || !allReady} className="h-7 gap-1 text-xs">
-              <RefreshCw className="h-3 w-3" /> Retry with solver
+              <RefreshCw className="h-3 w-3" /> Retry with the optimizer
             </Button>
           </div>
         </div>

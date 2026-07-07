@@ -297,6 +297,9 @@ Deno.serve(async (req) => {
       const { data, error: genErr } = await supabase.from("schedule_generations").insert({
         school_id, version: nextVersion, status: "complete", generated_at: new Date().toISOString(),
         chosen_strategy: "cpsat_optimal", score_breakdown: breakdown, winning_score: winningScore, quality_confidence: confidence,
+        // Honest capacity signal: the solver dropped the full-coverage floor —
+        // the UI must tell the coordinator, not just show a lower %.
+        coverage_relaxed: result.coverage_relaxed ?? false,
       }).select("id").single();
       if (data) { generation = data; break; }
       if (genErr && !isUniqueViolation(genErr)) return fail(500, "generation_insert_failed", `Failed to create generation: ${genErr.message}`);

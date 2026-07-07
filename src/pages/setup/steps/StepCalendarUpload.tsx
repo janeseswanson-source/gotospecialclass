@@ -492,14 +492,25 @@ const StepCalendarUpload = () => {
       <div className="flex justify-between">
         <Button variant="outline" onClick={() => setStep(SETUP_STEPS.SCHOOL_INFO)}>Back</Button>
         <div className="flex gap-2">
-          {parsed && events.length > 0 && (
+          {/* Save is offered whenever there are events worth saving — a manually
+              added event (no AI parse) used to have NO save button, so
+              "Continue" silently dropped it. */}
+          {events.some(e => e.title && e.date) && (
             <Button variant="default" onClick={handleApproveAndSave} disabled={saving} className="gap-1.5">
               {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
               Approve & Save ({events.filter(e => e.title && e.date).length})
             </Button>
           )}
-          <Button onClick={() => setStep(SETUP_STEPS.RECESS_LUNCH)}>
-            {events.length > 0 ? 'Skip to Next' : 'Continue'}
+          <Button
+            variant={events.some(e => e.title && e.date) ? 'outline' : 'default'}
+            onClick={() => {
+              if (events.some(e => e.title && e.date)) {
+                toast.warning('Unsaved events were skipped — use "Approve & Save" to keep them.');
+              }
+              setStep(SETUP_STEPS.RECESS_LUNCH);
+            }}
+          >
+            {events.some(e => e.title && e.date) ? 'Skip without saving' : 'Continue'}
           </Button>
         </div>
       </div>

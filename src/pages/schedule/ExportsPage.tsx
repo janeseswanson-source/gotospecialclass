@@ -9,6 +9,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/hooks/use-toast";
 import { logActivity } from "@/lib/activityLogger";
 import { formatTime } from "@/lib/utils";
+import { Link } from "react-router-dom";
+import { FileText } from "lucide-react";
 
 // Heavy export libs (jsPDF/html2canvas, ExcelJS, xlsx, @react-pdf) load only when
 // an export is actually triggered, keeping the Exports route chunk lean.
@@ -165,15 +167,24 @@ export default function ExportsPage() {
             />
             <ExportCard
               title="Master Admin Workbook (XLSX)"
-              description="7-sheet workbook: Master Admin View grid + Schools, Specialists, Schedule Blocks, Rotations, Classrooms, PLUS Rotations."
+              description="The whole school in one workbook: the weekly grid plus sheets for your school, specialists, classes, and rotations."
               icon={CsvIcon}
               format="XLSX"
-              disabled={false}
+              disabled={!hasSchedule}
               onExport={exportMasterAdminWorkbook}
             />
           </div>
         )}
       </div>
+
+      {!isLoading && !hasSchedule && (
+        <div className="flex items-start gap-3 rounded-lg border border-dashed border-border bg-muted/30 px-4 py-3">
+          <FileText className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+          <p className="text-sm text-muted-foreground">
+            Exports unlock once you have a schedule. <Link to="/app/prep" className="text-primary underline">Go to Prep &amp; Generate</Link> to create your first one.
+          </p>
+        </div>
+      )}
 
       <Suspense fallback={null}>
         {plannerOpen && (

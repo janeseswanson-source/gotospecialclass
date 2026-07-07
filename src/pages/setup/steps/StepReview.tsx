@@ -18,11 +18,11 @@ import { cn } from '@/lib/utils';
 import { SafeSection } from '@/components/SafeSection';
 
 const BUILD_MESSAGES = [
-  'Analyzing your school schedule...',
-  'Running Monte Carlo optimization...',
-  'Trying conflict resolution strategies...',
-  'Applying simulated annealing...',
-  'Verifying schedule quality...',
+  'Reading your school setup...',
+  'Trying thousands of schedule layouts...',
+  'Working around recess, lunch, and planning time...',
+  'Polishing the best version...',
+  'Double-checking every class is covered...',
   'Almost there...',
 ];
 
@@ -67,12 +67,12 @@ const StepReview = () => {
   );
 
   const checks = [
-    { ok: !!data.schoolName, label: 'School name set (step 1)' },
-    { ok: data.gradesServed.length > 0, label: 'At least 1 grade (step 1)' },
-    { ok: specialistCount > 0, label: 'At least 1 specialist (step 4)' },
-    { ok: teacherCount > 0, label: 'At least 1 classroom teacher (step 5)' },
-    { ok: hasAnyRecessOrLunch, label: 'Recess or lunch configured (step 3)' },
-    { ok: data.conflictStrategies.length > 0, label: 'Conflict strategy selected (step 9)' },
+    { ok: !!data.schoolName, label: 'School name set (School Info)' },
+    { ok: data.gradesServed.length > 0, label: 'At least 1 grade (School Info)' },
+    { ok: specialistCount > 0, label: 'At least 1 specialist (Specialists)' },
+    { ok: teacherCount > 0, label: 'At least 1 classroom teacher (Teachers)' },
+    { ok: hasAnyRecessOrLunch, label: 'Recess or lunch configured (Recess & Lunch)' },
+    { ok: data.conflictStrategies.length > 0, label: 'Conflict strategy selected (Conflicts)' },
   ];
   const missing = checks.filter(c => !c.ok);
   const okCount = checks.length - missing.length;

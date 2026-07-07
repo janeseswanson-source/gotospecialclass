@@ -12,7 +12,7 @@ import { Search, Send, HelpCircle, MessageSquare, Loader2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 
 const FAQ_ITEMS = [
-  { q: 'How do I start setting up my school?', a: 'Navigate to the Setup Wizard from the sidebar. It will walk you through 11 steps: school info, calendar, recess/lunch, specialists, teachers, admin rotation, clubs, events, conflict strategies, and a final review.' },
+  { q: 'How do I start setting up my school?', a: 'Navigate to the Setup Wizard from the sidebar. It walks you through 12 steps: school info, calendar, recess/lunch, specialists, teachers, contractual minutes, admin rotation, clubs, events, conflict strategies, and a final review. Only school info, specialists, teachers, recess/lunch, and a conflict strategy are required — the rest can be skipped and added later.' },
   { q: 'What are conflict strategies?', a: 'Conflict strategies handle situations when there are more grades than specialist time slots. Options include A/B Week rotation, Quick 30-minute classes, Big Group splits, Lunch Clubs, and Make-Up sessions. The system can auto-recommend the best combination.' },
   { q: 'How do I generate a schedule?', a: 'Go to Prep & Generate. Review the readiness checklist, configure your conflict strategies, then click "Generate Schedule." The system will create an optimized master schedule based on your configuration.' },
   { q: 'Can I edit the generated schedule?', a: 'Yes! On the Master Schedule page, click any block to edit its time, specialist, teacher, or room assignment. Changes are saved as overrides.' },

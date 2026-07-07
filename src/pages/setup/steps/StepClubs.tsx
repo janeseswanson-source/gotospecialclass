@@ -8,6 +8,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { formatTime } from '@/lib/utils';
 import { AddClubModal, ClubDraft, ClubSession, DayKey } from './clubs/AddClubModal';
 import NlImportDialog from '@/components/setup/NlImportDialog';
+import { toast } from 'sonner';
 
 interface Club {
   id: string;
@@ -148,8 +149,16 @@ const StepClubs = () => {
 
   const removeClub = async (id: string) => {
     if (!schoolId) return;
+    // Optimistic remove, but REVERT if the delete fails — a club must never be
+    // gone from the screen while still alive in the database.
+    const removed = clubs.find(c => c.id === id);
     setClubs(prev => prev.filter(c => c.id !== id));
-    await supabase.from('clubs').delete().eq('id', id);
+    const { error } = await supabase.from('clubs').delete().eq('id', id);
+    if (error) {
+      console.error('Delete club failed:', error);
+      if (removed) setClubs(prev => [...prev, removed]);
+      toast.error(`Couldn't delete the club — ${error.message}`);
+    }
   };
 
   const openAdd = (preset?: { name: string; grades: string[] }) => {
@@ -196,7 +205,7 @@ const StepClubs = () => {
           onClick={() => setStep(SETUP_STEPS.CONFLICTS)}
           className="font-semibold text-accent underline-offset-2 hover:underline"
         >
-          Step 10: Conflicts
+          the Conflicts step
         </button>{' '}
         by enabling the <span className="font-semibold">Lunch Clubs</span> strategy.
       </div>

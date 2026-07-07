@@ -9,6 +9,7 @@ import { FieldLabel } from '@/components/ui/field-label';
 import { Plus, Trash2, Loader2, Check, Sparkles } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import NlImportDialog from '@/components/setup/NlImportDialog';
+import { toast } from 'sonner';
 
 interface SpecialEvent {
   id: string;
@@ -66,7 +67,8 @@ const StepEvents = () => {
       const existingIds = (existing || []).map(r => r.id);
       const toDelete = existingIds.filter(id => !currentIds.includes(id));
       if (toDelete.length > 0) {
-        await supabase.from('special_events').delete().in('id', toDelete);
+        const { error: delErr } = await supabase.from('special_events').delete().in('id', toDelete);
+        if (delErr) throw delErr;
       }
 
       // Upsert remaining events with their client IDs
@@ -81,11 +83,14 @@ const StepEvents = () => {
           end_time: e.endTime || null,
         }));
         const { error } = await supabase.from('special_events').upsert(rows, { onConflict: 'id' });
-        if (error) console.error('Save events error:', error);
+        if (error) throw error;
       }
       setSaveStatus('saved');
       setTimeout(() => setSaveStatus('idle'), 2000);
-    } catch {
+    } catch (err: any) {
+      // A failed save must never look like a successful one.
+      console.error('Save events error:', err);
+      toast.error(`Couldn't save events${err?.message ? ` — ${err.message}` : ''}. Check your connection and try again.`);
       setSaveStatus('idle');
     }
   }, [schoolId]);

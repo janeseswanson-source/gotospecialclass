@@ -48,6 +48,15 @@ describe("analyzeContractFeasibility — CP-SAT input requirements", () => {
     expect(warnings(notes).some((n) => /not in the school's grade list/i.test(n.message) && /9/.test(n.message))).toBe(true);
   });
 
+  it("warns when far more classes share a specialist than a week can hold (role balance)", () => {
+    const manyTeachers = Array.from({ length: 20 }, (_, i) => ({ id: `t${i}`, grade: ["K", "1", "2"][i % 3] }));
+    const notes = analyzeContractFeasibility(school, [spec], manyTeachers);
+    expect(warnings(notes).some((n) => /20 classes share only 1 specialist/i.test(n.message))).toBe(true);
+    // A sane ratio stays quiet.
+    const okNotes = analyzeContractFeasibility(school, [spec, { ...spec, id: "s2" }, { ...spec, id: "s3" }], manyTeachers);
+    expect(warnings(okNotes).some((n) => /classes share/i.test(n.message))).toBe(false);
+  });
+
   it("a fully-configured school produces no blocking errors", () => {
     const notes = analyzeContractFeasibility(school, [spec], [
       { id: "t1", grade: "K" },

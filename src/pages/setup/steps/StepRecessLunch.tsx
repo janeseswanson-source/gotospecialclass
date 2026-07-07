@@ -716,7 +716,14 @@ const StepRecessLunch = () => {
 
       <div className="flex justify-between pt-2">
         <Button variant="outline" onClick={() => setStep(SETUP_STEPS.CALENDAR)}>Back</Button>
-        <Button onClick={() => setStep(SETUP_STEPS.SPECIALISTS)}>Continue</Button>
+        {/* Invalid rows block the WHOLE autosave (valid rows included) — letting
+            Continue through would silently drop the entire recess config. */}
+        <div className="flex flex-col items-end gap-1">
+          <Button onClick={() => setStep(SETUP_STEPS.SPECIALISTS)} disabled={validation.hasError}>Continue</Button>
+          {validation.hasError && (
+            <p className="text-xs text-destructive">Fix the highlighted times first — nothing saves while a row is invalid.</p>
+          )}
+        </div>
       </div>
     </div>
   );

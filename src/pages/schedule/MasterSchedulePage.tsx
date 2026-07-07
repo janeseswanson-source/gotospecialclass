@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { GitCompare, AlertTriangle, X as XIcon, Sparkles, Loader2, MessageSquare, Check, RotateCcw } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatTime as formatTimeDisplay, cn } from "@/lib/utils";
+import { CONFLICT_STRATEGIES } from "@/lib/conflictStrategies";
 import { Badge } from "@/components/ui/badge";
 import { type BlockData } from "@/components/schedule/ScheduleGrid";
 import BlockInspector from "@/components/schedule/BlockInspector";
@@ -51,19 +52,19 @@ const FIX_STEP_MAP: Record<string, number> = {
   recess: 3, specialists: 4, teachers: 5, rotation: 6, clubs: 7, events: 8, conflicts: 9,
 };
 
-const STRATEGY_LABELS: Record<string, string> = {
-  ab_week: "AB Week",
-  aa_bb_week: "AA/BB Week",
-  quick_30: "Quick 30",
-  big_group: "Big Group",
+// ONE label source for strategies (lib/conflictStrategies) — three divergent
+// label sets meant the same strategy read differently per page. Extra keys are
+// engine-internal values the canonical list doesn't carry.
+const EXTRA_STRATEGY_LABELS: Record<string, string> = {
   extra_rotation: "Extra Rotation",
   standard: "Standard",
-  makeup: "Makeup",
-  lunch_clubs: "Lunch Clubs",
-  event_planning: "Event Planning",
+  cpsat_optimal: "Optimized",
 };
-const humanizeStrategy = (s?: string | null) =>
-  s ? (STRATEGY_LABELS[s] ?? s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())) : "";
+const humanizeStrategy = (s?: string | null) => {
+  if (!s) return "";
+  const canonical = CONFLICT_STRATEGIES.find((c) => c.key === s)?.title;
+  return canonical ?? EXTRA_STRATEGY_LABELS[s] ?? s.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+};
 
 export default function MasterSchedulePage() {
   const navigate = useNavigate();
@@ -240,15 +241,34 @@ export default function MasterSchedulePage() {
     setLoading(true);
     setLoadError(false);
 
-    const [genRes, specRes, teachRes, recessRes, clubsRes, schoolRes, calRes] = await Promise.all([
-      supabase.from("schedule_generations").select("*").eq("school_id", selectedSchoolId!).order("version", { ascending: false }),
-      supabase.from("specialists").select("id, name, subject").eq("school_id", selectedSchoolId!),
-      supabase.from("classroom_teachers").select("id, name, grade, combo_partner_id").eq("school_id", selectedSchoolId!),
-      supabase.from("recess_lunch_config").select("*").eq("school_id", selectedSchoolId!),
-      supabase.from("clubs").select("*").eq("school_id", selectedSchoolId!),
-      supabase.from("schools").select("school_year, start_time, end_time, recess_grade_bands").eq("id", selectedSchoolId!).maybeSingle(),
-      supabase.from("parsed_calendar_events").select("event_date, end_date, title, event_type").eq("school_id", selectedSchoolId!).eq("approved", true),
-    ]);
+    // A thrown query (network blip) must land in the retry panel, not hang the
+    // skeleton forever — and must never masquerade as "no schedule yet".
+    let genRes, specRes, teachRes, recessRes, clubsRes, schoolRes, calRes;
+    try {
+      [genRes, specRes, teachRes, recessRes, clubsRes, schoolRes, calRes] = await Promise.all([
+        supabase.from("schedule_generations").select("*").eq("school_id", selectedSchoolId!).order("version", { ascending: false }),
+        supabase.from("specialists").select("id, name, subject").eq("school_id", selectedSchoolId!),
+        supabase.from("classroom_teachers").select("id, name, grade, combo_partner_id").eq("school_id", selectedSchoolId!),
+        supabase.from("recess_lunch_config").select("*").eq("school_id", selectedSchoolId!),
+        supabase.from("clubs").select("*").eq("school_id", selectedSchoolId!),
+        supabase.from("schools").select("school_year, start_time, end_time, recess_grade_bands").eq("id", selectedSchoolId!).maybeSingle(),
+        supabase.from("parsed_calendar_events").select("event_date, end_date, title, event_type").eq("school_id", selectedSchoolId!).eq("approved", true),
+      ]);
+    } catch (err) {
+      console.error("MasterSchedule load failed:", err);
+      setLoadError(true);
+      setLoading(false);
+      return;
+    }
+    // A failed critical query (RLS, outage) also routes to retry — generations
+    // returning an error must not render as the "generate your first schedule"
+    // empty state.
+    if (genRes.error || specRes.error) {
+      console.error("MasterSchedule load failed:", genRes.error ?? specRes.error);
+      setLoadError(true);
+      setLoading(false);
+      return;
+    }
 
     setSchoolStartTime(schoolRes.data?.start_time ?? null);
     setSchoolEndTime(schoolRes.data?.end_time ?? null);
@@ -1093,6 +1113,20 @@ export default function MasterSchedulePage() {
           onFixIssue={handleFixIssue}
           fixingKey={fixingKey}
         />
+      )}
+
+      {/* Honest capacity signal: the solver had to drop the full-coverage floor —
+          this is a staffing/time limit, not a bug, and the coordinator should
+          know what to change rather than just seeing a lower %. */}
+      {activeGen && (activeGen as any).coverage_relaxed && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 no-print">
+          <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+          <p className="text-sm text-amber-700 dark:text-amber-300">
+            <span className="font-medium">Not every class could see every specialist this week</span> — your
+            school is at its capacity limit. To reach full coverage: add specialist days/hours, switch to an
+            A/B week rotation (each class visits every other week), or use 30-minute classes for the younger grades.
+          </p>
+        </div>
       )}
 
       {/* ── edit-with-ai v2: page-level Apply bar for QualityPanel fixes ── */}

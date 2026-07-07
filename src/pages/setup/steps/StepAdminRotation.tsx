@@ -99,7 +99,8 @@ const StepAdminRotation = () => {
 
   const addEntry = () => {
     const sameDay = entries.filter(e => e.day === 'Monday').length;
-    const next = [...entries, { day: 'Monday', startTime: '07:45', endTime: '08:05', grades: [], autoSchedule: false, durationMinutes: 30, rotationLabel: `${sameDay + 1}${sameDay === 0 ? 'st' : sameDay === 1 ? 'nd' : 'rd'}`, weekLabel: null } as any];
+    const ordinal = (n: number) => `${n}${n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'}`;
+    const next = [...entries, { day: 'Monday', startTime: '07:45', endTime: '08:05', grades: [], autoSchedule: false, durationMinutes: 30, rotationLabel: ordinal(sameDay + 1), weekLabel: null } as any];
     updateData({ adminRotation: next });
     save(next);
   };
@@ -361,10 +362,24 @@ const StepAdminRotation = () => {
           </CardContent>
         </Card>
 
-        <div className="flex justify-between pt-2">
-          <Button variant="outline" onClick={() => setStep(SETUP_STEPS.CONTRACTUAL_MINUTES)}>Back</Button>
-          <Button onClick={() => setStep(SETUP_STEPS.CLUBS)}>Continue</Button>
-        </div>
+        {(() => {
+          // End-before-start windows would flow straight into the scheduler as
+          // impossible reservations — block Continue until they're fixed.
+          const anyInvalid =
+            entries.some(e => e.startTime && e.endTime && e.startTime >= e.endTime) ||
+            (!!meeting && meeting.start_time >= meeting.end_time);
+          return (
+            <div className="flex justify-between pt-2">
+              <Button variant="outline" onClick={() => setStep(SETUP_STEPS.CONTRACTUAL_MINUTES)}>Back</Button>
+              <div className="flex flex-col items-end gap-1">
+                <Button onClick={() => setStep(SETUP_STEPS.CLUBS)} disabled={anyInvalid}>Continue</Button>
+                {anyInvalid && (
+                  <p className="text-xs text-destructive">Fix the end-before-start times above first.</p>
+                )}
+              </div>
+            </div>
+          );
+        })()}
       </CardContent>
     </Card>
   );
