@@ -31,6 +31,7 @@ const EmailConfirmationPage = lazyWithRetry(() => import("@/pages/auth/EmailConf
 const AcceptInvitePage = lazyWithRetry(() => import("@/pages/auth/AcceptInvitePage"));
 const TermsPage = lazyWithRetry(() => import("@/pages/legal/TermsPage"));
 const PrivacyPage = lazyWithRetry(() => import("@/pages/legal/PrivacyPage"));
+const OAuthConsent = lazyWithRetry(() => import("@/pages/auth/OAuthConsent"));
 
 // App pages
 const DashboardPage = lazyWithRetry(() => import("@/pages/dashboard/DashboardPage"));
@@ -87,6 +88,8 @@ const App = () => (
                 <Route path="/terms" element={<TermsPage />} />
                 <Route path="/privacy" element={<PrivacyPage />} />
                 <Route path="/accept-invite" element={<AcceptInvitePage />} />
+                <Route path="/.lovable/oauth/consent" element={<OAuthConsent />} />
+
 
                 {/* Protected customer portal */}
                 <Route path="/app" element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
