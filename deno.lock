@@ -103,9 +103,7 @@
     "npm:vaul@~0.9.9": "0.9.9_react@18.3.1_react-dom@18.3.1__react@18.3.1_@types+react@18.3.31_@types+react-dom@18.3.7__@types+react@18.3.31",
     "npm:vite@^5.4.19": "5.4.21_@types+node@22.20.0",
     "npm:vitest@^3.2.4": "3.2.6_@types+node@22.20.0_jsdom@20.0.3",
-    "npm:xlsx@~0.18.5": "0.18.5",
-    "npm:zod@*": "3.25.76",
-    "npm:zod@^3.25.76": "3.25.76"
+    "npm:xlsx@~0.18.5": "0.18.5"
   },
   "npm": {
     "@adobe/css-tools@4.5.0": {
@@ -8227,6 +8225,7 @@
         "npm:@eslint/js@^9.32.0",
         "npm:@hookform/resolvers@^3.10.0",
         "npm:@lhci/cli@0.14",
+        "npm:@lovable.dev/mcp-js@0.20",
         "npm:@playwright/test@^1.48.2",
         "npm:@radix-ui/react-accordion@^1.2.11",
         "npm:@radix-ui/react-alert-dialog@^1.1.14",
@@ -8315,7 +8314,7 @@
         "npm:vite@^5.4.19",
         "npm:vitest@^3.2.4",
         "npm:xlsx@~0.18.5",
-        "npm:zod@^3.25.76"
+        "npm:zod@^4.4.3"
       ]
     }
   }
