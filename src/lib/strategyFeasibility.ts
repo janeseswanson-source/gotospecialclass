@@ -9,6 +9,10 @@ export interface StrategyContext {
   hasClubs: boolean;
   classDuration: number;
   bigGroupConfig: Array<{ grade: string; teacherIds: string[] }>;
+  /** True when the school has calendar events / special events indicating real
+   *  missed days (holidays, assemblies). Drives the make-up recommendation —
+   *  a school with no missed days has nothing to make up. */
+  hasMissedDays?: boolean;
 }
 
 export interface StrategyRecommendation {
@@ -53,8 +57,12 @@ export function getRecommendedStrategies(ctx: StrategyContext): StrategyRecommen
     recs.push({ key: "lunch_clubs", reason: "Clubs and lunch windows are configured — adds specialist teaching time." });
   }
 
-  // Make-up: always recommend as safety net
-  recs.push({ key: "makeup", reason: "Covers missed classes from holidays or assemblies with flex time." });
+  // Make-up: only when the calendar shows real missed days. A school with no
+  // holidays/assemblies on file has nothing to make up — auto-adding it used to
+  // stamp a confusing "(Makeup)" block per specialist onto every schedule.
+  if (ctx.hasMissedDays) {
+    recs.push({ key: "makeup", reason: "Your calendar has holidays/assemblies — flex time covers the missed classes." });
+  }
 
   return recs;
 }

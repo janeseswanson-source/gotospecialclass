@@ -1368,6 +1368,7 @@ export default function MasterSchedulePage() {
             schoolName={selectedSchool?.name}
             schoolYear={schoolYear}
             recessConfig={recessConfig}
+            bandLabels={recessBandLabels}
             calendarEvents={calendarEvents}
           />
         )}

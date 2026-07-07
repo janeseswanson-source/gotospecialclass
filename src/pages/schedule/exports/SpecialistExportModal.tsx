@@ -20,6 +20,8 @@ interface Props {
   schoolName?: string;
   schoolYear?: string;
   recessConfig?: RecessRow[];
+  /** grade_band key → friendly label (schools.recess_grade_bands). */
+  bandLabels?: Record<string, string> | null;
   calendarEvents?: SchoolCalendarEvent[];
 }
 
@@ -38,7 +40,7 @@ function isHolidayWeek(monday: Date, events?: SchoolCalendarEvent[]): boolean {
   return labeled === 5;
 }
 
-export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks, schoolId, schoolName, schoolYear, recessConfig = [], calendarEvents }: Props) => {
+export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks, schoolId, schoolName, schoolYear, recessConfig = [], bandLabels, calendarEvents }: Props) => {
   const [selection, setSelection] = useState<string>('all');
   const [weeksMode, setWeeksMode] = useState<WeeksMode>('this');
   const [customStart, setCustomStart] = useState<string>(todayIso());
@@ -106,6 +108,7 @@ export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks,
           weeks={weeks}
           weekLabels={labels}
           recessConfig={recessConfig}
+          bandLabels={bandLabels}
           calendarEvents={calendarEvents}
           quote={quote}
         />

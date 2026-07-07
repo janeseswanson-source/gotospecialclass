@@ -13,6 +13,7 @@ import { BRAND } from '@/brand/brand';
 import PageHeader from '@/components/layout/PageHeader';
 import WeekCyclePicker from '@/components/schedule/WeekCyclePicker';
 import { buildWeekCycle, type WeekStrategy } from '@/lib/weekCycle';
+import { friendlyBandLabel } from '@/lib/scheduleGrid';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const;
 const DAY_SHORT: Record<string, typeof DAYS[number]> = {
@@ -240,33 +241,31 @@ export default function MasterAdminViewPage() {
   ).sort();
 
   // ── Chrome rows from recess_lunch_config (source of truth) ──
-  // Build per-day windows by union across all grade bands.
+  // Build per-day windows by union across all grade bands. Band names go through
+  // friendlyBandLabel (custom wizard label → readable key → nothing) so raw
+  // auto-generated `band_xxxxxx` keys never print; identical rows dedupe.
+  const bandLabels = (school?.recess_grade_bands as Record<string, string> | null) ?? null;
   const chromeForDay = (kind: 'RECESS' | 'LUNCH' | 'DISMISSAL', day: string) => {
     if (kind === 'DISMISSAL') {
       // No DB row for dismissal — show school end_time uniformly.
       return endTime ? [{ label: 'Dismissal', time: formatTime(endTime) }] : [];
     }
     const out: { label: string; time: string }[] = [];
+    const push = (label: string, time: string) => {
+      if (!out.some((o) => o.label === label && o.time === time)) out.push({ label, time });
+    };
     for (const r of recess) {
+      const band = friendlyBandLabel(r.grade_band, bandLabels);
       if (kind === 'RECESS') {
         if (r.am_recess_start && r.am_recess_end) {
-          out.push({
-            label: r.grade_band === 'all' ? 'AM Recess' : `${r.grade_band} AM`,
-            time: `${formatTime(r.am_recess_start)}–${formatTime(r.am_recess_end)}`,
-          });
+          push(band ? `AM Recess · ${band}` : 'AM Recess', `${formatTime(r.am_recess_start)}–${formatTime(r.am_recess_end)}`);
         }
         if (r.pm_recess_start && r.pm_recess_end) {
-          out.push({
-            label: r.grade_band === 'all' ? 'PM Recess' : `${r.grade_band} PM`,
-            time: `${formatTime(r.pm_recess_start)}–${formatTime(r.pm_recess_end)}`,
-          });
+          push(band ? `PM Recess · ${band}` : 'PM Recess', `${formatTime(r.pm_recess_start)}–${formatTime(r.pm_recess_end)}`);
         }
       } else if (kind === 'LUNCH') {
         if (r.lunch_start && r.lunch_end) {
-          out.push({
-            label: r.grade_band === 'all' ? 'Lunch' : `${r.grade_band}`,
-            time: `${formatTime(r.lunch_start)}–${formatTime(r.lunch_end)}`,
-          });
+          push(band ? `Lunch · ${band}` : 'Lunch', `${formatTime(r.lunch_start)}–${formatTime(r.lunch_end)}`);
         }
       }
     }
@@ -507,6 +506,13 @@ export default function MasterAdminViewPage() {
                                   {specialistName(b.specialist_id)}
                                   {b.teacher_id ? ` · ${teacherName(b.teacher_id)}` : ''}
                                 </div>
+                                {/* Own time when it differs from the row label —
+                                    so a print-out can never mislabel a block. */}
+                                {(b.start_time !== start || b.end_time !== end) && (
+                                  <div className="text-[9px] font-mono text-muted-foreground">
+                                    {formatTime(b.start_time)}–{formatTime(b.end_time)}
+                                  </div>
+                                )}
                               </div>
                               {b.week_label && (
                                 <span className="text-[9px] font-bold uppercase rounded bg-accent/20 text-accent px-1 py-0.5">

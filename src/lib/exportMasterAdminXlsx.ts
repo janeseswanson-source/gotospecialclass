@@ -20,6 +20,7 @@ import { formatTime } from "@/lib/utils";
 import { NAVY, GOLD, CREAM, WHITE, MUTE, GRIDLINE, ZEBRA, subjectColors, parseMin } from "@/lib/exportColors";
 import { BRAND } from "@/brand/brand";
 import { resolveDisplayQuote } from "@/lib/quoteService";
+import { friendlyBandLabel } from "@/lib/scheduleGrid";
 import { buildBrandHeader, headerCell, addBrandLogo } from "@/lib/exportScheduleXlsx";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"] as const;
@@ -243,14 +244,18 @@ export async function exportMasterAdminXlsx(opts: {
   }
 
   // ── Recess / Lunch bands (from the wizard's recess & lunch config) ──
-  const bandLabels: string[] = [];
+  // Band keys go through friendlyBandLabel so raw band_xxxxxx never prints;
+  // identical rows dedupe (a staggered school has many config rows).
+  const bandLabelMap = ((school as any)?.recess_grade_bands as Record<string, string> | null) ?? null;
+  const bandLines = new Set<string>();
   for (const r of (recessData ?? []) as any[]) {
-    const gb = r.grade_band ? ` (${r.grade_band})` : "";
-    if (r.am_recess_start && r.am_recess_end) bandLabels.push(`AM RECESS${gb}  ·  ${formatTime(r.am_recess_start)}–${formatTime(r.am_recess_end)}`);
-    if (r.lunch_start && r.lunch_end) bandLabels.push(`LUNCH${gb}  ·  ${formatTime(r.lunch_start)}–${formatTime(r.lunch_end)}`);
-    if (r.pm_recess_start && r.pm_recess_end) bandLabels.push(`PM RECESS${gb}  ·  ${formatTime(r.pm_recess_start)}–${formatTime(r.pm_recess_end)}`);
+    const friendly = friendlyBandLabel(r.grade_band, bandLabelMap);
+    const gb = friendly ? ` (${friendly})` : "";
+    if (r.am_recess_start && r.am_recess_end) bandLines.add(`AM RECESS${gb}  ·  ${formatTime(r.am_recess_start)}–${formatTime(r.am_recess_end)}`);
+    if (r.lunch_start && r.lunch_end) bandLines.add(`LUNCH${gb}  ·  ${formatTime(r.lunch_start)}–${formatTime(r.lunch_end)}`);
+    if (r.pm_recess_start && r.pm_recess_end) bandLines.add(`PM RECESS${gb}  ·  ${formatTime(r.pm_recess_start)}–${formatTime(r.pm_recess_end)}`);
   }
-  for (const label of bandLabels) bandRow(ws, COLS, label);
+  for (const label of bandLines) bandRow(ws, COLS, label);
 
   // ═══ Data sheets ═══
   addDataSheet(wb, "Schools", sub,

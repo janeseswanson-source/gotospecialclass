@@ -42,6 +42,15 @@ const PERIOD_LABEL: Record<PeriodKey, string> = {
 const genBandKey = () => `band_${Math.random().toString(36).slice(2, 8)}`;
 const genRowId = () => `r_${Math.random().toString(36).slice(2, 10)}`;
 
+/** "K–2" / "3–5" style label from a grades list (order = grades-served order).
+ *  Beats the old "(group N)" naming, which leaked meaningless names into every
+ *  schedule view and export. */
+const gradeRangeLabel = (grades: string[]): string => {
+  if (grades.length === 0) return '';
+  if (grades.length === 1) return grades[0];
+  return `${grades[0]}–${grades[grades.length - 1]}`;
+};
+
 interface ConfigRow {
   grade_band: string;
   am_recess_start: string | null; am_recess_end: string | null;
@@ -311,11 +320,11 @@ const StepRecessLunch = () => {
       } else {
         // Adding staggered row → new bandKey
         bandKey = genBandKey();
-        label = `${PERIOD_LABEL[period]} (group ${existing.length + 1})`;
         // Remaining grades = grades not covered by existing rows in this period
         const taken = new Set(existing.flatMap(r => r.grades));
         const leftover = gradesServed.filter(g => !taken.has(g));
         grades = leftover.length ? leftover : fallbackGrades;
+        label = gradeRangeLabel(grades) || `${PERIOD_LABEL[period]} (group ${existing.length + 1})`;
         if (!isStaggered) updateData({ scheduleType: 'staggered' });
       }
 
@@ -347,6 +356,32 @@ const StepRecessLunch = () => {
         });
         return next;
       });
+    } else {
+      // Staggered means at least TWO grade groups — auto-split each single-row
+      // period into lower/upper halves (e.g. K–2 / 3–5) so the user starts from
+      // two labelled rows instead of having to discover the "+" themselves.
+      // Both groups share the same band keys across periods so the schedule
+      // views group them consistently.
+      if (gradesServed.length >= 2) {
+        const half = Math.ceil(gradesServed.length / 2);
+        const lower = gradesServed.slice(0, half);
+        const upper = gradesServed.slice(half);
+        const lowerKey = genBandKey();
+        const upperKey = genBandKey();
+        setCards(prev => {
+          const out: CardsState = { ...prev };
+          PERIOD_ORDER.forEach(p => {
+            if (prev[p].length === 1) {
+              const first = prev[p][0];
+              out[p] = [
+                { ...first, bandKey: lowerKey, label: gradeRangeLabel(lower), grades: lower },
+                { rowId: genRowId(), bandKey: upperKey, label: gradeRangeLabel(upper), grades: upper, start: '', end: '' },
+              ];
+            }
+          });
+          return out;
+        });
+      }
     }
     updateData({ scheduleType: next });
   };
@@ -379,10 +414,10 @@ const StepRecessLunch = () => {
           grades = fallbackGrades;
         } else {
           bandKey = genBandKey();
-          label = `${PERIOD_LABEL[period]} (group ${next.length + 1})`;
           const taken = new Set(next.flatMap(r => r.grades));
           const leftover = gradesServed.filter(g => !taken.has(g));
           grades = leftover.length ? leftover : fallbackGrades;
+          label = gradeRangeLabel(grades) || `${PERIOD_LABEL[period]} (group ${next.length + 1})`;
         }
         // For PM Recess: try to auto-populate from corresponding lunch row.
         if (period === 'pmRecess') {

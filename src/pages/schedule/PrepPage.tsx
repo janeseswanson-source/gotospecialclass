@@ -94,6 +94,7 @@ export default function PrepPage() {
   const [specialistCount, setSpecialistCount] = useState(0);
   const [hasLunchConfig, setHasLunchConfig] = useState(false);
   const [hasClubs, setHasClubs] = useState(false);
+  const [hasMissedDays, setHasMissedDays] = useState(false);
   const [classDuration, setClassDuration] = useState(45);
   const [bigGroupConfig, setBigGroupConfig] = useState<Array<{ grade: string; teacherIds: string[] }>>([]);
   const [contractNotes, setContractNotes] = useState<FeasibilityNote[]>([]);
@@ -130,12 +131,13 @@ export default function PrepPage() {
       setSelectedStrategies((school.conflict_strategies as string[]) ?? []);
       setConflictGrades((school.conflict_grades as string[]) ?? []);
 
-      const [specialistsRes, teachersRes, recessRes, eventsRes, clubsRes] = await Promise.all([
+      const [specialistsRes, teachersRes, recessRes, eventsRes, clubsRes, specialEvRes] = await Promise.all([
         supabase.from("specialists").select("id, name, subject, working_days, class_duration, lunch_minutes, weekly_planning_minutes, is_part_time").eq("school_id", school.id),
         supabase.from("classroom_teachers").select("id, name, grade").eq("school_id", school.id),
         supabase.from("recess_lunch_config").select("id").eq("school_id", school.id),
         supabase.from("parsed_calendar_events").select("id").eq("school_id", school.id),
         supabase.from("clubs").select("id").eq("school_id", school.id),
+        supabase.from("special_events").select("id").eq("school_id", school.id).limit(1),
       ]);
 
 
@@ -143,6 +145,7 @@ export default function PrepPage() {
       setSpecialistCount(specialists.length);
       setHasLunchConfig((recessRes.data?.length ?? 0) > 0);
       setHasClubs((clubsRes.data?.length ?? 0) > 0);
+      setHasMissedDays((eventsRes.data?.length ?? 0) > 0 || (specialEvRes.data?.length ?? 0) > 0);
       setClassDuration(school.class_duration ?? 45);
       setBigGroupConfig((school.big_group_config as Array<{ grade: string; teacherIds: string[] }>) ?? []);
       const tByG: Record<string, number> = {};
@@ -423,7 +426,8 @@ export default function PrepPage() {
     hasClubs,
     classDuration,
     bigGroupConfig,
-  }), [conflictGrades, availableGrades, specialistCount, teachersByGrade, hasLunchConfig, hasClubs, classDuration, bigGroupConfig]);
+    hasMissedDays,
+  }), [conflictGrades, availableGrades, specialistCount, teachersByGrade, hasLunchConfig, hasClubs, classDuration, bigGroupConfig, hasMissedDays]);
 
   const recommendations = useMemo(() => getRecommendedStrategies(strategyCtx), [strategyCtx]);
   const recommendedKeys = useMemo(() => recommendations.map(r => r.key), [recommendations]);

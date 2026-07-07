@@ -19,6 +19,10 @@ import type { BlockData } from "./ScheduleGrid";
 
 interface Props {
   blocks: BlockData[];
+  /** The grid row's slot time ("HH:MM"). When the stack starts at this time the
+   *  header shows only the END time — the start is already on the row label,
+   *  and repeating it in every cell reads as clutter. */
+  slotTime?: string;
   conflictIds: Set<string>;
   lockedIds?: Set<string>;
   highlightIds?: Set<string>;
@@ -118,7 +122,7 @@ function BlockRow({
 }
 
 export default function ScheduleStackCell({
-  blocks, conflictIds, lockedIds, highlightIds, ghostIds, originIds, deletedIds,
+  blocks, slotTime, conflictIds, lockedIds, highlightIds, ghostIds, originIds, deletedIds,
   onBlockClick, onPickUp, selectedId, dndEnabled, activeDragId,
 }: Props) {
   if (!blocks.length) return null;
@@ -165,7 +169,10 @@ export default function ScheduleStackCell({
       )}
       aria-hidden={allGhost || undefined}
     >
-      {/* Header: grade chip + time. */}
+      {/* Header: grade chip + time. When the stack starts exactly at the grid
+          row's time, the start is already printed on the row label — showing it
+          again in every cell is the "too many times" clutter, so the header
+          keeps only the end ("–9:20 AM"). Off-row starts show the full range. */}
       <div className="flex items-center gap-1 px-1.5 pt-1 pb-0.5">
         {grade && (
           <span className="shrink-0 rounded bg-primary/15 px-1 text-[9px] font-bold leading-[14px] text-primary uppercase">
@@ -173,7 +180,9 @@ export default function ScheduleStackCell({
           </span>
         )}
         <span className="font-mono text-[10px] font-semibold text-foreground/80 truncate">
-          {formatTime(start)}–{formatTime(end)}
+          {slotTime && formatTime(slotTime) === formatTime(start)
+            ? `–${formatTime(end)}`
+            : `${formatTime(start)}–${formatTime(end)}`}
         </span>
         {week && (
           <span className="ml-auto shrink-0 rounded border border-amber-500/40 bg-amber-500/15 px-1 text-[8px] font-bold leading-[12px] text-amber-700 dark:text-amber-300 uppercase">

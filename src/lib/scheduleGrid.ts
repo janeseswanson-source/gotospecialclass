@@ -98,30 +98,50 @@ export function buildCompactTimeSlots(
 
 
 
+/** Human label for a recess_lunch_config `grade_band` key. Never leaks the raw
+ *  auto-generated `band_xxxxxx` key: custom wizard label → the key itself when
+ *  it's already readable (e.g. "primary", "K-2") → "" for blank/"all"/opaque
+ *  keys. Shared by the grid, the admin view, the PDF planner, and the XLSX
+ *  export so every surface names bands the same way. */
+export function friendlyBandLabel(gradeBand: string | null | undefined, bandLabels?: Record<string, string> | null): string {
+  const key = (gradeBand ?? "").trim();
+  if (!key || key === "all") return "";
+  const custom = bandLabels?.[key];
+  if (custom) return custom;
+  if (/^band_[a-z0-9]+$/i.test(key)) return ""; // opaque auto key with no label — say nothing
+  return key.charAt(0).toUpperCase() + key.slice(1);
+}
+
 /** Convert recess_lunch_config rows into RecessBand objects for the grid.
  * Optional `bandLabels` maps `grade_band` keys to a human-readable label
  * (e.g. "Primary 1-3") that the user customized in the wizard.
+ *
+ * Rows that share the same kind + identical time window are MERGED into one
+ * band whose label joins the distinct group names — a staggered school with
+ * many config rows must not stack seventeen identical "AM Recess" rows.
  */
 export function buildRecessBands(rows: any[], bandLabels?: Record<string, string>): RecessBand[] {
-  const bands: RecessBand[] = [];
-  const labelFor = (key: string) => {
-    if (!key || key === "all") return "";
-    const custom = bandLabels?.[key];
-    return custom ? ` · ${custom}` : ` (${key})`;
+  interface Draft { kind: string; start: string; end: string; ids: (string | number)[]; groups: string[] }
+  const drafts = new Map<string, Draft>();
+  const add = (kind: string, r: any, i: number, start: string, end: string) => {
+    const key = `${kind}|${start}|${end}`;
+    let d = drafts.get(key);
+    if (!d) { d = { kind, start, end, ids: [], groups: [] }; drafts.set(key, d); }
+    d.ids.push(r.id ?? i);
+    const g = friendlyBandLabel(r.grade_band, bandLabels);
+    if (g && !d.groups.includes(g)) d.groups.push(g);
   };
   rows.forEach((r, i) => {
-    const suffix = labelFor(r.grade_band);
-    if (r.am_recess_start && r.am_recess_end) {
-      bands.push({ id: `am-${r.id ?? i}`, label: `AM Recess${suffix}`, start_time: r.am_recess_start, end_time: r.am_recess_end });
-    }
-    if (r.lunch_start && r.lunch_end) {
-      bands.push({ id: `lunch-${r.id ?? i}`, label: `Lunch${suffix}`, start_time: r.lunch_start, end_time: r.lunch_end });
-    }
-    if (r.pm_recess_start && r.pm_recess_end) {
-      bands.push({ id: `pm-${r.id ?? i}`, label: `PM Recess${suffix}`, start_time: r.pm_recess_start, end_time: r.pm_recess_end });
-    }
+    if (r.am_recess_start && r.am_recess_end) add("AM Recess", r, i, r.am_recess_start, r.am_recess_end);
+    if (r.lunch_start && r.lunch_end) add("Lunch", r, i, r.lunch_start, r.lunch_end);
+    if (r.pm_recess_start && r.pm_recess_end) add("PM Recess", r, i, r.pm_recess_start, r.pm_recess_end);
   });
-  return bands;
+  return Array.from(drafts.values()).map((d) => ({
+    id: `${d.kind.toLowerCase().replace(/\s+/g, "-")}-${d.ids[0]}`,
+    label: d.groups.length ? `${d.kind} · ${d.groups.join(" & ")}` : d.kind,
+    start_time: d.start,
+    end_time: d.end,
+  }));
 }
 
 // --- Conflict detection (single source of truth for grid + warning panel) ---

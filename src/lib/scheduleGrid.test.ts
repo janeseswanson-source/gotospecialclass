@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTimeSlots, computeAutoFit, computeConflictIds, swapPlacements, minToHMS } from "./scheduleGrid";
+import { buildTimeSlots, buildRecessBands, friendlyBandLabel, computeAutoFit, computeConflictIds, swapPlacements, minToHMS } from "./scheduleGrid";
 import type { BlockData } from "@/components/schedule/ScheduleGrid";
 
 const mkBlock = (over: Partial<BlockData>): BlockData => ({
@@ -17,6 +17,64 @@ describe("buildTimeSlots", () => {
   it("extends to include off-grid blocks", () => {
     const slots = buildTimeSlots("08:00", "09:00", [mkBlock({ start_time: "07:45", end_time: "08:30" })]);
     expect(slots.includes("07:45")).toBe(true);
+  });
+});
+
+describe("buildRecessBands", () => {
+  it("merges rows sharing the same kind + window into ONE band (no ×17 spam)", () => {
+    const rows = Array.from({ length: 17 }, (_, i) => ({
+      id: `r${i}`, grade_band: "all", am_recess_start: "09:30", am_recess_end: "09:45",
+    }));
+    const bands = buildRecessBands(rows);
+    expect(bands).toHaveLength(1);
+    expect(bands[0].label).toBe("AM Recess");
+  });
+
+  it("joins distinct group labels on a merged band", () => {
+    const rows = [
+      { id: "a", grade_band: "primary", am_recess_start: "09:30", am_recess_end: "09:45" },
+      { id: "b", grade_band: "intermediate", am_recess_start: "09:30", am_recess_end: "09:45" },
+    ];
+    const bands = buildRecessBands(rows, { primary: "Primary (1, 2, 3)", intermediate: "Intermediate (4, 5)" });
+    expect(bands).toHaveLength(1);
+    expect(bands[0].label).toBe("AM Recess · Primary (1, 2, 3) & Intermediate (4, 5)");
+  });
+
+  it("keeps DIFFERENT windows as separate bands (staggered schedules)", () => {
+    const rows = [
+      { id: "a", grade_band: "k2", am_recess_start: "09:30", am_recess_end: "09:45", lunch_start: "11:00", lunch_end: "11:30" },
+      { id: "b", grade_band: "35", am_recess_start: "10:00", am_recess_end: "10:15", lunch_start: "11:40", lunch_end: "12:10" },
+    ];
+    const bands = buildRecessBands(rows, { k2: "K–2", 35: "3–5" });
+    expect(bands).toHaveLength(4);
+    expect(bands.map((b) => b.label).sort()).toEqual([
+      "AM Recess · 3–5", "AM Recess · K–2", "Lunch · 3–5", "Lunch · K–2",
+    ]);
+  });
+
+  it("never leaks a raw band_xxxxxx key", () => {
+    const rows = [{ id: "a", grade_band: "band_o3re5m", am_recess_start: "09:30", am_recess_end: "09:45" }];
+    const bands = buildRecessBands(rows); // no label map at all
+    expect(bands[0].label).toBe("AM Recess");
+  });
+});
+
+describe("friendlyBandLabel", () => {
+  it("prefers the custom wizard label", () => {
+    expect(friendlyBandLabel("band_o3re5m", { band_o3re5m: "K–2" })).toBe("K–2");
+  });
+  it("hides opaque auto keys without a label", () => {
+    expect(friendlyBandLabel("band_xgvk5p", {})).toBe("");
+    expect(friendlyBandLabel("band_xgvk5p", null)).toBe("");
+  });
+  it("blank / 'all' → empty", () => {
+    expect(friendlyBandLabel("all")).toBe("");
+    expect(friendlyBandLabel("")).toBe("");
+    expect(friendlyBandLabel(null)).toBe("");
+  });
+  it("readable keys pass through capitalized", () => {
+    expect(friendlyBandLabel("primary")).toBe("Primary");
+    expect(friendlyBandLabel("K-2")).toBe("K-2");
   });
 });
 

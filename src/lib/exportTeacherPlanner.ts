@@ -26,7 +26,7 @@ export async function exportTeacherPlanner(opts: Options): Promise<boolean> {
       supabase.from("schedule_blocks").select("*").eq("generation_id", generationId),
       specQuery,
       supabase.from("classroom_teachers").select("id, name, grade").eq("school_id", schoolId),
-      supabase.from("schools").select("name").eq("id", schoolId).maybeSingle(),
+      supabase.from("schools").select("name, recess_grade_bands").eq("id", schoolId).maybeSingle(),
       supabase.from("recess_lunch_config").select("*").eq("school_id", schoolId),
       supabase.from("parsed_calendar_events").select("event_date, end_date, title, event_type").eq("school_id", schoolId).eq("approved", true),
     ]);
@@ -61,6 +61,7 @@ export async function exportTeacherPlanner(opts: Options): Promise<boolean> {
       weeks,
       weekLabels,
       recessConfig: (recess ?? []) as RecessRow[],
+      bandLabels: ((school as any)?.recess_grade_bands as Record<string, string> | null) ?? null,
       includeNotesBox,
       calendarEvents: calEvents ?? [],
       quote,

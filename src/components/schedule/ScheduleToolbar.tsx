@@ -78,37 +78,68 @@ export default function ScheduleToolbar(props: ScheduleToolbarProps) {
           </Badge>
         )}
 
-        {/* Version tab bar */}
-        {generations.length > 1 && (
-          <div className="flex items-center rounded-lg border border-border bg-background p-0.5 gap-0.5" role="tablist" aria-label="Schedule versions">
-            {generations.map((g) => {
-              const isActive = selectedGen === g.id;
-              const verified = g.verify_quality_score != null && g.verify_quality_score >= 80;
-              const reviewed = !verified && g.verify_quality_score != null && g.verify_issues_found != null && g.verify_issues_found > 0;
-              return (
-                <button
-                  key={g.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={isActive}
-                  onClick={() => onSelectGen(g.id)}
-                  className={cn(
-                    "rounded-md px-3 py-1 text-xs font-medium transition-all flex items-center gap-1.5",
-                    isActive ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
-                  )}
-                >
-                  v{g.version}
-                  {verified && (
-                    <span className={cn("text-[9px] font-bold px-1 py-px rounded leading-none", isActive ? "bg-white/25 text-white" : "bg-green-500/15 text-green-700 dark:text-green-400")}>✓ AI</span>
-                  )}
-                  {reviewed && (
-                    <span className={cn("text-[9px] font-bold px-1 py-px rounded leading-none", isActive ? "bg-white/25 text-white" : "bg-amber-500/15 text-amber-700 dark:text-amber-400")}>{g.verify_issues_found} fixed</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        )}
+        {/* Version tab bar — only the most recent versions get chips; the long
+            tail lives in an "Older" dropdown so 60 generations don't become 60
+            chips. The selected version always stays visible as a chip. */}
+        {generations.length > 1 && (() => {
+          const MAX_CHIPS = 6;
+          const recent = generations.slice(0, MAX_CHIPS);
+          let older = generations.slice(MAX_CHIPS);
+          // Keep the active version visible even when it's an old one.
+          const activeInOlder = older.find((g) => g.id === selectedGen);
+          let chips = recent;
+          if (activeInOlder) {
+            chips = [...recent.slice(0, MAX_CHIPS - 1), activeInOlder];
+            older = generations.slice(MAX_CHIPS - 1).filter((g) => g.id !== selectedGen);
+          }
+          return (
+            <div className="flex items-center rounded-lg border border-border bg-background p-0.5 gap-0.5" role="tablist" aria-label="Schedule versions">
+              {chips.map((g) => {
+                const isActive = selectedGen === g.id;
+                const verified = g.verify_quality_score != null && g.verify_quality_score >= 80;
+                const reviewed = !verified && g.verify_quality_score != null && g.verify_issues_found != null && g.verify_issues_found > 0;
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => onSelectGen(g.id)}
+                    className={cn(
+                      "rounded-md px-3 py-1 text-xs font-medium transition-all flex items-center gap-1.5",
+                      isActive ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-muted/50",
+                    )}
+                  >
+                    v{g.version}
+                    {verified && (
+                      <span className={cn("text-[9px] font-bold px-1 py-px rounded leading-none", isActive ? "bg-white/25 text-white" : "bg-green-500/15 text-green-700 dark:text-green-400")}>✓ AI</span>
+                    )}
+                    {reviewed && (
+                      <span className={cn("text-[9px] font-bold px-1 py-px rounded leading-none", isActive ? "bg-white/25 text-white" : "bg-amber-500/15 text-amber-700 dark:text-amber-400")}>{g.verify_issues_found} fixed</span>
+                    )}
+                  </button>
+                );
+              })}
+              {older.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button type="button" className="rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 flex items-center gap-0.5" aria-label={`${older.length} older versions`}>
+                      Older <ChevronDown className="h-3 w-3" />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="max-h-72 overflow-y-auto">
+                    {older.map((g) => (
+                      <DropdownMenuItem key={g.id} onClick={() => onSelectGen(g.id)}>
+                        v{g.version}
+                        {g.verify_quality_score != null && g.verify_quality_score >= 80 && <span className="ml-1.5 text-[10px] text-green-600 dark:text-green-400">✓ AI</span>}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Compare with */}
         {generations.length > 1 && (

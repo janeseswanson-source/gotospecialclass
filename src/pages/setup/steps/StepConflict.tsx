@@ -409,6 +409,7 @@ const StepConflict = () => {
   const [recessExists, setRecessExists] = useState(false);
   const [clubsCount, setClubsCount] = useState(0);
   const [specialistCount, setSpecialistCount] = useState(0);
+  const [hasMissedDays, setHasMissedDays] = useState(false);
 
   useEffect(() => {
     if (!schoolId) return;
@@ -416,10 +417,14 @@ const StepConflict = () => {
       supabase.from('recess_lunch_config').select('id').eq('school_id', schoolId).limit(1),
       supabase.from('clubs').select('id').eq('school_id', schoolId),
       supabase.from('specialists').select('id').eq('school_id', schoolId),
-    ]).then(([recessRes, clubsRes, specRes]) => {
+      // Real missed days on file → make-up sessions are worth recommending.
+      supabase.from('parsed_calendar_events').select('id').eq('school_id', schoolId).eq('approved', true).limit(1),
+      supabase.from('special_events').select('id').eq('school_id', schoolId).limit(1),
+    ]).then(([recessRes, clubsRes, specRes, calRes, evRes]) => {
       setRecessExists((recessRes.data?.length ?? 0) > 0);
       setClubsCount(clubsRes.data?.length ?? 0);
       setSpecialistCount(specRes.data?.length ?? 0);
+      setHasMissedDays((calRes.data?.length ?? 0) > 0 || (evRes.data?.length ?? 0) > 0);
     });
   }, [schoolId]);
 
@@ -437,8 +442,9 @@ const StepConflict = () => {
       hasClubs: clubsCount > 0,
       classDuration: data.classDuration ?? 45,
       bigGroupConfig: bigGroupConfig,
+      hasMissedDays,
     };
-  }, [data.conflictGrades, grades, specialistCount, teachers, recessExists, clubsCount, data.classDuration, bigGroupConfig]);
+  }, [data.conflictGrades, grades, specialistCount, teachers, recessExists, clubsCount, data.classDuration, bigGroupConfig, hasMissedDays]);
 
   const recommendations = useMemo(() => getRecommendedStrategies(strategyCtx), [strategyCtx]);
   const recommendedKeys = useMemo(() => recommendations.map(r => r.key), [recommendations]);

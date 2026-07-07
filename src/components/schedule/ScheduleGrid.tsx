@@ -294,6 +294,7 @@ export default function ScheduleGrid({
                           {slotBlocks.length > 0 ? (
                             <ScheduleStackCell
                               blocks={slotBlocks}
+                              slotTime={time}
                               conflictIds={conflicts}
                               lockedIds={lockedIds}
                               highlightIds={highlightIds}

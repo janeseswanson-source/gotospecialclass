@@ -3,6 +3,7 @@ import { addDays, formatWeekHeader, formatDayHeader } from './lib/weekDates';
 import { getDayLabelFor, type SchoolCalendarEvent } from './lib/holidays';
 import { pickQuoteForWeek } from './lib/quotes';
 import { PDF, PDF_BRAND, pdfSubjectColors } from './lib/pdfTheme';
+import { friendlyBandLabel } from '@/lib/scheduleGrid';
 import logoAsset from '@/assets/logo.png.asset.json';
 
 const LOGO_URL = (() => {
@@ -43,6 +44,9 @@ export interface SpecialistPlannerProps {
   weeks: Date[];
   weekLabels?: (undefined | 'A' | 'B')[]; // one or more; default [undefined]
   recessConfig?: RecessRow[];
+  /** grade_band key → friendly label (schools.recess_grade_bands) so print never
+   *  shows raw auto-generated band_ keys. */
+  bandLabels?: Record<string, string> | null;
   includeNotesBox?: boolean;
   /** Approved school calendar events — drive HOLIDAY/PD overlays. */
   calendarEvents?: SchoolCalendarEvent[];
@@ -154,28 +158,35 @@ function matchesRange(slotStart: string, slotEnd: string, rStart?: string | null
   return slotStart < rEnd && slotEnd > rStart;
 }
 
-function recessLine(slot: { start: string; end: string }, recess: RecessRow[]): string | null {
+/** Band name for print: custom wizard label → readable key → "All". Raw
+ *  auto-generated `band_xxxxxx` keys must never reach paper. */
+function bandName(gradeBand: string | null | undefined, bandLabels?: Record<string, string> | null): string {
+  const friendly = friendlyBandLabel(gradeBand, bandLabels);
+  return friendly || 'All';
+}
+
+function recessLine(slot: { start: string; end: string }, recess: RecessRow[], bandLabels?: Record<string, string> | null): string | null {
   if (!recess || recess.length === 0) return null;
   const parts: string[] = [];
   for (const r of recess) {
     if (matchesRange(slot.start, slot.end, r.am_recess_start, r.am_recess_end)) {
-      parts.push(`${r.grade_band === 'all' ? 'All' : r.grade_band} Recess ${fmtTime(r.am_recess_start)} – ${fmtTime(r.am_recess_end)}`);
+      parts.push(`${bandName(r.grade_band, bandLabels)} Recess ${fmtTime(r.am_recess_start)} – ${fmtTime(r.am_recess_end)}`);
     } else if (matchesRange(slot.start, slot.end, r.pm_recess_start, r.pm_recess_end)) {
-      parts.push(`${r.grade_band === 'all' ? 'All' : r.grade_band} PM Recess ${fmtTime(r.pm_recess_start)} – ${fmtTime(r.pm_recess_end)}`);
+      parts.push(`${bandName(r.grade_band, bandLabels)} PM Recess ${fmtTime(r.pm_recess_start)} – ${fmtTime(r.pm_recess_end)}`);
     }
   }
-  return parts.length ? parts.join('  ·  ') : null;
+  return parts.length ? [...new Set(parts)].join('  ·  ') : null;
 }
 
-function lunchLine(slot: { start: string; end: string }, recess: RecessRow[]): string | null {
+function lunchLine(slot: { start: string; end: string }, recess: RecessRow[], bandLabels?: Record<string, string> | null): string | null {
   if (!recess || recess.length === 0) return null;
   const parts: string[] = [];
   for (const r of recess) {
     if (matchesRange(slot.start, slot.end, r.lunch_start, r.lunch_end)) {
-      parts.push(`${r.grade_band === 'all' ? 'All' : r.grade_band} Lunch ${fmtTime(r.lunch_start)} – ${fmtTime(r.lunch_end)}`);
+      parts.push(`${bandName(r.grade_band, bandLabels)} Lunch ${fmtTime(r.lunch_start)} – ${fmtTime(r.lunch_end)}`);
     }
   }
-  return parts.length ? parts.join('  ·  ') : null;
+  return parts.length ? [...new Set(parts)].join('  ·  ') : null;
 }
 
 const NOTE_INLINE_MAX = 30;
@@ -202,7 +213,7 @@ function renderCellContent(b: PlannerBlock | undefined, noteNumber?: number) {
 }
 
 function PlannerPage({
-  specialist, blocks, monday, weekLabel, schoolName, schoolYear, recessConfig, includeNotesBox, calendarEvents, quote: quoteProp,
+  specialist, blocks, monday, weekLabel, schoolName, schoolYear, recessConfig, bandLabels, includeNotesBox, calendarEvents, quote: quoteProp,
 }: {
   specialist: { id: string; name: string; subject: string };
   blocks: PlannerBlock[];
@@ -211,6 +222,7 @@ function PlannerPage({
   schoolName?: string;
   schoolYear?: string;
   recessConfig: RecessRow[];
+  bandLabels?: Record<string, string> | null;
   includeNotesBox?: boolean;
   calendarEvents?: SchoolCalendarEvent[];
   quote?: string | null;
@@ -302,8 +314,8 @@ function PlannerPage({
         </View>
       ) : (
         slots.map((slot, idx) => {
-          const rLine = recessLine(slot, recessConfig);
-          const lLine = lunchLine(slot, recessConfig);
+          const rLine = recessLine(slot, recessConfig, bandLabels);
+          const lLine = lunchLine(slot, recessConfig, bandLabels);
           // Only collapse the row into a recess/lunch band when the specialist
           // has NO real classes in this slot — a class can legitimately overlap
           // another grade band's recess and must never disappear from print.
@@ -421,7 +433,7 @@ function PlannerPage({
 }
 
 export const SpecialistPlanner = ({
-  specialists, blocks, schoolName, schoolYear, weeks, weekLabels, recessConfig = [], includeNotesBox = true, calendarEvents,
+  specialists, blocks, schoolName, schoolYear, weeks, weekLabels, recessConfig = [], bandLabels, includeNotesBox = true, calendarEvents,
 }: SpecialistPlannerProps) => {
   const safeWeeks = weeks && weeks.length > 0 ? weeks : [new Date()];
   const labels = weekLabels && weekLabels.length > 0 ? weekLabels : [undefined];
@@ -439,6 +451,7 @@ export const SpecialistPlanner = ({
               schoolName={schoolName}
               schoolYear={schoolYear}
               recessConfig={recessConfig}
+              bandLabels={bandLabels}
               includeNotesBox={includeNotesBox}
               calendarEvents={calendarEvents}
             />
