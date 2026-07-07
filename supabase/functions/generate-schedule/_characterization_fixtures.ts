@@ -157,7 +157,7 @@ export function computeSnapshot(strategy: CharStrategy): CharSnapshot {
     chosenStrategy: result.chosenStrategy,
     winningScore: Math.round(result.winningScore * 1000) / 1000,
     scoreBreakdown: Object.fromEntries(
-      Object.entries(result.scoreBreakdown).map(([k, v]) => [k, Math.round((v as number) * 1000) / 1000]),
+      Object.entries(result.scoreBreakdown ?? {}).map(([k, v]) => [k, Math.round((v as number) * 1000) / 1000]),
     ),
     hardViolations: countHardViolations(blocks, school, recessConfigs),
   };

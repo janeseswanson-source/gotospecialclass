@@ -152,7 +152,7 @@ Deno.serve(async (req) => {
 
     // ── Build the full spec (pure) ──
     const defaultDur = (school.class_duration && school.class_duration > 0) ? school.class_duration : 45;
-    const { spec, adminBlocks, plusBlocks, lunchBlocks, strategies } = buildCpsatSpec({
+    const { spec, adminBlocks, plusBlocks, lunchBlocks, meetingBlocks, strategies } = buildCpsatSpec({
       school, specialists, teachers, recessConfigs, grades, learnedWeights,
       specialEvents: eventsRes.data ?? [],
       timeLimitS: typeof time_limit_s === "number" ? time_limit_s : 60,
@@ -238,11 +238,12 @@ Deno.serve(async (req) => {
     // ── Fixed reservations the final schedule also carries. An admin PLUS rotation
     // can overlap a computed lunch window (a real data tension); persisting both
     // would fire a -1000 specialist-double-book error. Drop any fixed block that
-    // overlaps a higher-priority one for the same specialist: admin > PLUS > lunch. ──
+    // overlaps a higher-priority one for the same specialist:
+    // admin > meeting > PLUS > lunch. ──
     const fixedPriority = (b: Block): number =>
-      b.subject === "PLC/Admin" ? 3 : (b.subject ?? "").includes("PLUS") ? 2 : 1;
+      b.subject === "PLC/Admin" ? 4 : b.subject === "Specialist Meeting" ? 3 : (b.subject ?? "").includes("PLUS") ? 2 : 1;
     const fixedBlocks: Block[] = [];
-    for (const fb of [...adminBlocks, ...plusBlocks, ...lunchBlocks].sort((a, b) => fixedPriority(b) - fixedPriority(a))) {
+    for (const fb of [...adminBlocks, ...plusBlocks, ...lunchBlocks, ...meetingBlocks].sort((a, b) => fixedPriority(b) - fixedPriority(a))) {
       if (!fb.specialist_id) { fixedBlocks.push(fb); continue; }
       const fs = timeToMinutes(fb.start_time) ?? 0, fe = timeToMinutes(fb.end_time) ?? 0;
       const clash = fixedBlocks.some((k) =>

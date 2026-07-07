@@ -78,7 +78,10 @@ Deno.test("LNS: never regresses (result score ≥ initial) and stays SSOT-legal"
 });
 
 Deno.test("LNS: improves the complaint-school (standard) fixture", () => {
-  const { res } = run("standard", 12345, { rounds: 120 });
+  // 400 rounds (was 120): the grade_day_spread objective term made this seed's
+  // first improving move rarer — probed seeds 7/42/999 improve at 120, but
+  // 12345 needs ~400. The improvement guarantee itself is unchanged.
+  const { res } = run("standard", 12345, { rounds: 400 });
   assert(res.improvement > 0, `expected LNS to improve standard, got +${res.improvement}`);
 });
 

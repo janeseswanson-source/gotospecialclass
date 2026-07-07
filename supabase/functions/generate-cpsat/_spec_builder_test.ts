@@ -176,6 +176,51 @@ Deno.test("specialist lunch is reserved into busy", () => {
   assert(spec.busy.every((b) => b.end > b.start && DAYS.includes(b.day)));
 });
 
+// ─── quick_30 per-grade duration overrides ──────────────────────────────
+Deno.test("quick_30 + conflict grades → grade_duration_overrides + a 30-min grid", () => {
+  const { spec } = buildCpsatSpec(baseArgs({
+    conflict_strategies: ["quick_30"], conflict_grades: ["1"],
+  }));
+  assertEquals(spec.grade_duration_overrides, { "1": 30 });
+  // Every grade gets a 30-min grid (multi-duration grids are per grade).
+  assert((spec.slots_by_grade_duration["1"][30] ?? []).length > 0, "expected a 30-min grid for grade 1");
+});
+
+Deno.test("quick_30 with NO conflict grades → no overrides emitted", () => {
+  const { spec } = buildCpsatSpec(baseArgs({ conflict_strategies: ["quick_30"], conflict_grades: [] }));
+  assertEquals(spec.grade_duration_overrides, undefined);
+});
+
+Deno.test("no quick_30 → no overrides even with conflict grades", () => {
+  const { spec } = buildCpsatSpec(baseArgs({ conflict_strategies: ["ab_week"], conflict_grades: ["1"] }));
+  assertEquals(spec.grade_duration_overrides, undefined);
+});
+
+// ─── specialist weekly meeting ──────────────────────────────────────────
+Deno.test("specialist_meeting → per-specialist busy windows + reduced planning budget", () => {
+  const withMeeting = buildCpsatSpec(baseArgs({
+    specialist_meeting: { day: "Tuesday", start_time: "13:15", end_time: "14:00" },
+  }));
+  const without = buildCpsatSpec(baseArgs());
+  assertEquals(withMeeting.meetingBlocks.length, 2, "one meeting block per specialist");
+  const meetingBusy = withMeeting.spec.busy.filter((b) => b.day === "Tue" && b.start === 795 && b.end === 840);
+  assertEquals(meetingBusy.length, 2, "meeting appears in busy for both specialists");
+  // 45 meeting minutes come off each specialist's planning-free budget.
+  const before = without.spec.specialists[0].planning_free_budget;
+  const after = withMeeting.spec.specialists[0].planning_free_budget;
+  assertEquals(before - after, 45);
+});
+
+Deno.test("specialist_meeting skips specialists not working that day; malformed config is a no-op", () => {
+  const partTimer = mkSpecialist("pt", "Music", { working_days: ["Mon", "Wed"] });
+  const r = buildCpsatSpec(baseArgs({
+    specialist_meeting: { day: "Tuesday", start_time: "13:15", end_time: "14:00" },
+  }, { specialists: [mkSpecialist("pe", "PE"), partTimer] }));
+  assertEquals(r.meetingBlocks.map((b) => b.specialist_id), ["pe"]);
+  const bad = buildCpsatSpec(baseArgs({ specialist_meeting: { day: "Tuesday", start_time: "14:00", end_time: "13:00" } }));
+  assertEquals(bad.meetingBlocks.length, 0, "end <= start → no meeting");
+});
+
 Deno.test("special events (wizard Events step) block EVERY specialist for their window", () => {
   // 2026-09-07 is a Monday; 2026-09-12 a Saturday (ignored); timeless events ignored.
   const events = [

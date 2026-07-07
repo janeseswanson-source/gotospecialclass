@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { FieldLabel } from '@/components/ui/field-label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, CalendarClock, AlertTriangle, Sparkles } from 'lucide-react';
+import { Plus, Trash2, CalendarClock, AlertTriangle, Sparkles, Users } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { SETUP_STEPS } from '../stepIndex';
@@ -22,20 +22,43 @@ const StepAdminRotation = () => {
   const loadedRef = useRef(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
 
+  // Weekly all-specialists meeting (schools.specialist_meeting jsonb).
+  interface MeetingCfg { day: string; start_time: string; end_time: string }
+  const [meeting, setMeeting] = useState<MeetingCfg | null>(null);
+
   useEffect(() => {
     if (!schoolId || loadedRef.current) return;
     (async () => {
       const { data: school } = await supabase
         .from('schools')
-        .select('admin_rotation')
+        .select('admin_rotation, specialist_meeting')
         .eq('id', schoolId)
         .single() as any;
       if (school?.admin_rotation) {
         updateData({ adminRotation: school.admin_rotation as any });
       }
+      const m = school?.specialist_meeting;
+      if (m?.day && m?.start_time && m?.end_time) setMeeting(m as MeetingCfg);
       loadedRef.current = true;
     })();
   }, [schoolId, updateData]);
+
+  const saveMeeting = useCallback(async (next: MeetingCfg | null) => {
+    setMeeting(next);
+    if (!schoolId) return;
+    setSaveStatus('saving');
+    const { error } = await supabase
+      .from('schools')
+      .update({ specialist_meeting: next as any } as any)
+      .eq('id', schoolId);
+    if (error) {
+      toast.error('Failed to save specialist meeting');
+      setSaveStatus('idle');
+    } else {
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
+    }
+  }, [schoolId]);
 
   const persist = useCallback(async (rotation: typeof data.adminRotation) => {
     if (!schoolId || !loadedRef.current) return;
@@ -280,6 +303,63 @@ const StepAdminRotation = () => {
             <Plus className="h-4 w-4 mr-1" /> Add Another Block
           </Button>
         )}
+
+        {/* Weekly all-specialists meeting — reserved for every specialist, no
+            classes scheduled in this window (e.g. "Specialist Meets Tue 1:15–2:00"). */}
+        <Card className="border-l-4 border-l-accent bg-muted/30">
+          <CardContent className="pt-4 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-foreground flex items-center gap-2">
+                  <Users className="h-4 w-4 text-accent" /> Specialist Weekly Meeting
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  A recurring team meeting for ALL specialists — the scheduler keeps this window free of classes.
+                </p>
+              </div>
+              {meeting && (
+                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-destructive" onClick={() => saveMeeting(null)}>
+                  <Trash2 className="h-3.5 w-3.5 mr-1" /> Remove
+                </Button>
+              )}
+            </div>
+            {meeting ? (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <FieldLabel className="text-xs mb-1 block">Day</FieldLabel>
+                  <Select value={meeting.day} onValueChange={(v) => saveMeeting({ ...meeting, day: v })}>
+                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {WEEKDAYS.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <FieldLabel className="text-xs mb-1 block">Start</FieldLabel>
+                  <Input type="time" value={meeting.start_time} onChange={(e) => saveMeeting({ ...meeting, start_time: e.target.value })} className="h-9" />
+                </div>
+                <div>
+                  <FieldLabel className="text-xs mb-1 block">End</FieldLabel>
+                  <Input
+                    type="time"
+                    value={meeting.end_time}
+                    onChange={(e) => saveMeeting({ ...meeting, end_time: e.target.value })}
+                    className={cn('h-9', meeting.start_time >= meeting.end_time && 'border-destructive')}
+                  />
+                </div>
+              </div>
+            ) : (
+              <Button variant="outline" size="sm" onClick={() => saveMeeting({ day: 'Tuesday', start_time: '13:15', end_time: '14:00' })}>
+                <Plus className="h-4 w-4 mr-1" /> Add Weekly Meeting
+              </Button>
+            )}
+            {meeting && meeting.start_time >= meeting.end_time && (
+              <p className="text-xs text-destructive flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3" /> End time must be after start time.
+              </p>
+            )}
+          </CardContent>
+        </Card>
 
         <div className="flex justify-between pt-2">
           <Button variant="outline" onClick={() => setStep(SETUP_STEPS.CONTRACTUAL_MINUTES)}>Back</Button>

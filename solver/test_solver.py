@@ -491,6 +491,73 @@ def test_extra_rotation_two_per_pair():
     assert len(solo) == 1, f"single-day pair can't be spaced, must stay at 1, got {len(solo)}"
 
 
+def test_grade_duration_override_places_30min_for_that_grade_only():
+    # quick_30: grade K overridden to 30 minutes; grade 3 keeps the specialist's 45.
+    days = ["Mon", "Tue"]
+    classes = [
+        {"teacher_id": "tk", "grade": "K", "planning_minutes": 0},
+        {"teacher_id": "t3", "grade": "3", "planning_minutes": 0},
+    ]
+    specs = [{"id": "art", "subject": "Art", "working_days": days, "grades": None, "duration": 45}]
+    sbgd = {
+        "K": {"30": _grid(days, [480, 540, 600], dur=30), "45": _grid(days, [480, 540, 600], dur=45)},
+        "3": {"30": _grid(days, [480, 540, 600], dur=30), "45": _grid(days, [480, 540, 600], dur=45)},
+    }
+    sol = solve({"classes": classes, "specialists": specs, "slots_by_grade_duration": sbgd,
+                 "week_labels": [None], "time_limit_s": 10,
+                 "grade_duration_overrides": {"K": 30}})
+    assert sol["status"] == "OPTIMAL", sol["status"]
+    _assert_legal(sol)
+    k = [b for b in sol["blocks"] if b["grade"] == "K"]
+    g3 = [b for b in sol["blocks"] if b["grade"] == "3"]
+    assert k and all(b["end"] - b["start"] == 30 for b in k), f"K must run 30-min sessions: {k}"
+    assert g3 and all(b["end"] - b["start"] == 45 for b in g3), f"grade 3 must keep 45: {g3}"
+
+
+def test_grade_duration_override_without_grid_is_model_invalid():
+    # An override grade with no matching-duration grid is a hard spec error,
+    # matching the existing no-silent-hole philosophy.
+    days = ["Mon"]
+    classes = [{"teacher_id": "tk", "grade": "K", "planning_minutes": 0}]
+    specs = [{"id": "art", "subject": "Art", "working_days": days, "grades": None, "duration": 45}]
+    sbgd = {"K": {"45": _grid(days, [480, 540], dur=45)}}  # no 30-min grid
+    sol = solve({"classes": classes, "specialists": specs, "slots_by_grade_duration": sbgd,
+                 "week_labels": [None], "time_limit_s": 5,
+                 "grade_duration_overrides": {"K": 30}})
+    assert sol["status"] == "MODEL_INVALID", sol["status"]
+    assert "30-min slot grid" in sol["message"], sol["message"]
+
+
+def test_grade_day_spread_prefers_single_grade_days():
+    # 2 grades x 2 classes, ONE specialist, 2 days, exactly 2 slots/day. With
+    # grade_day_spread active the only zero-penalty layout groups each grade
+    # onto its own day (beating subject_day_clustering's pull to mix).
+    days = ["Mon", "Tue"]
+    classes = [
+        {"teacher_id": "t1a", "grade": "1", "planning_minutes": 0},
+        {"teacher_id": "t1b", "grade": "1", "planning_minutes": 0},
+        {"teacher_id": "t2a", "grade": "2", "planning_minutes": 0},
+        {"teacher_id": "t2b", "grade": "2", "planning_minutes": 0},
+    ]
+    specs = [{"id": "art", "subject": "Art", "working_days": days, "grades": None, "duration": 45}]
+    slots = {"1": _grid(days, [480, 540]), "2": _grid(days, [480, 540])}
+    # full_week_coverage (+100/grade touching every day) is zeroed: with one
+    # specialist it would trivially force mixing and mask the cluster-vs-spread
+    # interaction this test pins down (real schools reach full-week via multiple
+    # specialists while each still teaches one grade per day).
+    sol = solve({"classes": classes, "specialists": specs, "slots_by_grade": slots,
+                 "week_labels": [None], "time_limit_s": 10,
+                 "weights": {"full_week_coverage": 0}})
+    assert sol["status"] == "OPTIMAL", sol["status"]
+    _assert_legal(sol)
+    assert len(sol["blocks"]) == 4, sol["blocks"]
+    grades_by_day = {}
+    for b in sol["blocks"]:
+        grades_by_day.setdefault(b["day"], set()).add(b["grade"])
+    for day, gs in grades_by_day.items():
+        assert len(gs) == 1, f"{day} mixes grades {gs} - grade_day_spread should group same-grade days"
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:

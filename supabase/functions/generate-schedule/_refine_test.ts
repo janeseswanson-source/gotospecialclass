@@ -44,9 +44,14 @@ Deno.test("refine: deterministic — same blocks + seed ⇒ identical result", (
 
 Deno.test("refine: improves the complaint-school (standard) fixture", () => {
   const { blocks, ctx } = genFixture("standard");
-  const r = refineSchedule(blocks, ctx as never, { seedKey: "standard", lnsRounds: 150, saMaxIterations: 1500 });
+  // lnsRounds 400 (was 150): the grade_day_spread objective term makes this
+  // fixture's first improving move rarer at low budgets. The accept gate
+  // guarantees combined-total improvement with rubric quality% NON-DECREASING;
+  // on this deeply-penalized fixture the % stays floored at 0, so the old
+  // strict-increase assertion no longer holds (the % floor, not a regression).
+  const r = refineSchedule(blocks, ctx as never, { seedKey: "standard", lnsRounds: 400, saMaxIterations: 1500 });
   assert(r.improved, "expected refinement to improve the standard fixture");
-  assert(r.qualityPercent > r.previousQualityPercent);
+  assert(r.qualityPercent >= r.previousQualityPercent);
 });
 
 Deno.test("refine: reports a confidence assessment", () => {

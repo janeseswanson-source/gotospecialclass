@@ -43,6 +43,7 @@ school's learned weights drive it, scaled ×20 so all coefficients are integer:
   - k_grade_after_780       : Kindergarten sessions starting at/after 13:00
   + full_week_coverage      : a grade with a session on every schedulable weekday
   - grade_cohesion          : days a grade spans beyond ceil(sessions / 2)
+  - grade_day_spread        : distinct grades a specialist teaches per day beyond 1
   - contract_min            : minutes short of a contractual (grade, subject) min
   - cart_back_to_back       : a cart specialist teaching back-to-back sessions
   - spec_dayload_stdev      : per-specialist day-load imbalance (MAD linearization)
@@ -99,6 +100,10 @@ class Weights:
     full_week: float = 100       # full_week_coverage
     cart: float = 5              # cart_back_to_back
     grade_cohesion: float = 4
+    # Distinct grades a specialist teaches per day beyond 1. MUST exceed cluster
+    # (15): a day with N sessions across d grades costs cluster·(N−d) +
+    # spread·(d−1), so any spread < cluster makes MORE grades per day cheaper.
+    grade_day_spread: float = 20
     contract_min: float = 0.05
     dayload: float = 1           # spec_dayload_stdev (MAD proxy)
     teacher_planning: float = 0.05
@@ -149,6 +154,9 @@ class Spec:
     sessions_per_pair: int = 1   # max sessions of one (class, specialist) pair
     min_sessions_per_pair: int = 0  # HARD floor per placeable pair (0 = off)
     keep_grades_together: bool = True
+    # quick_30: {grade: minutes} — sessions for these grades run at this length
+    # regardless of the specialist's own duration (see pair_duration).
+    grade_duration_overrides: dict[str, int] = field(default_factory=dict)
     cart_buffer: int = 15        # a cart move within this many minutes = back-to-back
     weights: Weights = field(default_factory=Weights)
     time_limit_s: float = 30.0
@@ -184,6 +192,12 @@ def _parse_slots(lst: list) -> list[Slot]:
     return [Slot(s["day"], int(s["start"]), int(s["end"])) for s in lst]
 
 
+def pair_duration(spec: "Spec", s: dict, grade: str) -> int:
+    """Session length for a (class-in-grade, specialist) pair: the grade's
+    quick_30 override wins, else the specialist's own duration, else 45."""
+    return int(spec.grade_duration_overrides.get(grade) or s.get("duration") or 45)
+
+
 def _spec_from_dict(d: dict) -> Spec:
     w = d.get("weights", {}) or {}
 
@@ -202,6 +216,7 @@ def _spec_from_dict(d: dict) -> Spec:
         full_week=wv("full_week_coverage", "full_week", default=100),
         cart=wv("cart_back_to_back", "cart", default=5),
         grade_cohesion=wv("grade_cohesion", default=4),
+        grade_day_spread=wv("grade_day_spread", default=20),
         contract_min=wv("contract_min", default=0.05),
         dayload=wv("spec_dayload_stdev", "dayload", default=1),
         teacher_planning=wv("teacher_planning", default=0.05),
@@ -231,6 +246,7 @@ def _spec_from_dict(d: dict) -> Spec:
         sessions_per_pair=int(d.get("sessions_per_pair", 1) or 1),
         min_sessions_per_pair=int(d.get("min_sessions_per_pair", 0) or 0),
         keep_grades_together=bool(d.get("keep_grades_together", True)),
+        grade_duration_overrides={str(g): int(v) for g, v in (d.get("grade_duration_overrides") or {}).items() if int(v or 0) > 0},
         cart_buffer=int(d.get("cart_buffer", 15) or 15),
         weights=weights,
         time_limit_s=float(d.get("time_limit_s", 30.0)),
@@ -368,7 +384,7 @@ def _solve(spec: Spec, enforce_floor: bool = True) -> Solution:
             sid = s["id"]
             if not _can_teach(s, grade):
                 continue
-            dur = int(s.get("duration") or 45)
+            dur = pair_duration(spec, s, grade)
             work = set(s.get("working_days") or DAYS)
             rotation = s.get("grade_rotation")
             slist = slots_for(grade, dur)
@@ -519,7 +535,7 @@ def _solve(spec: Spec, enforce_floor: bool = True) -> Solution:
             for s in spec.specialists:
                 if not _can_teach(s, grade_by_teacher[t]):
                     continue
-                dur = int(s.get("duration") or 45)
+                dur = pair_duration(spec, s, grade_by_teacher[t])
                 ns = n_sessions.get((t, s["id"]))
                 if ns is not None:
                     terms.append(dur * ns)
@@ -606,6 +622,32 @@ def _solve(spec: Spec, enforce_floor: bool = True) -> Solution:
             extra = model.NewIntVar(0, ndays, f"gce_{grade}")
             model.Add(extra >= days_used - ideal)
             obj.append(-c * extra)
+
+    # − grade_day_spread: distinct grades a specialist teaches per day beyond 1
+    #   ("Grade 5 then 4 then K then 2 on Monday" — coordinators want same-grade
+    #   days). Big-Group nonlead members share the lead's grade, so the OR over
+    #   assignment lits can't double-count. Same gate as grade_cohesion.
+    if spec.keep_grades_together and W.grade_day_spread > 0:
+        c = W.coef("grade_day_spread")
+        by_spec_day: dict[tuple, dict[str, list]] = {}
+        for key, b in present.items():
+            slot = key_slot[key]
+            by_spec_day.setdefault((key[1], slot.day), {}).setdefault(key_grade[key], []).append(b)
+        for (sid, day), by_grade in by_spec_day.items():
+            if len(by_grade) < 2:
+                continue  # a single reachable grade can never spread
+            g_on = []
+            for grade, vars_ in by_grade.items():
+                u = model.NewBoolVar(f"gds_{sid}_{day}_{grade}")
+                # Upward implication only: any assignment forces u=1; the penalty
+                # pushes u down to 0 otherwise. (Two-sided channeling measurably
+                # slowed optimality proofs without changing the optimum.)
+                for b in vars_:
+                    model.AddImplication(b, u)
+                g_on.append(u)
+            spread = model.NewIntVar(0, len(g_on), f"gdsn_{sid}_{day}")
+            model.Add(spread >= sum(g_on) - 1)
+            obj.append(-c * spread)
 
     # − contract_min: minutes short of a contractual (grade, subject) minimum
     if W.contract_min > 0 and spec.contract_subjects:
@@ -740,14 +782,17 @@ def _solve(spec: Spec, enforce_floor: bool = True) -> Solution:
             if budget is None or required <= 0:
                 continue
             sid = s["id"]
-            dur = int(s.get("duration") or 45)
-            tvars = [b for key, b in present.items()
+            # Slot-derived minutes (end - start per candidate) — exact even when
+            # grade_duration_overrides give one specialist mixed session lengths.
+            pairs = [(key_slot[key].end - key_slot[key].start, b)
+                     for key, b in present.items()
                      if key[1] == sid
                      and (key[0], sid, key[2], key_slot[key].day, key_slot[key].start) not in nonlead]
-            if not tvars:
+            if not pairs:
                 continue
-            teaching = model.NewIntVar(0, dur * len(tvars), f"teach_{sid}")
-            model.Add(teaching == dur * sum(tvars))
+            max_teaching = sum(size for size, _ in pairs)
+            teaching = model.NewIntVar(0, max_teaching, f"teach_{sid}")
+            model.Add(teaching == sum(size * b for size, b in pairs))
             met = model.NewBoolVar(f"plmet_{sid}")
             model.Add(teaching <= int(budget) - required).OnlyEnforceIf(met)
             obj.append(c * met)

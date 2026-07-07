@@ -32,6 +32,7 @@ export interface ScoreBreakdown {
   spec_dayload_stdev: number;
   class_repeats: number;
   grade_cohesion: number;
+  grade_day_spread: number;
   contract_min: number;
   subject_gap: number;
   subject_day_clustering: number;
@@ -100,6 +101,12 @@ export const DEFAULT_WEIGHTS: Record<keyof ScoreBreakdown, number> = {
   class_repeats: -25,
   // Soft nudges: keep < cart penalty so they never dominate hard constraints.
   grade_cohesion: -4,    // per extra day a grade spans beyond its cohesion target
+  // Per extra DISTINCT GRADE a specialist teaches on one day beyond the first —
+  // the "Grade 5 then 4 then K then 2 on Monday" complaint. MUST exceed the
+  // 15/dupe subject_day_clustering penalty: for a day with N sessions across d
+  // grades the combined cost is 15·(N−d) + w·(d−1), so any w < 15 makes MORE
+  // grades per day strictly cheaper and the term would be self-defeating.
+  grade_day_spread: -20,
   contract_min: -0.05,   // per minute short on contractual subject/teacher minimums
   // Phase 4: verifier-aligned penalties.
   subject_gap: -40,            // per (grade, specialist) pair with zero sessions
@@ -228,6 +235,25 @@ export function scoreSchedule(
     }
   }
 
+  // 9b. Grade-day spread: per (specialist, day), each DISTINCT teaching grade
+  // beyond the first — a specialist bouncing 5 → 4 → K → 2 in one day is what
+  // coordinators call "grades not together". Reserved pseudo-grades (Lunch /
+  // Planning / Makeup) and whole-school "All" blocks (lunch clubs) don't count.
+  // Same keep_grades_together gate as cohesion (same user intent).
+  let gradeDaySpread = 0;
+  if (input.school?.keep_grades_together !== false) {
+    const NON_GRADES = new Set(["lunch", "planning", "makeup", "all", ""]);
+    const gradesBySpecDay = new Map<string, Set<string>>();
+    for (const b of blocks) {
+      if (!b.specialist_id) continue;
+      const g = String(b.grade ?? "").trim();
+      if (NON_GRADES.has(g.toLowerCase())) continue;
+      const key = `${b.specialist_id}|${b.day_of_week}`;
+      (gradesBySpecDay.get(key) ?? gradesBySpecDay.set(key, new Set()).get(key)!).add(g);
+    }
+    for (const set of gradesBySpecDay.values()) gradeDaySpread += Math.max(0, set.size - 1);
+  }
+
   // 10. Contract minimums: compute shortfall minutes directly from
   // school.contractual_minutes_extracted so the optimizer sees them
   // every iteration (post-gen warnings are emitted only once).
@@ -336,6 +362,7 @@ export function scoreSchedule(
     spec_dayload_stdev: avgStdev * w.spec_dayload_stdev,
     class_repeats: classRepeats * w.class_repeats,
     grade_cohesion: cohesionExtraDays * w.grade_cohesion,
+    grade_day_spread: gradeDaySpread * w.grade_day_spread,
     contract_min: contractShortfallMin * w.contract_min,
     subject_gap: subjectGapPairs * w.subject_gap,
     subject_day_clustering: dayClusterDupes * w.subject_day_clustering,

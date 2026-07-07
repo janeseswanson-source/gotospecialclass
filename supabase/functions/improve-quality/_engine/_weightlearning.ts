@@ -58,6 +58,7 @@ const TERM_LABEL: Partial<Record<WeightKey, string>> = {
   k_grade_after_780: "late-day Kindergarten classes",
   cart_back_to_back: "cart back-to-back moves",
   grade_cohesion: "grade-day cohesion",
+  grade_day_spread: "same-day grade mixing",
   contract_min: "contractual minutes",
   spec_dayload_stdev: "specialist day-load balance",
   teacher_planning: "teacher planning minutes",

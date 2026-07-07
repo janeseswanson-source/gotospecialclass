@@ -303,3 +303,48 @@ Deno.test("OccupancyTracker: overlapping interval (diff start) is not free", () 
   assertEquals(t.isSpecialistFree("Mon", 480, 525, "s1"), true);  // earlier slot free
   assertEquals(t.getSpecialistDayCount("Mon", "s1"), 1);
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// Per-grade transitions + specialist weekly meeting (Jane's KK3 feedback)
+// ──────────────────────────────────────────────────────────────────────
+import { buildTimeSlotsForGrade, reserveSpecialistMeetingBlocks } from "./index.ts";
+
+Deno.test("buildTimeSlotsForGrade: grade_time_config passingTime overrides the canonical step", () => {
+  // 30-min K classes with 5-min switches → slots every 35 min; grade 1 (no
+  // override) keeps the canonical 50-min step.
+  const gtc = { K: { passingTime: 5 } };
+  const k = buildTimeSlotsForGrade("K", 30, 480, 660, 5, 15, gtc, [], 50);
+  assertEquals(k.map((s) => s.start), [480, 515, 550, 585, 620]);
+  const g1 = buildTimeSlotsForGrade("1", 45, 480, 660, 5, 15, gtc, [], 50);
+  assertEquals(g1.map((s) => s.start), [480, 530, 580]);
+});
+
+Deno.test("buildTimeSlotsForGrade: no gtc entry → behavior unchanged (canonical step)", () => {
+  const withEmpty = buildTimeSlotsForGrade("2", 45, 480, 700, 5, 15, {}, [], 50);
+  const withOtherGrade = buildTimeSlotsForGrade("2", 45, 480, 700, 5, 15, { K: { passingTime: 5 } }, [], 50);
+  assertEquals(withEmpty, withOtherGrade);
+});
+
+Deno.test("reserveSpecialistMeetingBlocks: one block per specialist working that day", () => {
+  const school = { specialist_meeting: { day: "Tuesday", start_time: "13:15", end_time: "14:00" } };
+  const specialists = [
+    { id: "a", name: "A", subject: "Art", working_days: ["Mon", "Tue", "Wed", "Thu", "Fri"] },
+    { id: "b", name: "B", subject: "PE", working_days: ["Mon", "Wed"] }, // not in Tue
+  ] as any[];
+  const blocks = reserveSpecialistMeetingBlocks("g1", specialists, school);
+  assertEquals(blocks.length, 1);
+  assertEquals(blocks[0].specialist_id, "a");
+  assertEquals(blocks[0].day_of_week, "Tue");
+  assertEquals(blocks[0].subject, "Specialist Meeting");
+  assertEquals(blocks[0].grade, "Planning");
+  assertEquals(blocks[0].start_time, "13:15");
+  assertEquals(blocks[0].end_time, "14:00");
+});
+
+Deno.test("reserveSpecialistMeetingBlocks: malformed / missing config is a no-op", () => {
+  const specialists = [{ id: "a", name: "A", subject: "Art", working_days: ["Tue"] }] as any[];
+  assertEquals(reserveSpecialistMeetingBlocks("g", specialists, {}).length, 0);
+  assertEquals(reserveSpecialistMeetingBlocks("g", specialists, { specialist_meeting: null }).length, 0);
+  assertEquals(reserveSpecialistMeetingBlocks("g", specialists, { specialist_meeting: { day: "Tuesday", start_time: "14:00", end_time: "13:00" } }).length, 0);
+  assertEquals(reserveSpecialistMeetingBlocks("g", specialists, { specialist_meeting: { day: "Funday", start_time: "13:00", end_time: "14:00" } }).length, 0);
+});

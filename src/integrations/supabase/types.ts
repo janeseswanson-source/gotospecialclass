@@ -1217,6 +1217,7 @@ export type Database = {
           setup_complete: boolean | null
           setup_step: number | null
           setup_time: number | null
+          specialist_meeting: Json | null
           start_time: string | null
           suggest_extra_plt: boolean
           updated_at: string
@@ -1276,6 +1277,7 @@ export type Database = {
           setup_complete?: boolean | null
           setup_step?: number | null
           setup_time?: number | null
+          specialist_meeting?: Json | null
           start_time?: string | null
           suggest_extra_plt?: boolean
           updated_at?: string
@@ -1335,6 +1337,7 @@ export type Database = {
           setup_complete?: boolean | null
           setup_step?: number | null
           setup_time?: number | null
+          specialist_meeting?: Json | null
           start_time?: string | null
           suggest_extra_plt?: boolean
           updated_at?: string

@@ -16,7 +16,7 @@ import {
   DAYS, timeToMinutes, getEndMinForDay, getRecessWindowsForDay, buildTimeSlotsForGrade,
   schoolCanonicalStep, specClassDuration, canSpecialistTeachGradeOnDay, OccupancyTracker,
   generateAdminRotationBlocks, generatePlusRotationBlocks, reserveSpecialistLunchBlocks,
-  addMakeupBlocks, generateLunchClubBlocks, generateEventPlanningBlocks,
+  reserveSpecialistMeetingBlocks, addMakeupBlocks, generateLunchClubBlocks, generateEventPlanningBlocks,
   type Block, type Specialist, type Teacher, type Club,
 } from "./_engine/index.ts";
 import { DEFAULT_WEIGHTS, type ScoreBreakdown } from "./_engine/_scoring.ts";
@@ -55,6 +55,9 @@ export interface CpsatSpec {
   sessions_per_pair: number;
   min_sessions_per_pair: number;
   keep_grades_together: boolean;
+  /** quick_30: {grade: minutes} — these grades' sessions run at this duration
+   *  regardless of the specialist's own class length (solver pair_duration). */
+  grade_duration_overrides?: Record<string, number>;
   weights: Record<string, number>;
   time_limit_s: number;
 }
@@ -64,6 +67,8 @@ export interface BuildSpecResult {
   adminBlocks: Block[];
   plusBlocks: Block[];
   lunchBlocks: Block[];
+  /** Weekly all-specialists meeting reservations (schools.specialist_meeting). */
+  meetingBlocks: Block[];
   strategies: string[];
 }
 
@@ -165,10 +170,22 @@ export function buildCpsatSpec(args: BuildSpecArgs): BuildSpecResult {
   const defaultDur = (school.class_duration && school.class_duration > 0) ? school.class_duration : 45;
 
   // Fixed blocks that occupy specialist/grade time (parity with generate-schedule,
-  // which bundles admin + PLUS + lunch into every saved generation).
+  // which bundles admin + PLUS + lunch + meeting into every saved generation).
   const adminBlocks = generateAdminRotationBlocks("cpsat", school);
   const plusBlocks = generatePlusRotationBlocks("cpsat", specialists, school);
   const lunchBlocks = reserveSpecialistLunchBlocks("cpsat", specialists, recessConfigs, school);
+  const meetingBlocks = reserveSpecialistMeetingBlocks("cpsat", specialists, school);
+  // Meeting outranks PLUS/lunch: drop a lower-priority reserved block that
+  // overlaps it (parity with generate-schedule's occupancy dedup).
+  if (meetingBlocks.length > 0) {
+    const overlapsMeeting = (b: Block) =>
+      meetingBlocks.some((m) =>
+        m.specialist_id === b.specialist_id && m.day_of_week === b.day_of_week &&
+        (timeToMinutes(b.start_time) ?? 0) < (timeToMinutes(m.end_time) ?? 0) &&
+        (timeToMinutes(m.start_time) ?? 0) < (timeToMinutes(b.end_time) ?? 0));
+    for (let i = plusBlocks.length - 1; i >= 0; i--) if (overlapsMeeting(plusBlocks[i])) plusBlocks.splice(i, 1);
+    for (let i = lunchBlocks.length - 1; i >= 0; i--) if (overlapsMeeting(lunchBlocks[i])) lunchBlocks.splice(i, 1);
+  }
 
   // PLC/Admin grade-range locks → per (grade,day) intervals to drop covered slots.
   const lockIntervals: Record<string, Array<[number, number]>> = {};
@@ -177,21 +194,34 @@ export function buildCpsatSpec(args: BuildSpecArgs): BuildSpecResult {
     (lockIntervals[`${ab.grade}:${ab.day_of_week}`] ??= []).push([timeToMinutes(ab.start_time) ?? 0, timeToMinutes(ab.end_time) ?? 0]);
   }
 
-  // PLUS + specialist lunch → `busy` so CP-SAT schedules the rotation around them.
-  // Special events (assemblies, photos…) block EVERY specialist for their window —
-  // parity with generate-schedule's occupancy booking of the same events.
+  // PLUS + specialist lunch + weekly meeting → `busy` so CP-SAT schedules the
+  // rotation around them. Special events (assemblies, photos…) block EVERY
+  // specialist for their window — parity with generate-schedule's occupancy.
   const busy = [
-    ...[...plusBlocks, ...lunchBlocks]
+    ...[...plusBlocks, ...lunchBlocks, ...meetingBlocks]
       .filter((b) => b.specialist_id)
       .map((b) => ({ specialist_id: b.specialist_id as string, day: b.day_of_week, start: timeToMinutes(b.start_time) ?? 0, end: timeToMinutes(b.end_time) ?? 0 })),
     ...specialEventBusy(args.specialEvents, specialists),
   ];
+
+  const strategies = resolveStrategies(school);
+
+  // quick_30: the SELECTED conflict grades run 30-minute classes (exactly what
+  // the wizard promises). Emitted as grade_duration_overrides so the solver
+  // sizes those (class, specialist) sessions at 30 regardless of the
+  // specialist's own duration; durations composes with week_labels untouched.
+  const quick30Grades = strategies.includes("quick_30")
+    ? ((school.conflict_grades ?? []) as string[]).filter((g) => grades.includes(g))
+    : [];
+  const grade_duration_overrides: Record<string, number> = {};
+  for (const g of quick30Grades) grade_duration_overrides[g] = 30;
 
   // Per-duration slot grids: every distinct specialist class length gets its own
   // grid per grade so a 30-min quick-30 specialist and a 45-min specialist can
   // share a grade with NO silent hole (solver errors MODEL_INVALID otherwise).
   const durations = new Set<number>([defaultDur]);
   for (const s of specialists) durations.add(specClassDuration(s, defaultDur));
+  if (quick30Grades.length > 0) durations.add(30); // override grades need a 30-min grid
 
   const slots_by_grade_duration: Record<string, Record<number, SolverSlot[]>> = {};
   for (const grade of grades) {
@@ -212,7 +242,6 @@ export function buildCpsatSpec(args: BuildSpecArgs): BuildSpecResult {
     }
   }
 
-  const strategies = resolveStrategies(school);
   // A/B and AA/BB spread the rotation across two disjoint timelines. AA/BB uses its
   // own opaque labels; the 2-consecutive-week cadence is a calendar-mapping concern.
   const week_labels: (string | null)[] = strategies.includes("aa_bb_week") ? ["AA", "BB"]
@@ -236,13 +265,15 @@ export function buildCpsatSpec(args: BuildSpecArgs): BuildSpecResult {
   for (const b of lunchBlocks) if (b.specialist_id) lunchMinBySpec.set(b.specialist_id, (lunchMinBySpec.get(b.specialist_id) ?? 0) + ((timeToMinutes(b.end_time) ?? 0) - (timeToMinutes(b.start_time) ?? 0)));
   const plusMinBySpec = new Map<string, number>();
   for (const b of plusBlocks) if (b.specialist_id) plusMinBySpec.set(b.specialist_id, (plusMinBySpec.get(b.specialist_id) ?? 0) + ((timeToMinutes(b.end_time) ?? 0) - (timeToMinutes(b.start_time) ?? 0)));
+  const meetingMinBySpec = new Map<string, number>();
+  for (const b of meetingBlocks) if (b.specialist_id) meetingMinBySpec.set(b.specialist_id, (meetingMinBySpec.get(b.specialist_id) ?? 0) + ((timeToMinutes(b.end_time) ?? 0) - (timeToMinutes(b.start_time) ?? 0)));
 
   const specialistsSpec: SolverSpecialist[] = specialists.map((s) => {
     const dur = specClassDuration(s, defaultDur);
     const workDays = shortDays(s.working_days).filter((d) => DAYS.includes(d));
     let available = 0;
     for (const d of workDays) available += Math.max(0, getEndMinForDay(d, school) - startMin);
-    const budget = Math.max(0, available - (lunchMinBySpec.get(s.id) ?? 0) - (plusMinBySpec.get(s.id) ?? 0));
+    const budget = Math.max(0, available - (lunchMinBySpec.get(s.id) ?? 0) - (plusMinBySpec.get(s.id) ?? 0) - (meetingMinBySpec.get(s.id) ?? 0));
     const workDayCount = workDays.length || DAYS.length;
     const perDayDefault = s.planning_minutes ?? school.planning_minutes ?? 0;
     const requiredPlanning = (s.is_part_time && s.part_time_planning_minutes != null)
@@ -271,7 +302,9 @@ export function buildCpsatSpec(args: BuildSpecArgs): BuildSpecResult {
 
   const fixed = deriveBigGroupFixed({
     school, specialists, teachers, recessConfigs, strategies,
-    adminBlocks, plusBlocks, lunchBlocks, defaultDur, startMin, passing, setup, gtc, step,
+    // Meeting blocks join the pre-seed so a Big-Group session can't land on the
+    // weekly meeting window.
+    adminBlocks, plusBlocks: [...plusBlocks, ...meetingBlocks], lunchBlocks, defaultDur, startMin, passing, setup, gtc, step,
     weekLabel: week_labels[0],
   });
 
@@ -286,10 +319,11 @@ export function buildCpsatSpec(args: BuildSpecArgs): BuildSpecResult {
     sessions_per_pair,
     min_sessions_per_pair: 1, // demand full coverage; solver soft-retries on a capacity wall
     keep_grades_together: school.keep_grades_together !== false,
+    ...(quick30Grades.length > 0 ? { grade_duration_overrides } : {}),
     weights: mergeWeights(args.learnedWeights),
     time_limit_s: typeof args.timeLimitS === "number" ? args.timeLimitS : 60,
   };
-  return { spec, adminBlocks, plusBlocks, lunchBlocks, strategies };
+  return { spec, adminBlocks, plusBlocks, lunchBlocks, meetingBlocks, strategies };
 }
 
 /** Derive Big-Group "taught-together" fixed sessions from big_group_config, the

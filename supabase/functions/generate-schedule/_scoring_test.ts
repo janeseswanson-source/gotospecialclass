@@ -276,3 +276,43 @@ Deno.test("scoreSchedule: subject_day_clustering penalises duplicate (grade, sub
   assertEquals(scoreSchedule(spread, baseInput).breakdown.subject_day_clustering, 0);
 });
 
+
+// ─── grade_day_spread (same-day grade mixing) ────────────────────────
+Deno.test("scoreSchedule: grade_day_spread penalises a specialist teaching multiple grades one day", () => {
+  const mixed: ScoreableResult = {
+    blocks: [
+      block({ grade: "K", start_time: "09:00", end_time: "09:30" }),
+      block({ grade: "1", start_time: "10:00", end_time: "10:30", teacher_id: "t2" }),
+    ] as any,
+    warnings: [], preferenceViolations: [],
+  };
+  const clustered: ScoreableResult = {
+    blocks: [
+      block({ grade: "K", start_time: "09:00", end_time: "09:30" }),
+      block({ grade: "K", start_time: "10:00", end_time: "10:30", teacher_id: "t2" }),
+    ] as any,
+    warnings: [], preferenceViolations: [],
+  };
+  const m = scoreSchedule(mixed, baseInput);
+  const c = scoreSchedule(clustered, baseInput);
+  assertEquals(m.breakdown.grade_day_spread, -20, "2 grades on one specialist-day = 1 extra × −20");
+  assertEquals(c.breakdown.grade_day_spread, 0, "one grade per day = no spread");
+});
+
+Deno.test("scoreSchedule: grade_day_spread gated off by keep_grades_together=false; reserved grades excluded", () => {
+  const mixed: ScoreableResult = {
+    blocks: [
+      block({ grade: "K" }),
+      block({ grade: "1", start_time: "10:00", end_time: "10:30", teacher_id: "t2" }),
+      // Reserved pseudo-grades + whole-school club blocks never count.
+      block({ grade: "Lunch", start_time: "11:30", end_time: "12:00", teacher_id: null }),
+      block({ grade: "Planning", start_time: "13:00", end_time: "13:45", teacher_id: null }),
+      block({ grade: "All", start_time: "12:00", end_time: "12:20", teacher_id: null }),
+    ] as any,
+    warnings: [], preferenceViolations: [],
+  };
+  const gatedOff = scoreSchedule(mixed, { ...baseInput, school: { ...baseInput.school, keep_grades_together: false } });
+  assertEquals(gatedOff.breakdown.grade_day_spread, 0, "gate off → no penalty");
+  const gatedOn = scoreSchedule(mixed, baseInput);
+  assertEquals(gatedOn.breakdown.grade_day_spread, -20, "K+1 = 1 extra; Lunch/Planning/All ignored");
+});

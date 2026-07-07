@@ -679,25 +679,32 @@ export function validateContractualTeachers(
 // boundary — preventing the 5/10-minute drift that produced rows like
 // 7:50, 8:05, 8:10, 8:15 instead of clean 7:45 → 8:30 → 9:15 …
 // `canonicalStep` is required; callers compute it once from school
-// settings. `defaultSetupTime`/`gradeTimeConfig` are kept on the
-// signature for back-compat with other callers that still pass them.
+// settings. A per-grade passingTime override in `gradeTimeConfig`
+// (School Info → per-grade overrides) takes precedence: that grade's
+// slots advance by duration + its own passing time — the explicit
+// opt-out of the canonical grid that lets 30-min K classes run
+// back-to-back with 5-min switches while other grades keep the
+// standard spacing. (resetTime is still unused — documented gap.)
 export function buildTimeSlotsForGrade(
-  _grade: string,
+  grade: string,
   classDuration: number,
   startMin: number,
   endMin: number,
   _defaultPassingTime: number,
   _defaultSetupTime: number,
-  _gradeTimeConfig: Record<string, { passingTime?: number; resetTime?: number }>,
+  gradeTimeConfig: Record<string, { passingTime?: number; resetTime?: number }>,
   recessWindows: RecessWindow[],
   canonicalStep?: number,
 ): TimeSlot[] {
+  const gradePassing = gradeTimeConfig?.[grade]?.passingTime;
   // Fall back to the legacy per-subject step ONLY if a canonical step
   // wasn't supplied (defensive — every production caller passes one).
   const step =
-    canonicalStep && canonicalStep > 0
-      ? canonicalStep
-      : classDuration + (_defaultPassingTime ?? 0);
+    typeof gradePassing === "number" && gradePassing >= 0
+      ? classDuration + gradePassing
+      : canonicalStep && canonicalStep > 0
+        ? canonicalStep
+        : classDuration + (_defaultPassingTime ?? 0);
 
   const slots: TimeSlot[] = [];
   let cursor = startMin;
@@ -1408,11 +1415,12 @@ function generateQuick30(
 
     const r = assignDay(
       day, orderedGT, specialists, occupancy, generationId,
-      // Quick 30: shorten EVERY grade to 30 minutes (not just conflict grades).
-      // If a coordinator picks this strategy with no conflict grades flagged,
-      // the previous behaviour silently fell back to the default duration,
-      // which made the chosen strategy invisible in the output.
-      () => 30,
+      // Quick 30: SELECTED conflict grades get 30-minute sessions; everyone else
+      // keeps the school default — exactly what the wizard promises ("Which
+      // grades get 30-minute sessions?"). With no conflict grades flagged the
+      // strategy shortens every grade, so picking it is never a silent no-op
+      // (the orchestrator normally routes to standard in that case anyway).
+      conflictSet.size > 0 ? (grade: string) => (conflictSet.has(grade) ? 30 : classDuration) : () => 30,
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), null, rotation, [...existingBlocks, ...blocks],
       canonicalStep,
@@ -1858,6 +1866,47 @@ export function reserveSpecialistLunchBlocks(
   return blocks;
 }
 
+// ─── Weekly all-specialists meeting (schools.specialist_meeting) ─────
+// One reserved block per specialist working that day — "Specialist Meets
+// Tue 1:15–2:00". Grade "Planning" keeps it out of every scoring term and
+// every refiner/annealer move set (same exclusion lunch/planning use).
+// Caveat: grade-"Planning" minutes count as planning credit in
+// validatePlanningTime/contract_min even though a staff meeting arguably
+// isn't planning — acceptable for v1; a dedicated "Meeting" grade would
+// touch every NON_TEACHING set across the engine copies.
+export function reserveSpecialistMeetingBlocks(
+  generationId: string,
+  specialists: Specialist[],
+  school: any,
+): Block[] {
+  const cfg = school?.specialist_meeting as { day?: string; start_time?: string; end_time?: string } | null;
+  if (!cfg?.day || !cfg.start_time || !cfg.end_time) return [];
+  const day = DAY_FULL_TO_SHORT[cfg.day] ?? cfg.day;
+  if (!DAYS.includes(day)) return [];
+  const start = timeToMinutes(cfg.start_time);
+  const end = timeToMinutes(cfg.end_time);
+  if (!(end > start)) return [];
+
+  const blocks: Block[] = [];
+  for (const spec of specialists) {
+    const workDays = spec.working_days ?? DAYS;
+    if (!workDays.includes(day)) continue;
+    blocks.push({
+      generation_id: generationId,
+      day_of_week: day,
+      start_time: minutesToTime(start),
+      end_time: minutesToTime(end),
+      subject: "Specialist Meeting",
+      specialist_id: spec.id,
+      teacher_id: null,
+      grade: "Planning",
+      room: null,
+      week_label: null,
+    });
+  }
+  return blocks;
+}
+
 // ─── Build blocked time ranges from events & calendar ────────────────
 function getBlockedDayTimeRanges(
   specialEvents: any[],
@@ -1910,6 +1959,7 @@ export function computePlacementReason(
   const { specialist, teacher, school, conflictGrades = [], chosenStrategy } = context;
 
   if (block.grade === "Lunch") return `Specialist lunch break`;
+  if (block.subject === "Specialist Meeting") return `Weekly specialist team meeting`;
   if (block.grade === "Planning") return `Event planning block for ${specialist?.name ?? "specialist"}`;
   if (block.grade === "Makeup") return `Makeup slot for ${specialist?.subject ?? "specials"}`;
 
@@ -2086,6 +2136,24 @@ export function generateScheduleBlocks(
     }
   }
 
+  // Weekly all-specialists meeting: reserve the window for every specialist
+  // working that day and drop any lower-priority reserved block it overlaps
+  // (meeting > PLUS > lunch) — otherwise a meeting placed over the computed
+  // lunch window would persist a genuine specialist double-book.
+  const meetingBlocks = reserveSpecialistMeetingBlocks(generationId, specialists, school);
+  if (meetingBlocks.length > 0) {
+    const overlapsMeeting = (b: Block) =>
+      meetingBlocks.some((m) =>
+        m.specialist_id === b.specialist_id && m.day_of_week === b.day_of_week &&
+        timeToMinutes(b.start_time) < timeToMinutes(m.end_time) &&
+        timeToMinutes(m.start_time) < timeToMinutes(b.end_time));
+    for (let i = plusBlocks.length - 1; i >= 0; i--) if (overlapsMeeting(plusBlocks[i])) plusBlocks.splice(i, 1);
+    for (let i = lunchBlocks.length - 1; i >= 0; i--) if (overlapsMeeting(lunchBlocks[i])) lunchBlocks.splice(i, 1);
+    for (const mb of meetingBlocks) {
+      occupancy.book(mb.day_of_week, timeToMinutes(mb.start_time), timeToMinutes(mb.end_time), mb.specialist_id!, null);
+    }
+  }
+
   // Get blocked event time ranges and merge into recess windows per day
   const blockedRanges = getBlockedDayTimeRanges(specialEvents, calendarEvents);
 
@@ -2149,7 +2217,7 @@ export function generateScheduleBlocks(
       const finalWarnings = computeWarnings(sa.blocks, specialists, grades);
       const breakdown = scoreSchedule({ blocks: sa.blocks, warnings: finalWarnings, preferenceViolations: sa.preferenceViolations }, scoringInput, weightOverrides).breakdown;
       return {
-        blocks: [...lunchBlocks, ...plusBlocks, ...sa.blocks],
+        blocks: [...lunchBlocks, ...plusBlocks, ...meetingBlocks, ...sa.blocks],
         chosenStrategy: "standard",
         attemptedStrategies: [{ strategy: "standard", error_count: 0, warning_count: 0 }],
         fallbackReason: null,
@@ -2165,7 +2233,7 @@ export function generateScheduleBlocks(
     const finalWarnings = computeWarnings(mc.best.blocks, specialists, grades);
     const breakdown = scoreSchedule({ blocks: mc.best.blocks, warnings: finalWarnings, preferenceViolations: mc.best.preferenceViolations }, scoringInput, weightOverrides).breakdown;
     return {
-      blocks: [...lunchBlocks, ...plusBlocks, ...mc.best.blocks],
+      blocks: [...lunchBlocks, ...plusBlocks, ...meetingBlocks, ...mc.best.blocks],
       chosenStrategy: "standard",
       attemptedStrategies: [{ strategy: "standard", error_count: 0, warning_count: 0 }],
       fallbackReason: null,
@@ -2312,7 +2380,7 @@ export function generateScheduleBlocks(
   ).breakdown;
 
   return {
-    blocks: [...lunchBlocks, ...plusBlocks, ...baseBlocks],
+    blocks: [...lunchBlocks, ...plusBlocks, ...meetingBlocks, ...baseBlocks],
     chosenStrategy: chosenStrategy ?? "standard",
     attemptedStrategies: attempted,
     fallbackReason,
@@ -2339,16 +2407,22 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: corsHeaders });
     }
 
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-
     // Internal service-role calls (the run-generation-job worker) skip the per-user
-    // gate; the service token they carry already bypasses RLS.
+    // gate. Build a REAL service-role client so RLS is bypassed regardless of the
+    // key format (legacy JWT vs. new sb_secret_* keys that PostgREST won't accept
+    // as a bearer JWT when only layered on top of an anon client).
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    const isInternal = !!serviceKey && authHeader.slice(7).trim() === serviceKey;
+    const token = authHeader.slice(7).trim();
+    const isInternal = !!serviceKey && token === serviceKey;
+
+    const supabase = isInternal
+      ? createClient(Deno.env.get("SUPABASE_URL")!, serviceKey!)
+      : createClient(
+          Deno.env.get("SUPABASE_URL")!,
+          Deno.env.get("SUPABASE_ANON_KEY")!,
+          { global: { headers: { Authorization: authHeader } } }
+        );
+
     let userId: string | null = null;
     if (!isInternal) {
       const { data: { user }, error: userError } = await supabase.auth.getUser();
