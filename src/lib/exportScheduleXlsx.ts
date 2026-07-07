@@ -82,7 +82,7 @@ export async function addBrandLogo(wb: ExcelJS.Workbook, ws: ExcelJS.Worksheet, 
     if (!buf) return;
     let id = logoIdByWb.get(wb);
     if (id === undefined) {
-      id = wb.addImage({ buffer: buf as unknown as Buffer, extension: "png" });
+      id = wb.addImage({ buffer: buf as any, extension: "png" });
       logoIdByWb.set(wb, id);
     }
     ws.addImage(id, {
