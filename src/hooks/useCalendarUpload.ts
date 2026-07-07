@@ -106,7 +106,14 @@ export function useCalendarUpload(schoolId: string | null) {
 
       if (parseError) {
         console.error('[CalendarParser]', parseError);
-        toast.error('AI parsing failed. You can add events manually.');
+        // Surface the server's actionable message (e.g. the 422 "couldn't read
+        // any events" guidance) instead of a generic failure line.
+        let serverMsg: string | undefined;
+        const ctx = (parseError as any)?.context;
+        if (ctx && typeof ctx.json === 'function') {
+          try { serverMsg = (await ctx.json())?.error; } catch { /* not JSON */ }
+        }
+        toast.error(serverMsg ?? 'AI parsing failed. You can add events manually.');
         setParsing(false);
         return null;
       }
@@ -121,6 +128,10 @@ export function useCalendarUpload(schoolId: string | null) {
       }));
 
       setParsing(false);
+      if (events.length === 0) {
+        toast.error("Couldn't read any events from this calendar — try uploading the PDF directly, or add events manually.");
+        return null;
+      }
       toast.success(`AI extracted ${events.length} events from your calendar`);
       return { uploadId: uploadRecord.id, events };
     } catch (err) {

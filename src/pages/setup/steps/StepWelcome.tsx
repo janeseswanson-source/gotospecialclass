@@ -4,9 +4,10 @@ import { useSetup } from '@/contexts/SetupContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { FieldLabel } from '@/components/ui/field-label';
-import { Wand2, ClipboardList, Sparkles, ListChecks, ChevronRight } from 'lucide-react';
+import { Wand2, ClipboardList, Sparkles, ListChecks, ChevronRight, FileDown } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
+import { downloadTemplate } from '@/lib/templateDownload';
 import QuickSetup from './QuickSetup';
 
 const StepWelcome = () => {
@@ -78,18 +79,29 @@ const StepWelcome = () => {
           </div>
         )}
 
-        {/* Take-in template shortcut */}
+        {/* Take-in template shortcut: download a blank one to fill in, or upload
+            a filled one and let AI pre-fill the wizard. */}
         <div className="rounded-lg border border-dashed border-border bg-muted/30 p-4 text-left">
           <div className="flex items-start gap-3">
             <ClipboardList className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-foreground">Have a filled-in take-in template?</p>
+              <p className="text-sm font-medium text-foreground">Prefer to work from a take-in template?</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                Upload the coordinator prep sheet and AI will pre-fill the wizard for you.
+                Download the blank prep sheet, fill it in (or hand it to your specialists), then upload it — AI pre-fills the wizard for you.
               </p>
-              <Button asChild variant="link" size="sm" className="mt-1 h-auto p-0 text-xs">
-                <Link to="/app/coordinator-prep">Upload take-in template →</Link>
-              </Button>
+              <div className="mt-1 flex flex-wrap items-center gap-3">
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-xs"
+                  onClick={() => downloadTemplate('coordinator_prep', '/templates/coordinator_prep_template.pdf')}
+                >
+                  <FileDown className="mr-1 h-3 w-3" /> Download blank template
+                </Button>
+                <Button asChild variant="link" size="sm" className="h-auto p-0 text-xs">
+                  <Link to="/app/coordinator-prep">Upload filled template →</Link>
+                </Button>
+              </div>
             </div>
           </div>
         </div>

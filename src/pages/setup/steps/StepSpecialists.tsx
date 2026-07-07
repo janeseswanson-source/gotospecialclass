@@ -805,7 +805,7 @@ const StepSpecialists = () => {
               <div className="flex items-center gap-3 pb-0.5 sm:col-span-3 flex-wrap">
                 <div className="flex items-center gap-1.5">
                   <Switch checked={s.usesCart} onCheckedChange={(v) => update(s.id, 'usesCart', v)} id={`cart-${s.id}`} />
-                  <FieldLabel htmlFor={`cart-${s.id}`} className="text-xs cursor-pointer" tooltip="Enable if this specialist moves between rooms with a cart (also called a Floating or Cart Teacher).">Travelling Teacher</FieldLabel>
+                  <FieldLabel htmlFor={`cart-${s.id}`} className="text-xs cursor-pointer" tooltip="Enable if this specialist moves between rooms with a cart (also called a Floating or Cart Teacher).">Traveling Teacher</FieldLabel>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Switch checked={s.twoSchools} onCheckedChange={(v) => update(s.id, 'twoSchools', v)} id={`two-${s.id}`} />

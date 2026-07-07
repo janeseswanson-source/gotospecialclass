@@ -187,13 +187,19 @@ serve(async (req) => {
       extracted = firstToolUse(resp.content as any[], "extract_contractual_minutes")?.input ?? null;
     } catch (err) {
       const { status, message } = describeAnthropicError(err);
-      return new Response(JSON.stringify({ error: message }), {
+      // Union contracts routinely exceed the ~100-page / size limit for whole-PDF
+      // parsing — translate the opaque API rejection into what to actually do.
+      const tooBig = /page|too (large|long|big)|exceed|maximum|request_too_large|413/i.test(message);
+      const friendly = tooBig
+        ? "This contract is too large to parse whole (about a 100-page limit). Upload just the pages covering planning time / duty-free minutes, or paste that section as text — or skip this step and enter the minutes manually."
+        : message;
+      return new Response(JSON.stringify({ error: friendly, code: tooBig ? "document_too_large" : undefined }), {
         status, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     if (!extracted) {
-      return new Response(JSON.stringify({ error: "AI returned no structured data" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      return new Response(JSON.stringify({ error: "The AI couldn't find planning/duty-free minutes in this document. Upload just the relevant contract pages, or skip this step and enter minutes manually." }), {
+        status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 

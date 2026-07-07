@@ -249,14 +249,20 @@ const StepContractualMinutes = () => {
       </Tabs>
 
       {(filePath || url) && tab !== 'skip' && (
-        <div className="flex items-center gap-3">
-          <Button onClick={parseWithAi} disabled={parsing} className="gap-2">
-            {parsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            {parsing ? 'Parsing…' : extracted ? 'Re-parse with AI' : 'Parse with AI'}
-          </Button>
-          {status === 'parsed' && <Badge variant="outline" className="gap-1 text-emerald-700 dark:text-emerald-400 border-emerald-500/40"><CheckCircle2 className="h-3 w-3" /> Parsed</Badge>}
-          {status === 'pending' && <Badge variant="outline">Ready to parse</Badge>}
-          {status === 'error' && <Badge variant="destructive" className="gap-1"><AlertCircle className="h-3 w-3" /> Failed</Badge>}
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-3">
+            <Button onClick={parseWithAi} disabled={parsing} className="gap-2">
+              {parsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {parsing ? 'Parsing…' : extracted ? 'Re-parse with AI' : 'Parse with AI'}
+            </Button>
+            {status === 'parsed' && <Badge variant="outline" className="gap-1 text-emerald-700 dark:text-emerald-400 border-emerald-500/40"><CheckCircle2 className="h-3 w-3" /> Parsed</Badge>}
+            {status === 'pending' && <Badge variant="outline">Ready to parse</Badge>}
+            {status === 'error' && <Badge variant="destructive" className="gap-1"><AlertCircle className="h-3 w-3" /> Failed</Badge>}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            This step is optional — if parsing fails (full union contracts are often over the ~100-page limit),
+            upload just the pages covering planning/duty-free minutes, or skip and enter minutes manually.
+          </p>
         </div>
       )}
 

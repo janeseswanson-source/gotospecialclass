@@ -60,19 +60,43 @@ serve(async (req) => {
 
     let contentForAI: any[];
 
+    // Chunked base64 (btoa on a per-byte string concat is O(n²) and blows the
+    // stack on big files; String.fromCharCode over 0x8000-byte slices is safe).
+    const toBase64 = (buf: ArrayBuffer): string => {
+      const bytes = new Uint8Array(buf);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+      }
+      return btoa(binary);
+    };
+
     if (calendar_url) {
-      // Fetch calendar from URL
+      // Fetch calendar from URL. Districts commonly link straight to a PDF —
+      // reading that with .text() feeds Claude binary garbage and yields
+      // "<UNKNOWN>" events, so branch on content-type / extension and send real
+      // PDFs as a document block instead.
       try {
         const urlResponse = await fetch(calendar_url);
         if (!urlResponse.ok) throw new Error(`Failed to fetch URL: ${urlResponse.status}`);
-        const textContent = await urlResponse.text();
+        const contentType = (urlResponse.headers.get("content-type") ?? "").toLowerCase();
+        const looksPdf = contentType.includes("pdf") || new URL(calendar_url).pathname.toLowerCase().endsWith(".pdf");
 
-        contentForAI = [
-          {
-            type: "text",
-            text: `Extract all calendar events from this school calendar content:\n\n${textContent.substring(0, 50000)}`,
-          },
-        ];
+        if (looksPdf) {
+          const base64 = toBase64(await urlResponse.arrayBuffer());
+          contentForAI = [
+            { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
+            { type: "text", text: "Extract all calendar events from this school calendar PDF." },
+          ];
+        } else {
+          const textContent = await urlResponse.text();
+          contentForAI = [
+            {
+              type: "text",
+              text: `Extract all calendar events from this school calendar content:\n\n${textContent.substring(0, 50000)}`,
+            },
+          ];
+        }
       } catch (fetchErr) {
         console.error("URL fetch error:", fetchErr);
         return new Response(JSON.stringify({ error: "Failed to fetch calendar from URL" }), {
@@ -94,14 +118,7 @@ serve(async (req) => {
         });
       }
 
-      const arrayBuffer = await fileData.arrayBuffer();
-      const bytes = new Uint8Array(arrayBuffer);
-      let binary = '';
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const base64 = btoa(binary);
-
+      const base64 = toBase64(await fileData.arrayBuffer());
       contentForAI = [
         { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } },
         { type: "text", text: "Extract all calendar events from this school calendar PDF." },
@@ -155,6 +172,25 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: message }), {
         status, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Validate: a real event needs a meaningful title AND a parseable date.
+    // Garbage extractions (binary input, unreadable scans) used to insert
+    // "<UNKNOWN>" / Invalid Date rows and report success.
+    const isValidDate = (d: unknown): d is string =>
+      typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(d));
+    extractedEvents = extractedEvents.filter((evt) => {
+      const title = (evt.title ?? "").trim();
+      if (!title || /^<?unknown>?$/i.test(title)) return false;
+      if (!isValidDate(evt.event_date)) return false;
+      if (evt.end_date && !isValidDate(evt.end_date)) evt.end_date = undefined;
+      return true;
+    });
+    if (extractedEvents.length === 0) {
+      return new Response(JSON.stringify({
+        error: "Couldn't read any events from this calendar. If you pasted a link, try uploading the PDF directly; scanned/image-only calendars may not parse — you can add events manually.",
+        code: "no_valid_events",
+      }), { status: 422, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     // Log AI usage

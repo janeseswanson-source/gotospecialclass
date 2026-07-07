@@ -1,25 +1,32 @@
-SPECIALISTS CSV — Accepted formats for the "working_days" column
+SPECIALISTS TEMPLATE — quick guide
 ==================================================================
 
-Any of the following are accepted (case-insensitive):
+Only TWO columns are required:
 
-  Mon,Tue,Wed,Thu,Fri      (comma separated — recommended)
-  Mon;Tue;Wed;Thu;Fri      (semicolons)
-  Mon Tue Wed Thu Fri      (whitespace)
-  Mon|Tue|Wed              (pipes)
-  Monday, Tuesday          (full names)
-  MWF  /  MTWRF            (single-letter codes: M T W R F)
-  Mon-Fri                  (range — expands inclusive)
-  All  /  Daily  /  Weekdays   (all 5 weekdays)
-  (blank cell)             (defaults to Mon–Fri)
+  name      the specialist's name          e.g. Swanson
+  subject   what they teach                e.g. Art, Tech, PE, Music
 
-Day code map: M=Mon, T=Tue, W=Wed, R/Th=Thu, F=Fri
+Everything else is optional — leave it blank and set the details later
+in the wizard (planning minutes, lunch, part-time, traveling cart,
+two-school itinerants, and so on all have sensible defaults).
 
-Other columns
--------------
+Optional columns
+----------------
+  working days   blank = Mon-Fri. Accepted formats (case-insensitive):
+                   Mon,Tue,Wed,Thu,Fri    (comma separated — recommended)
+                   Mon;Tue;Wed | Mon Tue Wed | Mon|Tue|Wed
+                   Monday, Tuesday        (full names)
+                   MWF / MTWRF            (letter codes: M T W R F)
+                   Mon-Fri                (range — expands inclusive)
+                   All / Daily / Weekdays (all 5 weekdays)
+                 Day code map: M=Mon, T=Tue, W=Wed, R/Th=Thu, F=Fri
+  room           room or location, e.g. D-1. May be blank.
+
+You can also add columns like phone, email, planning, lunch, cart,
+part time — the importer recognizes them, and anything it doesn't
+recognize is handled by the AI fallback.
+
+Tips
+----
 - Quote any value containing commas, e.g. "Mon,Tue,Wed".
-- Boolean columns (uses_cart, two_schools, is_part_time): yes/no, true/false, 1/0.
-- Blank numeric columns fall back to defaults (planning=45, lunch=30).
-- location may be left blank.
-
-Tip: edit in Excel or Google Sheets — quoted cells round-trip safely.
+- Edit in Excel or Google Sheets — quoted cells round-trip safely.

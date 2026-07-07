@@ -9,7 +9,7 @@ import { FieldLabel } from '@/components/ui/field-label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { X, Info, AlertTriangle, XCircle, Sparkles, GripVertical, Eye, ChevronDown, Settings, Plus } from 'lucide-react';
+import { X, Info, AlertTriangle, XCircle, CheckCircle2, Sparkles, GripVertical, Eye, ChevronDown, Settings, Plus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { getStrategyNote, getRecommendedStrategies, type StrategyContext } from '@/lib/strategyFeasibility';
@@ -712,6 +712,17 @@ const StepConflict = () => {
                     </button>
                   ))}
                 </div>
+                {/* Explicit confirmation of what the selection DOES — Jane picked
+                    K + 30-min blocks and was "not sure what happened". */}
+                {data.conflictGrades.length > 0 && (
+                  <p className="flex items-start gap-1.5 text-xs text-primary">
+                    <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span>
+                      {data.conflictGrades.join(', ')} classes will run <strong>30 minutes</strong>;
+                      all other grades keep {data.classDuration ?? 45}-minute classes.
+                    </span>
+                  </p>
+                )}
               </div>
             )}
 

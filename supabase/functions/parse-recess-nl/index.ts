@@ -58,6 +58,13 @@ Each row: {
 
 If only a start time is given for a window, infer a sensible end (recess ~15 min, lunch ~30 min). Merge mentions of the same band into one row.
 
+BARE TIMES WITHOUT AM/PM: resolve them from elementary-school context — the user
+should never have to type AM or PM. AM recess happens mid-morning (8:00–11:59),
+lunch late morning to early afternoon (10:30–13:30), PM recess after lunch
+(11:00–15:00). So "recess 9:30" → 09:30, "lunch 11:40" → 11:40, "lunch 12:10" →
+12:10, "PM recess 1:10" → 13:10, "recess at 2" → 14:00 when it's the PM recess.
+An hour of 1–5 in a lunch/PM context always means 13:00–17:00.
+
 Return STRICT JSON only, shape: {"rows": [ ... ]}. No prose, no markdown fences.
 
 USER DESCRIPTION:
