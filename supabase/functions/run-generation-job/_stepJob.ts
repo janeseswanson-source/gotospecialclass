@@ -24,6 +24,12 @@ export const WALL_MS = 10 * 60 * 1000;
 export const MAX_SEARCH_ATTEMPTS = 3;
 export const REFINE_NOIMPROVE_LIMIT = 2;
 export const TARGET_QUALITY = 99;
+/** Below this quality % the pipeline does NOT settle: refine convergence grants
+ *  a bounded number of rescue rounds (fresh seeds) instead of completing. A
+ *  structurally-limited verdict still stops immediately — no seed fixes a
+ *  capacity wall. */
+export const QUALITY_FLOOR = 85;
+export const MAX_RESCUE_ROUNDS = 4;
 
 /** Client-facing progress (same shape as GenProgress in src/lib/generateBestSchedule). */
 export interface JobProgress {
@@ -36,6 +42,8 @@ export interface JobProgress {
   searchAttempt: number;
   refinePass: number;
   noImproveStreak: number;
+  /** Quality-floor rescue rounds consumed (see QUALITY_FLOOR). */
+  rescueRound: number;
   elapsedMs: number;
 }
 
@@ -103,6 +111,7 @@ function normalizeProgress(p: Partial<JobProgress> | null | undefined): JobProgr
     searchAttempt: p?.searchAttempt ?? 0,
     refinePass: p?.refinePass ?? 0,
     noImproveStreak: p?.noImproveStreak ?? 0,
+    rescueRound: p?.rescueRound ?? 0,
     elapsedMs: p?.elapsedMs ?? 0,
   };
 }
@@ -206,7 +215,18 @@ export async function stepJob(job: JobRow, deps: StepDeps): Promise<StepResult> 
       ...prog, phase: "refine", attempt: refinePass, attempts: refinePass + Math.max(1, REFINE_NOIMPROVE_LIMIT - noImprove),
       currentQuality: bestQ, bestQuality: bestQ, refinePass, noImproveStreak: noImprove, elapsedMs: elapsed,
     };
-    if (structurallyLimited || noImprove >= REFINE_NOIMPROVE_LIMIT || bestQ >= TARGET_QUALITY) {
+    // Structural limits and the target end the loop unconditionally.
+    if (structurallyLimited || bestQ >= TARGET_QUALITY) {
+      return finish("complete", bestGen, p);
+    }
+    if (noImprove >= REFINE_NOIMPROVE_LIMIT) {
+      // Quality floor: below 85% we don't settle — burn a rescue round (reset
+      // the no-improve streak; refinePass keeps advancing, so every subsequent
+      // pass runs with a fresh seed). Bounded by MAX_RESCUE_ROUNDS + the wall.
+      if (bestQ < QUALITY_FLOOR && prog.rescueRound < MAX_RESCUE_ROUNDS) {
+        const rescued: JobProgress = { ...p, noImproveStreak: 0, rescueRound: prog.rescueRound + 1 };
+        return { update: { status: "polishing", phase: "refine", best_generation_id: bestGen, progress: rescued }, done: false, chain: true };
+      }
       return finish("complete", bestGen, p);
     }
     return { update: { status: "polishing", phase: "refine", best_generation_id: bestGen, progress: p }, done: false, chain: true };

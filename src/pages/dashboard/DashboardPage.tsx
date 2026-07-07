@@ -208,6 +208,10 @@ const DashboardPage = () => {
   }, [schools, selectedSchool, workspaceId, schoolLoading]);
 
   const isLoading = schoolLoading || dataLoading;
+  // Brand-new account: ONE welcome hero carries every option — the metrics,
+  // progress bar, quick actions, status cards, and danger zone (all zeros /
+  // "Pending" / disabled) only add noise before a school exists.
+  const isNewSchool = !isLoading && data.schoolCount === 0 && !data.setupComplete;
   const progressPct = data.setupComplete ? 100 : Math.round((data.setupStep / 10) * 100);
   const [wiping, setWiping] = useState(false);
 
@@ -315,11 +319,23 @@ const DashboardPage = () => {
             <SampleSchedulePreview
               trigger={<button className="text-primary underline underline-offset-2 hover:opacity-80">See a sample schedule first</button>}
             />
+            {showDemoSeed && (
+              <>
+                {" "}· or{" "}
+                <button
+                  className="text-primary underline underline-offset-2 hover:opacity-80 disabled:opacity-50"
+                  disabled={seeding}
+                  onClick={() => handleSeedDemo()}
+                >
+                  {seeding ? 'seeding a demo school…' : 'explore with a demo school'}
+                </button>
+              </>
+            )}
           </p>
         </div>
       )}
 
-      {!isLoading && showPrepBanner && (
+      {!isLoading && showPrepBanner && !isNewSchool && (
         <div className="rounded-xl border border-primary/30 bg-primary/5 p-5 flex items-start gap-4 animate-fade-in">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
             <ClipboardList className="h-5 w-5" />
@@ -351,7 +367,7 @@ const DashboardPage = () => {
         </div>
       )}
 
-      {!isLoading && showDemoSeed && (
+      {!isLoading && showDemoSeed && !isNewSchool && (
         <div className="rounded-xl border border-accent/30 bg-accent/5 p-6">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div className="flex items-start gap-4">
@@ -413,8 +429,9 @@ const DashboardPage = () => {
         />
       )}
 
-      {!isLoading && <OnboardingChecklist />}
+      {!isLoading && !isNewSchool && <OnboardingChecklist />}
 
+      {!isNewSchool && (
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {isLoading ? (
           <>
@@ -432,9 +449,10 @@ const DashboardPage = () => {
           </>
         )}
       </div>
+      )}
 
       {/* Usage Analytics + Schedule Health */}
-      {!isLoading && (
+      {!isLoading && !isNewSchool && (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="rounded-xl border border-border bg-card p-5">
             <p className="text-xs text-muted-foreground">Schedules Generated</p>
@@ -490,7 +508,7 @@ const DashboardPage = () => {
         </div>
       )}
 
-      {isLoading ? (
+      {isNewSchool ? null : isLoading ? (
         <div className="rounded-xl border border-border bg-card p-6 space-y-3">
           <div className="flex items-center justify-between">
             <Skeleton className="h-5 w-32" />
@@ -518,6 +536,7 @@ const DashboardPage = () => {
         </div>
       )}
 
+      {!isNewSchool && (
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2 space-y-4">
           <h2 className="font-semibold text-foreground">Quick Actions</h2>
@@ -553,8 +572,9 @@ const DashboardPage = () => {
           </div>
         </div>
       </div>
+      )}
 
-      {!isLoading && (
+      {!isLoading && !isNewSchool && (
         <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>

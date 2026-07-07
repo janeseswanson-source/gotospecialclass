@@ -5,11 +5,10 @@
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
   Undo2, Redo2, Lock, GitCompare, MessageSquare, Download, FileText,
-  ChevronDown, LayoutGrid, FileSpreadsheet, Printer, Loader2,
+  ChevronDown, LayoutGrid, FileSpreadsheet, Printer, Loader2, Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -141,38 +140,46 @@ export default function ScheduleToolbar(props: ScheduleToolbarProps) {
           );
         })()}
 
-        {/* Compare with */}
-        {generations.length > 1 && (
-          <Select value={diffGenId ?? ""} onValueChange={(v) => (v ? onCompare(v) : onCloseDiff())}>
-            <SelectTrigger className="w-40 h-8">
-              <div className="flex items-center gap-1.5">
-                <GitCompare className="h-3.5 w-3.5 shrink-0" />
-                <SelectValue placeholder="Compare…" />
-              </div>
-            </SelectTrigger>
-            <SelectContent>
-              {generations.filter((g) => g.id !== selectedGen).map((g) => (
-                <SelectItem key={g.id} value={g.id}>vs v{g.version}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-
-        {/* Density toggle */}
-        <div className="flex items-center rounded-lg border border-border bg-background p-0.5 gap-0.5" title="Row density">
-          <button
-            type="button"
-            onClick={() => onDensityChange("compact")}
-            aria-pressed={density === "compact"}
-            className={cn("px-2 py-1 text-[11px] font-medium rounded-md transition-colors", density === "compact" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
-          >Compact</button>
-          <button
-            type="button"
-            onClick={() => onDensityChange("fine")}
-            aria-pressed={density === "fine"}
-            className={cn("px-2 py-1 text-[11px] font-medium rounded-md transition-colors", density === "fine" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground")}
-          >Fine</button>
-        </div>
+        {/* Tools — power features tucked behind one menu (progressive disclosure):
+            version compare + row density live here so a first-time coordinator's
+            toolbar is just Undo/Redo · versions · Edit with AI · Export. */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="h-8 gap-1.5" title="Comparison and view tools">
+              <Wrench className="h-3.5 w-3.5" />
+              Tools
+              <ChevronDown className="h-3 w-3 opacity-60" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {generations.length > 1 && (
+              <>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <GitCompare className="h-4 w-4 mr-2" /> Compare with…
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="max-h-72 overflow-y-auto">
+                    {generations.filter((g) => g.id !== selectedGen).map((g) => (
+                      <DropdownMenuItem key={g.id} onClick={() => onCompare(g.id)}>
+                        vs v{g.version}{diffGenId === g.id ? " ✓" : ""}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                {diffGenId && (
+                  <DropdownMenuItem onClick={onCloseDiff}>
+                    <GitCompare className="h-4 w-4 mr-2" /> Close comparison
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuSeparator />
+              </>
+            )}
+            <DropdownMenuItem onClick={() => onDensityChange(density === "compact" ? "fine" : "compact")}>
+              <LayoutGrid className="h-4 w-4 mr-2" />
+              Row density: {density === "compact" ? "Compact → Fine" : "Fine → Compact"}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         {/* Edit with AI */}
         <Button variant={chatOpen ? "secondary" : "default"} size="sm" className="h-8 gap-1.5" onClick={onToggleChat} title="Open AI editor">

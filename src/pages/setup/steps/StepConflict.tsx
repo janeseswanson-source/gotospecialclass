@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { getStrategyNote, getRecommendedStrategies, type StrategyContext } from '@/lib/strategyFeasibility';
 import { toast } from '@/hooks/use-toast';
+import { Link } from 'react-router-dom';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -410,6 +411,7 @@ const StepConflict = () => {
   const [clubsCount, setClubsCount] = useState(0);
   const [specialistCount, setSpecialistCount] = useState(0);
   const [hasMissedDays, setHasMissedDays] = useState(false);
+  const [setupComplete, setSetupComplete] = useState(false);
 
   useEffect(() => {
     if (!schoolId) return;
@@ -420,11 +422,13 @@ const StepConflict = () => {
       // Real missed days on file → make-up sessions are worth recommending.
       supabase.from('parsed_calendar_events').select('id').eq('school_id', schoolId).eq('approved', true).limit(1),
       supabase.from('special_events').select('id').eq('school_id', schoolId).limit(1),
-    ]).then(([recessRes, clubsRes, specRes, calRes, evRes]) => {
+      supabase.from('schools').select('setup_complete').eq('id', schoolId).maybeSingle(),
+    ]).then(([recessRes, clubsRes, specRes, calRes, evRes, schoolRes]) => {
       setRecessExists((recessRes.data?.length ?? 0) > 0);
       setClubsCount(clubsRes.data?.length ?? 0);
       setSpecialistCount(specRes.data?.length ?? 0);
       setHasMissedDays((calRes.data?.length ?? 0) > 0 || (evRes.data?.length ?? 0) > 0);
+      setSetupComplete(!!schoolRes.data?.setup_complete);
     });
   }, [schoolId]);
 
@@ -475,6 +479,21 @@ const StepConflict = () => {
         </div>
         <SaveStatusIndicator status={saveStatus} />
       </div>
+
+      {/* Post-setup, Prep & Generate is the ONE home for strategy tuning — the
+          same picker exists there next to the Generate button, and both edit the
+          same saved settings (last save wins). Point returning users there so
+          they don't maintain two mental homes for one concept. */}
+      {setupComplete && (
+        <div className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+          <Info className="h-4 w-4 shrink-0 mt-0.5 text-primary" />
+          <span>
+            Setup is complete — day-to-day strategy tuning lives on the{' '}
+            <Link to="/app/prep" className="font-medium text-primary underline">Prep &amp; Generate</Link>{' '}
+            page (same settings, right next to the Generate button).
+          </span>
+        </div>
+      )}
 
       {/* ─── Section 1: Grade conflict chips ─── */}
       {grades.length > 0 && (

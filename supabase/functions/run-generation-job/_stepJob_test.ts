@@ -111,7 +111,9 @@ Deno.test("fallback: CP-SAT unavailable (503) → best-of-3 search → refine, f
   const deleted: string[] = [];
   const d = deps({
     runCpsat: async () => ({ ok: false, unavailable: true, code: "cpsat_unreachable", error: "solver unreachable" }),
-    runSearch: async () => { searchCalls++; return { ok: true, generationId: `s${searchCalls}`, quality: 70 + searchCalls }; },
+    // ≥ QUALITY_FLOOR so refine convergence completes without rescue rounds
+    // (the floor has its own tests below).
+    runSearch: async () => { searchCalls++; return { ok: true, generationId: `s${searchCalls}`, quality: 90 + searchCalls }; },
     deleteGeneration: async (id) => { deleted.push(id); },
   });
   let job = baseJob();
@@ -125,7 +127,7 @@ Deno.test("fallback: CP-SAT unavailable (503) → best-of-3 search → refine, f
   assert(r.chain && !r.done);
   job = apply(job, r.update);
 
-  // Steps 2-4: three search attempts, keep best (s3=73), delete losers
+  // Steps 2-4: three search attempts, keep best (s3=93), delete losers
   for (let i = 0; i < 3; i++) {
     r = await stepJob(job, d);
     job = apply(job, r.update);
@@ -143,6 +145,62 @@ Deno.test("fallback: CP-SAT unavailable (503) → best-of-3 search → refine, f
   r = await stepJob(job, d);
   assertEquals((r.update as any).status, "complete");
   assertEquals((r.update as any).best_generation_id, "s3");
+});
+
+// ─── quality floor: below 85% the pipeline doesn't settle ────────────────────
+Deno.test("quality floor: refine converging below 85% burns rescue rounds instead of completing", async () => {
+  let refineCalls = 0;
+  const d = deps({
+    runRefine: async () => { refineCalls++; return { ok: true, improved: false, generationId: null, quality: null, structurallyLimited: false }; },
+  });
+  // Start in refine with a mediocre 70% best.
+  let job = baseJob({ phase: "refine", best_generation_id: "gen-70", progress: { phase: "refine", bestQuality: 70 } });
+  // Each rescue grants REFINE_NOIMPROVE_LIMIT (2) more passes; MAX_RESCUE_ROUNDS
+  // = 4 → total refine calls = 2 + 4×2 = 10 before it finally completes.
+  let r;
+  for (let i = 0; i < 10; i++) {
+    r = await stepJob(job, d);
+    if ((r.update as any).status === "complete") break;
+    job = apply(job, r.update);
+  }
+  assertEquals(refineCalls, 10, "2 base passes + 4 rescues × 2 passes");
+  assertEquals((r!.update as any).status, "complete");
+  assertEquals((r!.update as any).best_generation_id, "gen-70");
+  assertEquals(((r!.update as any).progress as any).rescueRound, 4);
+});
+
+Deno.test("quality floor: an improvement mid-rescue that crosses the floor completes at convergence", async () => {
+  let refineCalls = 0;
+  const d = deps({
+    runRefine: async () => {
+      refineCalls++;
+      // 3rd pass (first rescue round) finds a big improvement to 90%.
+      if (refineCalls === 3) return { ok: true, improved: true, generationId: "gen-90", quality: 90, structurallyLimited: false };
+      return { ok: true, improved: false, generationId: null, quality: null, structurallyLimited: false };
+    },
+  });
+  let job = baseJob({ phase: "refine", best_generation_id: "gen-70", progress: { phase: "refine", bestQuality: 70 } });
+  let r;
+  for (let i = 0; i < 12; i++) {
+    r = await stepJob(job, d);
+    if ((r.update as any).status === "complete") break;
+    job = apply(job, r.update);
+  }
+  // passes 1,2 no-improve → rescue 1; pass 3 improves to 90 (streak resets);
+  // passes 4,5 no-improve → 90 ≥ floor → complete without further rescues.
+  assertEquals(refineCalls, 5);
+  assertEquals((r!.update as any).status, "complete");
+  assertEquals((r!.update as any).best_generation_id, "gen-90");
+});
+
+Deno.test("quality floor: structurally_limited stops immediately even below the floor", async () => {
+  const d = deps({
+    runRefine: async () => ({ ok: true, improved: false, generationId: null, quality: null, structurallyLimited: true }),
+  });
+  const job = baseJob({ phase: "refine", best_generation_id: "gen-40", progress: { phase: "refine", bestQuality: 40 } });
+  const r = await stepJob(job, d);
+  assertEquals((r.update as any).status, "complete");
+  assertEquals(((r.update as any).progress as any).rescueRound, 0, "no rescue against a capacity wall");
 });
 
 Deno.test("CP-SAT model verdict (model_invalid) also falls back to the JS solver", async () => {
