@@ -1,16 +1,32 @@
-## Root cause of the useless error text
-`supabase.functions.invoke()` returns a `FunctionsHttpError` on any non-2xx, and its `.message` is always the generic "Edge Function returned a non-2xx status code". The edge function *does* return a helpful message in the JSON body (e.g. "This contract is too large to parse whole…", "No contract uploaded", "Could not download contract", Anthropic's real error, etc.), but the frontend throws the FunctionsHttpError as-is and shows only its generic message. That's why the toast is unhelpful.
+## The limit
+Anthropic caps whole-PDF `document` inputs at ~100 pages / ~32 MB per request. Union contracts routinely blow past that, and today we just tell the user to upload fewer pages.
 
-Edge logs confirm the function returned **400** on your last two attempts — so there *is* a specific reason (most likely: the PDF is too large for whole-document parsing, or the download/URL failed). We just aren't showing it.
+## Fix: extract text server-side, then parse in chunks
+Change `parse-contractual-minutes` so the PDF never leaves the edge function as a `document` block. Instead:
 
-## Fix (frontend only, one file)
-In `src/pages/setup/steps/StepContractualMinutes.tsx` `parseWithAi()`, unwrap the real error:
+1. **Extract text from every page** using `unpdf` (Deno-friendly, no native deps: `import { extractText, getDocumentProxy } from "npm:unpdf@0.12"`). Produces one string per page — no page cap.
+2. **Pre-filter to the relevant pages.** Most of a 300-page CBA is unrelated boilerplate. Keep only pages whose text matches a scheduling-signal regex (`/planning|prep(?:aration)?|duty[- ]free|instructional minutes|specials?|PE|physical education|music|art|library|minutes per week/i`). Fall back to all pages if nothing matches.
+3. **Chunk to a safe token budget** (~40k chars per chunk, ~10k tokens — comfortably inside Haiku's window). Preserve page numbers in each chunk header (`--- Page 47 ---`) so Claude can cite context.
+4. **Run the same `extract_contractual_minutes` tool call once per chunk** (in parallel with `Promise.all`, capped to ~4 concurrent). Each call is cheap on Haiku.
+5. **Merge results deterministically**:
+   - `subjects[]`: dedupe by `(grade, subject)`, keep the max `weekly_minutes` (contracts state minimums; if two sections mention the same subject/grade, the larger figure is the operative floor).
+   - `teachers[]`: dedupe by `role`, keep max `planning_minutes` and max `duty_free_minutes`, concatenate `notes`.
+   - `source_summary`: join non-empty summaries with "; ".
+6. **Save the merged result** to `schools.contractual_minutes_extracted` exactly like today. No schema change.
 
-- When `error` is a `FunctionsHttpError`, read `error.context.body` (a `ReadableStream`) → text → JSON, and surface `body.error` in the toast (fallback to the generic message if parsing fails).
-- Also fall back to `(data as any)?.error` when `data` itself carries an error payload.
+Also drop the ~100-page framing in the "document_too_large" fallback — with this path we handle arbitrarily long PDFs. Keep the fallback only for truly unreadable/corrupt PDFs (unpdf throws or yields zero text).
 
-That single change makes the real reason visible (e.g. "This contract is too large to parse whole — upload just the pages covering planning time / duty-free minutes…"), which lets you act on it instead of retrying blindly.
+## What changes
+- `supabase/functions/parse-contractual-minutes/index.ts` — swap the whole-PDF `document` block for the extract-filter-chunk-merge flow above.
+- Redeploy that one function.
 
-## Not doing
-- No edge-function changes — the server already returns a clear message; the client just wasn't reading it.
-- No new deploys, migrations, or config.
+## What doesn't change
+- No database migration, no new secret, no frontend change (the toast already surfaces server errors after the last fix).
+- URL-based text ingestion path stays exactly as it is.
+- Same model (`MODELS.fast` / Haiku) — cheap, and 4 chunk calls still cost a fraction of one Opus call.
+
+## Tradeoffs / notes
+- We lose Claude's native PDF vision on scanned image-only PDFs. Realistically union contracts are digital text; if a user uploads a scan we'll return a clear "no extractable text — paste the relevant section as text" error instead of the current opaque 400.
+- Slight latency increase for very long PDFs (multiple sequential-ish calls), but still well under the edge-function time budget.
+
+Say the word and I'll ship it. If you'd rather keep it simpler (just text-extract + one call, no chunking), tell me the largest CBA size you typically see and I'll size accordingly.
