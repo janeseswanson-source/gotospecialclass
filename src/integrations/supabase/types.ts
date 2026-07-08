@@ -1069,7 +1069,6 @@ export type Database = {
           attempted_strategies: Json
           chat_history: Json
           chosen_strategy: string | null
-          coverage_relaxed: boolean
           created_at: string
           fallback_reason: string | null
           feedback_signal: string | null
@@ -1097,7 +1096,6 @@ export type Database = {
           attempted_strategies?: Json
           chat_history?: Json
           chosen_strategy?: string | null
-          coverage_relaxed?: boolean
           created_at?: string
           fallback_reason?: string | null
           feedback_signal?: string | null
@@ -1125,7 +1123,6 @@ export type Database = {
           attempted_strategies?: Json
           chat_history?: Json
           chosen_strategy?: string | null
-          coverage_relaxed?: boolean
           created_at?: string
           fallback_reason?: string | null
           feedback_signal?: string | null
