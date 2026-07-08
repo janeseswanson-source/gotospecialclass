@@ -1820,6 +1820,7 @@ export type Database = {
         | "big_group"
         | "makeup"
         | "extra_rotation"
+        | "aa_bb_week"
       crm_stage: "lead" | "prospect" | "trial" | "customer" | "churned"
       export_format: "pdf" | "csv" | "excel" | "docx"
       license_status: "active" | "redeemed" | "expired" | "revoked"
@@ -1977,6 +1978,7 @@ export const Constants = {
         "big_group",
         "makeup",
         "extra_rotation",
+        "aa_bb_week",
       ],
       crm_stage: ["lead", "prospect", "trial", "customer", "churned"],
       export_format: ["pdf", "csv", "excel", "docx"],

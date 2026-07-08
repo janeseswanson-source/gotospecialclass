@@ -1,23 +1,17 @@
-## Goal
-Land the `coverage_relaxed` migration and redeploy the edge functions so the new quality-floor logic in `run-generation-job` (and the schema-consuming CP-SAT/parse functions) go live. The `specialist_meeting` migration was already applied last turn, so it's a no-op now.
+## Root cause
+Auto-recommend picks `aa_bb_week` as a rotation strategy. The autosave then writes it to `schools.conflict_strategy`, but the Postgres enum `conflict_strategy` only has `standard, ab_week, quick_30, big_group, makeup, extra_rotation` — `aa_bb_week` is missing. The insert fails with an invalid enum value, the catch swallows the specific error, and you see the generic "Couldn't save order — try again."
 
-## Steps
-1. **Apply migration** `20260707150000_coverage_relaxed.sql` — adds `schedule_generations.coverage_relaxed boolean NOT NULL DEFAULT false`. Additive, no GRANT/RLS changes. Types regenerate after approval.
-2. **Redeploy edge functions** in a single `supabase--deploy_edge_functions` call:
-   - `generate-cpsat`
-   - `generate-schedule`
-   - `run-generation-job` (activates the quality floor)
-   - `parse-calendar`
-   - `parse-contractual-minutes`
-   - `parse-recess-nl`
-   - `parse-clubs-nl`
-   - `parse-coordinator-prep`
-   - `parse-specialist-template`
-   - `parse-teacher-roster`
+All the app code (client + engine + spec builder + tests) already treats `aa_bb_week` as a first-class strategy. The DB enum just never got the value.
+
+## Fix
+One migration: add `aa_bb_week` to the `conflict_strategy` enum.
+
+```sql
+ALTER TYPE public.conflict_strategy ADD VALUE IF NOT EXISTS 'aa_bb_week';
+```
+
+That's it — additive, safe, no data changes, no code edits, no redeploys.
 
 ## Non-goals
-- No code edits. Frontend redeploys automatically from main.
-- `specialist_meeting` migration is already applied — skipping.
-- Other `_engine/` consumers (refine-schedule, improve-quality, verify-schedule, schedule-chat, resolve-conflicts-ai, update-scoring-weights) were redeployed last turn and aren't in this request; leaving them alone.
-
-Confirm the parse-function list above (I included all `parse-*` functions since you said "the parse functions" — tell me if you meant only the three from last turn).
+- Not touching the toast wording or the swallowed-error handling (separate polish).
+- Not editing anything in the frontend or edge functions — they're already correct.
