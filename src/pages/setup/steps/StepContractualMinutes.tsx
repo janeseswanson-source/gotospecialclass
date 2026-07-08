@@ -133,9 +133,25 @@ const StepContractualMinutes = () => {
       const { data, error } = await supabase.functions.invoke('parse-contractual-minutes', {
         body: { school_id: schoolId },
       });
-      if (error) throw error;
+      if (error) {
+        // supabase.functions.invoke() throws a generic FunctionsHttpError for any
+        // non-2xx and hides the real message in error.context (a Response). Read
+        // it so the toast shows what actually went wrong.
+        let realMessage: string | undefined;
+        try {
+          const ctx: any = (error as any)?.context;
+          if (ctx && typeof ctx.json === 'function') {
+            const body = await ctx.clone().json();
+            realMessage = body?.error;
+          } else if (ctx && typeof ctx.text === 'function') {
+            const txt = await ctx.clone().text();
+            try { realMessage = JSON.parse(txt)?.error; } catch { realMessage = txt; }
+          }
+        } catch { /* fall through to generic message */ }
+        throw new Error(realMessage || (data as any)?.error || (error as any).message || 'Parsing failed');
+      }
       const result = (data as any)?.extracted as ExtractedContract | undefined;
-      if (!result) throw new Error('No data returned');
+      if (!result) throw new Error((data as any)?.error ?? 'No data returned');
       setExtracted(result);
       setStatus('parsed');
       toast.success('Contract parsed — review and edit below.');
