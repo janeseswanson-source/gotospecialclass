@@ -209,7 +209,7 @@ const StepSpecialists = () => {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [expandedRotation, setExpandedRotation] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
-  const saveTimer = useRef<ReturnType<typeof setTimeout>>();
+  const saveTimer = useRef<ReturnType<typeof setTimeout>>(); // legacy — retained to minimize diff; not referenced by new per-card save path.
   const [parseErrorOpen, setParseErrorOpen] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<{
