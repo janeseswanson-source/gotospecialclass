@@ -484,7 +484,22 @@ const StepSpecialists = () => {
     setSpecialists(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s));
   };
 
-  const remove = (id: string) => setSpecialists(prev => prev.filter(s => s.id !== id));
+  const remove = (id: string) => {
+    // Cancel any pending debounced save for this card before we delete.
+    const t = cardTimers.current.get(id);
+    if (t) { clearTimeout(t); cardTimers.current.delete(id); }
+    lastSerialized.current.delete(id);
+    setSpecialists(prev => prev.filter(s => s.id !== id));
+    if (isLoaded.current && schoolId) {
+      // Explicit delete — the ONLY code path that removes from the DB.
+      supabase.from('specialists').delete().eq('id', id).then(({ error }) => {
+        if (error) {
+          console.error('Delete specialist error:', error);
+          toast.error(`Couldn't delete specialist — ${error.message}`);
+        }
+      });
+    }
+  };
 
   const toggleDay = (id: string, day: string) => {
     const spec = specialists.find(s => s.id === id);
