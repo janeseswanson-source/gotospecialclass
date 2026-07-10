@@ -732,7 +732,14 @@ const StepSpecialists = () => {
         return;
       }
 
-      if (imported.length > 0) setSpecialists(prev => [...prev, ...imported]);
+      if (imported.length > 0) {
+        setSpecialists(prev => [...prev, ...imported]);
+        if (isLoaded.current && schoolId) {
+          const rows = imported.map(buildRow);
+          rows.forEach((r, i) => lastSerialized.current.set(imported[i].id, JSON.stringify(r)));
+          persistRows(rows);
+        }
+      }
       setImportSummary({ importedCount: imported.length, blankDayCount, errors });
 
       // If most rows failed, also try AI as a recovery path.
