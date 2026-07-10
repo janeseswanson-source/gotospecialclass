@@ -535,33 +535,48 @@ export default function MasterAdminViewPage() {
           })
         )}
 
-        {/* Chrome rows: Recess / Lunch / Dismissal */}
+        {/* Chrome rows: Recess / Lunch / Dismissal — one merged banner per window */}
         {(['RECESS', 'LUNCH', 'DISMISSAL'] as const).map((kind) => {
-          const hasData = DAYS.some((d) => chromeForDay(kind, d).length > 0);
-          if (!hasData) return null;
+          const rows = chromeRowsFor(kind);
+          if (rows.length === 0) return null;
           return (
             <div key={kind}>
               <div className="bg-muted/70 px-3 py-1 text-[11px] font-semibold text-primary border-b border-border">
                 {kind}
               </div>
-              <div className="grid grid-cols-5 border-b border-border min-h-[44px]">
-                {DAYS.map((d) => (
+              {rows.map((row) => {
+                const Icon = /lunch/i.test(row.kind) ? Utensils
+                  : /pm recess/i.test(row.kind) ? Cloud
+                  : /am recess/i.test(row.kind) ? Sun
+                  : LogOut;
+                const MAX = 3;
+                const shown = row.groups.slice(0, MAX);
+                const overflow = row.groups.length - shown.length;
+                const groupStr = shown.length
+                  ? shown.join(' & ') + (overflow > 0 ? ` +${overflow} more` : '')
+                  : '';
+                return (
                   <div
-                    key={d}
-                    className="border-r last:border-r-0 border-border p-2 text-[11px] space-y-0.5 bg-muted/30"
+                    key={row.key}
+                    className="flex items-center gap-2 border-b border-border bg-amber-50/60 dark:bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-900 dark:text-amber-200"
                   >
-                    {chromeForDay(kind, d).map((entry, i) => (
-                      <div key={i} className="flex justify-between gap-2">
-                        <span className="text-foreground font-medium truncate">{entry.label}</span>
-                        <span className="text-muted-foreground shrink-0">{entry.time}</span>
-                      </div>
-                    ))}
+                    <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                    <span className="font-semibold tracking-wide">{row.kind}</span>
+                    {groupStr && (
+                      <>
+                        <span className="opacity-40">·</span>
+                        <span className="truncate opacity-80">{groupStr}</span>
+                      </>
+                    )}
+                    <span className="ml-auto font-mono opacity-70 shrink-0">{row.time}</span>
                   </div>
-                ))}
-              </div>
+                );
+              })}
             </div>
           );
         })}
+
+
 
         {/* Footer band */}
         <div className="bg-secondary/40 border-t-2 border-accent px-6 py-3 grid grid-cols-3 items-center text-[11px] text-primary">
