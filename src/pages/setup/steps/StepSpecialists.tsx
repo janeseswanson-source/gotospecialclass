@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { SaveStatusIndicator, type SaveStatus } from '@/components/setup/SaveStatusIndicator';
 import { SETUP_STEPS } from '../stepIndex';
-import { useFlushOnUnmount } from '@/hooks/useFlushOnUnmount';
+// useFlushOnUnmount no longer used — per-card save flush is inline.
 import { useSetup } from '@/contexts/SetupContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
