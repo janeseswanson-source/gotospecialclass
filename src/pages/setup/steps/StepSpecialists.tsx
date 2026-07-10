@@ -683,6 +683,11 @@ const StepSpecialists = () => {
         secondSchoolName: s.second_school_name || '',
       }));
       setSpecialists(prev => [...prev, ...imported]);
+      if (isLoaded.current && schoolId) {
+        const rows = imported.map(buildRow);
+        rows.forEach((r, i) => lastSerialized.current.set(imported[i].id, JSON.stringify(r)));
+        persistRows(rows);
+      }
       toast.success(`AI auto-filled ${imported.length} specialist${imported.length === 1 ? '' : 's'} from your template.`);
     } catch (err: any) {
       console.error('AI parse error', err);
