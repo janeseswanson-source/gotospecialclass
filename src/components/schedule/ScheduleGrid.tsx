@@ -19,7 +19,7 @@ import ScrabbleTray from "./ScrabbleTray";
 import { computeConflictIds, parseTime } from "@/lib/scheduleGrid";
 import { legalTargets, type DropEval } from "@/lib/gridTargets";
 import { getSubjectLeftBorderClass } from "@/lib/subjectColors";
-import { X } from "lucide-react";
+import { X, Sun, Utensils, Cloud, Coffee } from "lucide-react";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
