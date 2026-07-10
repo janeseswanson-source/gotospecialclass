@@ -413,22 +413,23 @@ const StepSpecialists = () => {
     }
   }, [specialists, buildRow, scheduleCardSave]);
 
-  // Flush on unmount: fire every pending debounced card save immediately,
-  // then wait for all in-flight upserts to settle before the component
-  // is torn down. useFlushOnUnmount doesn't await, but the promises we
-  // register on inFlightSaves keep running to completion.
-  useFlushOnUnmount(saveTimer, () => {
-    if (!isLoaded.current) return;
-    // Fire every pending card timer now with the latest state.
-    const pendingIds = Array.from(cardTimers.current.keys());
-    for (const id of pendingIds) {
-      const t = cardTimers.current.get(id);
-      if (t) clearTimeout(t);
-      cardTimers.current.delete(id);
-      const spec = latestRef.current.find(s => s.id === id);
-      if (spec) persistRows([buildRow(spec)]);
-    }
-  });
+  // Flush on unmount: fire every pending debounced card save immediately.
+  // In-flight promises are tracked on inFlightSaves and keep running to
+  // completion even after the component is torn down.
+  useEffect(() => {
+    return () => {
+      if (!isLoaded.current) return;
+      const pendingIds = Array.from(cardTimers.current.keys());
+      for (const id of pendingIds) {
+        const t = cardTimers.current.get(id);
+        if (t) clearTimeout(t);
+        cardTimers.current.delete(id);
+        const spec = latestRef.current.find(s => s.id === id);
+        if (spec) persistRows([buildRow(spec)]);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const addSpecialist = (subject = 'Art') => {
     const base = defaultSpecialist(subject);
