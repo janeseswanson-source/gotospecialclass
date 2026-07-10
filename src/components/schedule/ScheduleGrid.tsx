@@ -264,14 +264,35 @@ export default function ScheduleGrid({
               return rows.map((row) => {
                 if (row.kind === "band") {
                   const b = row.band;
+                  // Split "Kind · Groups" so kind is bold, groups muted.
+                  const sep = b.label.indexOf(" · ");
+                  const kind = sep >= 0 ? b.label.slice(0, sep) : b.label;
+                  const groups = sep >= 0 ? b.label.slice(sep + 3) : "";
+                  const Icon = /lunch/i.test(kind) ? Utensils
+                    : /pm recess/i.test(kind) ? Cloud
+                    : /am recess/i.test(kind) ? Sun
+                    : Coffee;
                   return (
-                    <tr key={`band-${b.id}`} className="border-y border-amber-400/40">
-                      <td colSpan={DAYS.length + 1} className="bg-amber-100/70 dark:bg-amber-900/30 text-amber-900 dark:text-amber-200 font-medium text-xs px-3 py-1.5 tracking-wide">
-                        {b.label} · {formatTime(b.start_time)}–{formatTime(b.end_time)}
+                    <tr key={`band-${b.id}`} className="border-y border-amber-300/40 dark:border-amber-500/25">
+                      <td colSpan={DAYS.length + 1} className="bg-amber-50/70 dark:bg-amber-950/25 px-3 py-1.5">
+                        <div className="flex items-center gap-2 text-xs text-amber-900 dark:text-amber-200">
+                          <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                          <span className="font-semibold tracking-wide">{kind}</span>
+                          {groups && (
+                            <>
+                              <span className="opacity-40">·</span>
+                              <span className="truncate opacity-80">{groups}</span>
+                            </>
+                          )}
+                          <span className="ml-auto font-mono text-[11px] opacity-70 shrink-0">
+                            {formatTime(b.start_time)}–{formatTime(b.end_time)}
+                          </span>
+                        </div>
                       </td>
                     </tr>
                   );
                 }
+
                 const time = row.time;
                 return (
                   <tr key={time} className="border-b border-border/50 last:border-0">
