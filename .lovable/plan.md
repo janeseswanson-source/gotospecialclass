@@ -1,32 +1,32 @@
-## The limit
-Anthropic caps whole-PDF `document` inputs at ~100 pages / ~32 MB per request. Union contracts routinely blow past that, and today we just tell the user to upload fewer pages.
+## Problem
 
-## Fix: extract text server-side, then parse in chunks
-Change `parse-contractual-minutes` so the PDF never leaves the edge function as a `document` block. Instead:
+On Setup → Specialists, adding a second (or later) specialist card looks fine in the UI, but after refresh only the first one is there. No error toast appears, so the autosave path is silently dropping rows.
 
-1. **Extract text from every page** using `unpdf` (Deno-friendly, no native deps: `import { extractText, getDocumentProxy } from "npm:unpdf@0.12"`). Produces one string per page — no page cap.
-2. **Pre-filter to the relevant pages.** Most of a 300-page CBA is unrelated boilerplate. Keep only pages whose text matches a scheduling-signal regex (`/planning|prep(?:aration)?|duty[- ]free|instructional minutes|specials?|PE|physical education|music|art|library|minutes per week/i`). Fall back to all pages if nothing matches.
-3. **Chunk to a safe token budget** (~40k chars per chunk, ~10k tokens — comfortably inside Haiku's window). Preserve page numbers in each chunk header (`--- Page 47 ---`) so Claude can cite context.
-4. **Run the same `extract_contractual_minutes` tool call once per chunk** (in parallel with `Promise.all`, capped to ~4 concurrent). Each call is cheap on Haiku.
-5. **Merge results deterministically**:
-   - `subjects[]`: dedupe by `(grade, subject)`, keep the max `weekly_minutes` (contracts state minimums; if two sections mention the same subject/grade, the larger figure is the operative floor).
-   - `teachers[]`: dedupe by `role`, keep max `planning_minutes` and max `duty_free_minutes`, concatenate `notes`.
-   - `source_summary`: join non-empty summaries with "; ".
-6. **Save the merged result** to `schools.contractual_minutes_extracted` exactly like today. No schema change.
+## Diagnosis
 
-Also drop the ~100-page framing in the "document_too_large" fallback — with this path we handle arbitrarily long PDFs. Keep the fallback only for truly unreadable/corrupt PDFs (unpdf throws or yields zero text).
+`src/pages/setup/steps/StepSpecialists.tsx` autosaves through a debounced upsert. Two likely culprits fit "silent loss of 2nd+ rows":
 
-## What changes
-- `supabase/functions/parse-contractual-minutes/index.ts` — swap the whole-PDF `document` block for the extract-filter-chunk-merge flow above.
-- Redeploy that one function.
+1. **Blank-name filter drops in-progress rows.** `autoSave` filters `items.filter(s => s.name.trim())` before upserting. If the user clicks a Quick Add tile (which creates a card with an empty name) and then navigates away, switches tabs inside the wizard, or refreshes before typing a name, the row is never persisted — even though it's visible on screen and looks "added." The current UX gives no signal that untyped rows aren't real yet.
+2. **Debounce race across quickly-added cards.** Each keystroke re-arms the same 1s timer. If the user adds card #2 and starts editing card #2 while the previous autosave for card #1 is still in flight, both saves run concurrently. `existing` is fetched twice, `toDelete` computed twice, and the two upserts can interleave. In practice this rarely deletes anything (because `keepIds` includes all cards), but combined with (1) any card that briefly held a blank name during a race gets skipped.
 
-## What doesn't change
-- No database migration, no new secret, no frontend change (the toast already surfaces server errors after the last fix).
-- URL-based text ingestion path stays exactly as it is.
-- Same model (`MODELS.fast` / Haiku) — cheap, and 4 chunk calls still cost a fraction of one Opus call.
+The RLS policy, schema, and constraints on `public.specialists` are fine — no unique constraint conflicts, no NOT NULL trap. So the fix is entirely in the client autosave logic + a small UX safeguard.
 
-## Tradeoffs / notes
-- We lose Claude's native PDF vision on scanned image-only PDFs. Realistically union contracts are digital text; if a user uploads a scan we'll return a clear "no extractable text — paste the relevant section as text" error instead of the current opaque 400.
-- Slight latency increase for very long PDFs (multiple sequential-ish calls), but still well under the edge-function time budget.
+## Fix (frontend only, `StepSpecialists.tsx`)
 
-Say the word and I'll ship it. If you'd rather keep it simpler (just text-extract + one call, no chunking), tell me the largest CBA size you typically see and I'll size accordingly.
+1. **Persist blank rows too, so nothing disappears silently.** Remove the `name.trim()` filter from the upsert payload. The `specialists` DB row already tolerates an empty name in practice (we always send a string), and the setup wizard's Review step already treats un-named rows as incomplete. This makes the UI the source of truth: what you see on the card is what's saved.
+   - Small guard: if `name` really must be non-empty at the DB layer, coerce to a placeholder like `"(Unnamed specialist)"` on save and treat that as "incomplete" downstream, so the row still round-trips.
+2. **Serialize autosaves.** Replace the "debounced-then-fire-and-forget" pattern with a `savingRef` gate:
+   - If a save is already in flight when the debounce fires, mark `pendingRef = true` and return.
+   - When the in-flight save resolves, if `pendingRef` is set, immediately re-run `autoSave(latestRef.current)`.
+   This removes the concurrent-upsert race without changing the debounce feel.
+3. **Save on card add.** In `addSpecialist` (and the Quick Add tiles), call `autoSave(next)` immediately with the new array (bypassing debounce). This guarantees a blank-but-visible card exists in the DB the moment it's on screen, so it survives navigation even if the user never types.
+4. **Verify visibly.** After the change, drive the wizard with Playwright to add three specialists (Art, Music, PE), type a name in each, wait for "Saved", refresh, and confirm all three come back. Capture screenshots at each step.
+
+## Out of scope
+
+- No schema changes, no RLS changes, no changes to any other setup step.
+- No changes to import / AI-fill paths (`handleTemplateUpload`, `runAiFallback`) — they already `setSpecialists(prev => [...prev, ...imported])` which the new autosave path will pick up correctly.
+
+## Files touched
+
+- `src/pages/setup/steps/StepSpecialists.tsx` — autosave gate, remove blank-name filter, save-on-add.

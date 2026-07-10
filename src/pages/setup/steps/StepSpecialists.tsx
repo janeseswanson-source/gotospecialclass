@@ -297,14 +297,25 @@ const StepSpecialists = () => {
     load();
   }, [schoolId]);
 
+  // Serialization gate: prevents concurrent autosaves from racing the
+  // "delete missing + upsert" pair. If a save fires while one is in flight,
+  // we mark a rerun and re-invoke autoSave once the current one settles.
+  const savingRef = useRef(false);
+  const pendingRerunRef = useRef(false);
+
   const autoSave = useCallback(async (items: Specialist[]) => {
     if (!schoolId || !isLoaded.current) return;
+    if (savingRef.current) {
+      pendingRerunRef.current = true;
+      return;
+    }
+    savingRef.current = true;
     setSaveStatus('saving');
     try {
-      const valid = items.filter(s => s.name.trim());
-      // Only delete rows the user has actually removed from the list.
-      // Rows with a blank name are preserved in DB (if they had one) so
-      // partially-filled cards aren't silently nuked while the user is typing.
+      // Persist every card the user has on screen, even blank ones — the UI is
+      // the source of truth. Blank-name rows round-trip via a placeholder so
+      // the NOT NULL name column is satisfied; the Review step still treats
+      // them as incomplete.
       const keepIds = items.map(s => s.id);
 
       // Delete specialists no longer in the list
@@ -319,11 +330,11 @@ const StepSpecialists = () => {
         if (delErr) throw delErr;
       }
 
-      // Upsert remaining specialists (preserves existing UUIDs)
-      const rows = valid.map(s => ({
+      // Upsert every card (preserves existing UUIDs)
+      const rows = items.map(s => ({
         id: s.id,
         school_id: schoolId,
-        name: s.name,
+        name: s.name.trim() ? s.name : '(Unnamed specialist)',
         phone: s.phone || null,
         email: s.email || null,
         subject: s.subject,
@@ -363,6 +374,13 @@ const StepSpecialists = () => {
       console.error('Save specialists error:', err);
       toast.error(`Couldn't save specialists${err?.message ? ` — ${err.message}` : ''}. Check your connection and try again.`);
       setSaveStatus('idle');
+    } finally {
+      savingRef.current = false;
+      if (pendingRerunRef.current) {
+        pendingRerunRef.current = false;
+        // Fire the follow-up save with the freshest state.
+        autoSave(latestRef.current);
+      }
     }
   }, [schoolId]);
 
@@ -382,7 +400,16 @@ const StepSpecialists = () => {
     if (seedSetup) {
       base.additionalMinutes = [{ label: 'Setup', minutes: Number(data.setupTime) || 5, kind: 'setup' }];
     }
-    setSpecialists(prev => [...prev, base]);
+    setSpecialists(prev => {
+      const next = [...prev, base];
+      // Persist immediately so a freshly-added card survives navigation even
+      // if the user never types a name (previously it was silently dropped).
+      if (isLoaded.current) {
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        setTimeout(() => autoSave(next), 0);
+      }
+      return next;
+    });
   };
 
   const updateAdditionalRow = (specId: string, idx: number, patch: Partial<AdditionalMinute>) => {
