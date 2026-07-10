@@ -6,7 +6,7 @@ import { useSchool } from '@/contexts/SchoolContext';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Printer, FileSpreadsheet, CalendarPlus } from 'lucide-react';
+import { Printer, FileSpreadsheet, CalendarPlus, Sun, Utensils, Cloud, LogOut } from 'lucide-react';
 import logo from '@/assets/logo.png';
 import { formatTime } from '@/lib/utils';
 import { BRAND } from '@/brand/brand';
@@ -241,37 +241,41 @@ export default function MasterAdminViewPage() {
   ).sort();
 
   // ── Chrome rows from recess_lunch_config (source of truth) ──
-  // Build per-day windows by union across all grade bands. Band names go through
-  // friendlyBandLabel (custom wizard label → readable key → nothing) so raw
-  // auto-generated `band_xxxxxx` keys never print; identical rows dedupe.
+  // Merge same-window entries across grade bands into ONE banner per window,
+  // instead of repeating the kind ("AM Recess · AM Recess · ...") per column.
   const bandLabels = (school?.recess_grade_bands as Record<string, string> | null) ?? null;
-  const chromeForDay = (kind: 'RECESS' | 'LUNCH' | 'DISMISSAL', day: string) => {
+  type ChromeRow = { key: string; kind: string; groups: string[]; time: string };
+  const chromeRowsFor = (kind: 'RECESS' | 'LUNCH' | 'DISMISSAL'): ChromeRow[] => {
     if (kind === 'DISMISSAL') {
-      // No DB row for dismissal — show school end_time uniformly.
-      return endTime ? [{ label: 'Dismissal', time: formatTime(endTime) }] : [];
+      return endTime ? [{ key: 'dismissal', kind: 'Dismissal', groups: [], time: formatTime(endTime) }] : [];
     }
-    const out: { label: string; time: string }[] = [];
-    const push = (label: string, time: string) => {
-      if (!out.some((o) => o.label === label && o.time === time)) out.push({ label, time });
+    const drafts = new Map<string, ChromeRow & { seen: Set<string> }>();
+    const normalize = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
+    const push = (subKind: string, start: string, end: string, band: string) => {
+      const time = `${formatTime(start)}–${formatTime(end)}`;
+      const k = `${subKind}|${time}`;
+      let d = drafts.get(k);
+      if (!d) { d = { key: k, kind: subKind, groups: [], time, seen: new Set() }; drafts.set(k, d); }
+      const clean = band.trim().replace(/\s+/g, ' ');
+      if (!clean) return;
+      const norm = normalize(clean);
+      if (norm === normalize(subKind)) return;
+      if (d.seen.has(norm)) return;
+      d.seen.add(norm);
+      d.groups.push(clean);
     };
     for (const r of recess) {
       const band = friendlyBandLabel(r.grade_band, bandLabels);
       if (kind === 'RECESS') {
-        if (r.am_recess_start && r.am_recess_end) {
-          push(band ? `AM Recess · ${band}` : 'AM Recess', `${formatTime(r.am_recess_start)}–${formatTime(r.am_recess_end)}`);
-        }
-        if (r.pm_recess_start && r.pm_recess_end) {
-          push(band ? `PM Recess · ${band}` : 'PM Recess', `${formatTime(r.pm_recess_start)}–${formatTime(r.pm_recess_end)}`);
-        }
+        if (r.am_recess_start && r.am_recess_end) push('AM Recess', r.am_recess_start, r.am_recess_end, band);
+        if (r.pm_recess_start && r.pm_recess_end) push('PM Recess', r.pm_recess_start, r.pm_recess_end, band);
       } else if (kind === 'LUNCH') {
-        if (r.lunch_start && r.lunch_end) {
-          push(band ? `Lunch · ${band}` : 'Lunch', `${formatTime(r.lunch_start)}–${formatTime(r.lunch_end)}`);
-        }
+        if (r.lunch_start && r.lunch_end) push('Lunch', r.lunch_start, r.lunch_end, band);
       }
     }
-    // Same content every day unless we layer per-day exceptions later.
-    return out;
+    return Array.from(drafts.values()).map(({ key, kind, groups, time }) => ({ key, kind, groups, time }));
   };
+
 
   const specialistName = (id: string | null) =>
     (id && specialistById.get(id)?.name) || '';
@@ -531,33 +535,48 @@ export default function MasterAdminViewPage() {
           })
         )}
 
-        {/* Chrome rows: Recess / Lunch / Dismissal */}
+        {/* Chrome rows: Recess / Lunch / Dismissal — one merged banner per window */}
         {(['RECESS', 'LUNCH', 'DISMISSAL'] as const).map((kind) => {
-          const hasData = DAYS.some((d) => chromeForDay(kind, d).length > 0);
-          if (!hasData) return null;
+          const rows = chromeRowsFor(kind);
+          if (rows.length === 0) return null;
           return (
             <div key={kind}>
               <div className="bg-muted/70 px-3 py-1 text-[11px] font-semibold text-primary border-b border-border">
                 {kind}
               </div>
-              <div className="grid grid-cols-5 border-b border-border min-h-[44px]">
-                {DAYS.map((d) => (
+              {rows.map((row) => {
+                const Icon = /lunch/i.test(row.kind) ? Utensils
+                  : /pm recess/i.test(row.kind) ? Cloud
+                  : /am recess/i.test(row.kind) ? Sun
+                  : LogOut;
+                const MAX = 3;
+                const shown = row.groups.slice(0, MAX);
+                const overflow = row.groups.length - shown.length;
+                const groupStr = shown.length
+                  ? shown.join(' & ') + (overflow > 0 ? ` +${overflow} more` : '')
+                  : '';
+                return (
                   <div
-                    key={d}
-                    className="border-r last:border-r-0 border-border p-2 text-[11px] space-y-0.5 bg-muted/30"
+                    key={row.key}
+                    className="flex items-center gap-2 border-b border-border bg-amber-50/60 dark:bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-900 dark:text-amber-200"
                   >
-                    {chromeForDay(kind, d).map((entry, i) => (
-                      <div key={i} className="flex justify-between gap-2">
-                        <span className="text-foreground font-medium truncate">{entry.label}</span>
-                        <span className="text-muted-foreground shrink-0">{entry.time}</span>
-                      </div>
-                    ))}
+                    <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+                    <span className="font-semibold tracking-wide">{row.kind}</span>
+                    {groupStr && (
+                      <>
+                        <span className="opacity-40">·</span>
+                        <span className="truncate opacity-80">{groupStr}</span>
+                      </>
+                    )}
+                    <span className="ml-auto font-mono opacity-70 shrink-0">{row.time}</span>
                   </div>
-                ))}
-              </div>
+                );
+              })}
             </div>
           );
         })}
+
+
 
         {/* Footer band */}
         <div className="bg-secondary/40 border-t-2 border-accent px-6 py-3 grid grid-cols-3 items-center text-[11px] text-primary">
