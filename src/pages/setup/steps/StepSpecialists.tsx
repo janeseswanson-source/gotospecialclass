@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { SaveStatusIndicator, type SaveStatus } from '@/components/setup/SaveStatusIndicator';
 import { SETUP_STEPS } from '../stepIndex';
-import { useFlushOnUnmount } from '@/hooks/useFlushOnUnmount';
+// useFlushOnUnmount no longer used — per-card save flush is inline.
 import { useSetup } from '@/contexts/SetupContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -209,7 +209,7 @@ const StepSpecialists = () => {
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [expandedRotation, setExpandedRotation] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
-  const saveTimer = useRef<ReturnType<typeof setTimeout>>();
+  const saveTimer = useRef<ReturnType<typeof setTimeout>>(); // legacy — retained to minimize diff; not referenced by new per-card save path.
   const [parseErrorOpen, setParseErrorOpen] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
   const [importSummary, setImportSummary] = useState<{
@@ -297,102 +297,139 @@ const StepSpecialists = () => {
     load();
   }, [schoolId]);
 
-  // Serialization gate: prevents concurrent autosaves from racing the
-  // "delete missing + upsert" pair. If a save fires while one is in flight,
-  // we mark a rerun and re-invoke autoSave once the current one settles.
-  const savingRef = useRef(false);
-  const pendingRerunRef = useRef(false);
-
-  const autoSave = useCallback(async (items: Specialist[]) => {
-    if (!schoolId || !isLoaded.current) return;
-    if (savingRef.current) {
-      pendingRerunRef.current = true;
-      return;
-    }
-    savingRef.current = true;
-    setSaveStatus('saving');
-    try {
-      // Persist every card the user has on screen, even blank ones — the UI is
-      // the source of truth. Blank-name rows round-trip via a placeholder so
-      // the NOT NULL name column is satisfied; the Review step still treats
-      // them as incomplete.
-      const keepIds = items.map(s => s.id);
-
-      // Delete specialists no longer in the list
-      const { data: existing } = await supabase
-        .from('specialists')
-        .select('id')
-        .eq('school_id', schoolId);
-      const existingIds = (existing || []).map(e => e.id);
-      const toDelete = existingIds.filter(id => !keepIds.includes(id));
-      if (toDelete.length > 0) {
-        const { error: delErr } = await supabase.from('specialists').delete().in('id', toDelete);
-        if (delErr) throw delErr;
-      }
-
-      // Upsert every card (preserves existing UUIDs)
-      const rows = items.map(s => ({
-        id: s.id,
-        school_id: schoolId,
-        name: s.name.trim() ? s.name : '(Unnamed specialist)',
-        phone: s.phone || null,
-        email: s.email || null,
-        subject: s.subject,
-        working_days: s.workingDays,
-        planning_minutes: s.planningMinutes,
-        weekly_planning_minutes: s.weeklyPlanningMinutes,
-        planning_type: s.planningType,
-        lunch_minutes: s.lunchMinutes,
-        extra_minutes: s.extraMinutes,
-        notes: s.notes || null,
-        two_schools: s.twoSchools,
-        second_school_name: s.secondSchoolName || null,
-        uses_cart: s.usesCart,
-        is_part_time: s.isPartTime,
-        part_time_planning_minutes: s.partTimePlanningMinutes,
-        part_time_lunch_minutes: s.partTimeLunchMinutes,
-        location: s.location || null,
-        second_location: s.secondLocation || null,
-        grade_rotation: Object.keys(s.gradeRotation).length > 0 ? s.gradeRotation : null,
-        plus_rotation: s.plusRotation,
-        three_schools: s.threeSchools,
-        third_school_name: s.thirdSchoolName || null,
-        third_location: s.thirdLocation || null,
-        days_at_second_school: s.daysAtSecondSchool,
-        days_at_third_school: s.daysAtThirdSchool,
-        class_duration: s.classDuration ?? null,
-        additional_minutes: s.additionalMinutes ?? [],
-      } as any));
-      if (rows.length > 0) {
-        const { error } = await supabase.from('specialists').upsert(rows, { onConflict: 'id' });
-        if (error) throw error;
-      }
-      setSaveStatus('saved');
-      setTimeout(() => setSaveStatus('idle'), 2000);
-    } catch (err: any) {
-      // A failed save must never look like a successful one.
-      console.error('Save specialists error:', err);
-      toast.error(`Couldn't save specialists${err?.message ? ` — ${err.message}` : ''}. Check your connection and try again.`);
-      setSaveStatus('idle');
-    } finally {
-      savingRef.current = false;
-      if (pendingRerunRef.current) {
-        pendingRerunRef.current = false;
-        // Fire the follow-up save with the freshest state.
-        autoSave(latestRef.current);
-      }
-    }
-  }, [schoolId]);
+  // Per-card save architecture: each specialist card has its own debounced
+  // upsert timer. Deletions ONLY happen via the explicit `remove()` handler.
+  // This eliminates the "one save's stale items array deletes other rows"
+  // race that dropped freshly-added specialists on Continue.
+  const cardTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const inFlightSaves = useRef<Set<Promise<void>>>(new Set());
 
   const latestRef = useRef(specialists);
   latestRef.current = specialists;
-  useFlushOnUnmount(saveTimer, () => { if (isLoaded.current) autoSave(latestRef.current); });
 
+  const buildRow = useCallback((s: Specialist) => ({
+    id: s.id,
+    school_id: schoolId,
+    name: s.name.trim() ? s.name : '(Unnamed specialist)',
+    phone: s.phone || null,
+    email: s.email || null,
+    subject: s.subject,
+    working_days: s.workingDays,
+    planning_minutes: s.planningMinutes,
+    weekly_planning_minutes: s.weeklyPlanningMinutes,
+    planning_type: s.planningType,
+    lunch_minutes: s.lunchMinutes,
+    extra_minutes: s.extraMinutes,
+    notes: s.notes || null,
+    two_schools: s.twoSchools,
+    second_school_name: s.secondSchoolName || null,
+    uses_cart: s.usesCart,
+    is_part_time: s.isPartTime,
+    part_time_planning_minutes: s.partTimePlanningMinutes,
+    part_time_lunch_minutes: s.partTimeLunchMinutes,
+    location: s.location || null,
+    second_location: s.secondLocation || null,
+    grade_rotation: Object.keys(s.gradeRotation).length > 0 ? s.gradeRotation : null,
+    plus_rotation: s.plusRotation,
+    three_schools: s.threeSchools,
+    third_school_name: s.thirdSchoolName || null,
+    third_location: s.thirdLocation || null,
+    days_at_second_school: s.daysAtSecondSchool,
+    days_at_third_school: s.daysAtThirdSchool,
+    class_duration: s.classDuration ?? null,
+    additional_minutes: s.additionalMinutes ?? [],
+  } as any), [schoolId]);
+
+  // Upsert a set of rows in a single request. Used by both per-card debounced
+  // saves and bulk import. Never deletes.
+  const persistRows = useCallback(async (rows: any[]) => {
+    if (!schoolId || rows.length === 0) return;
+    setSaveStatus('saving');
+    const promise = (async () => {
+      try {
+        const { error } = await supabase.from('specialists').upsert(rows, { onConflict: 'id' });
+        if (error) throw error;
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2000);
+      } catch (err: any) {
+        console.error('Save specialists error:', err);
+        toast.error(`Couldn't save specialists${err?.message ? ` — ${err.message}` : ''}. Check your connection and try again.`);
+        setSaveStatus('idle');
+      }
+    })();
+    inFlightSaves.current.add(promise);
+    try { await promise; } finally { inFlightSaves.current.delete(promise); }
+  }, [schoolId]);
+
+  // Save one card immediately (used by addSpecialist and flush).
+  const saveCard = useCallback(async (id: string) => {
+    const spec = latestRef.current.find(s => s.id === id);
+    if (!spec) return;
+    // Cancel any pending debounce for this card — we're saving now.
+    const t = cardTimers.current.get(id);
+    if (t) { clearTimeout(t); cardTimers.current.delete(id); }
+    await persistRows([buildRow(spec)]);
+  }, [buildRow, persistRows]);
+
+  // Schedule a debounced per-card save.
+  const scheduleCardSave = useCallback((id: string) => {
+    if (!isLoaded.current) return;
+    const existing = cardTimers.current.get(id);
+    if (existing) clearTimeout(existing);
+    const t = setTimeout(() => {
+      cardTimers.current.delete(id);
+      const spec = latestRef.current.find(s => s.id === id);
+      if (spec) persistRows([buildRow(spec)]);
+    }, 800);
+    cardTimers.current.set(id, t);
+  }, [buildRow, persistRows]);
+
+  // On any edit, re-schedule saves for every card that currently has a
+  // pending timer (their content may have changed) plus the card whose id
+  // is in the latest state but not yet timed. Simpler: whenever specialists
+  // changes, walk the array and schedule a save for each currently-dirty
+  // card. To keep this cheap we only re-schedule cards whose serialized
+  // payload differs from what we last saw.
+  const lastSerialized = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     if (!isLoaded.current) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => autoSave(specialists), 1000);
-  }, [specialists, autoSave]);
+    const seen = new Set<string>();
+    for (const s of specialists) {
+      seen.add(s.id);
+      const key = JSON.stringify(buildRow(s));
+      if (lastSerialized.current.get(s.id) !== key) {
+        lastSerialized.current.set(s.id, key);
+        scheduleCardSave(s.id);
+      }
+    }
+    // Drop entries for cards that no longer exist (they were deleted via
+    // remove(), which also fired the DB delete).
+    for (const id of Array.from(lastSerialized.current.keys())) {
+      if (!seen.has(id)) {
+        lastSerialized.current.delete(id);
+        const t = cardTimers.current.get(id);
+        if (t) { clearTimeout(t); cardTimers.current.delete(id); }
+      }
+    }
+  }, [specialists, buildRow, scheduleCardSave]);
+
+  // Flush on unmount: fire every pending debounced card save immediately.
+  // In-flight promises are tracked on inFlightSaves and keep running to
+  // completion even after the component is torn down.
+  useEffect(() => {
+    return () => {
+      if (!isLoaded.current) return;
+      const pendingIds = Array.from(cardTimers.current.keys());
+      for (const id of pendingIds) {
+        const t = cardTimers.current.get(id);
+        if (t) clearTimeout(t);
+        cardTimers.current.delete(id);
+        const spec = latestRef.current.find(s => s.id === id);
+        if (spec) persistRows([buildRow(spec)]);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const addSpecialist = (subject = 'Art') => {
     const base = defaultSpecialist(subject);
@@ -400,16 +437,17 @@ const StepSpecialists = () => {
     if (seedSetup) {
       base.additionalMinutes = [{ label: 'Setup', minutes: Number(data.setupTime) || 5, kind: 'setup' }];
     }
-    setSpecialists(prev => {
-      const next = [...prev, base];
-      // Persist immediately so a freshly-added card survives navigation even
-      // if the user never types a name (previously it was silently dropped).
-      if (isLoaded.current) {
-        if (saveTimer.current) clearTimeout(saveTimer.current);
-        setTimeout(() => autoSave(next), 0);
-      }
-      return next;
-    });
+    // Persist the new card to the DB immediately — do NOT rely on the
+    // debounced autosave to insert it. This is what makes rapid Quick-Add
+    // clicks reliable.
+    setSpecialists(prev => [...prev, base]);
+    if (isLoaded.current && schoolId) {
+      // Fire-and-forget single-row upsert. Record it in lastSerialized so the
+      // scheduling effect doesn't immediately re-fire.
+      const row = buildRow(base);
+      lastSerialized.current.set(base.id, JSON.stringify(row));
+      persistRows([row]);
+    }
   };
 
   const updateAdditionalRow = (specId: string, idx: number, patch: Partial<AdditionalMinute>) => {
@@ -446,7 +484,22 @@ const StepSpecialists = () => {
     setSpecialists(prev => prev.map(s => s.id === id ? { ...s, [field]: value } : s));
   };
 
-  const remove = (id: string) => setSpecialists(prev => prev.filter(s => s.id !== id));
+  const remove = (id: string) => {
+    // Cancel any pending debounced save for this card before we delete.
+    const t = cardTimers.current.get(id);
+    if (t) { clearTimeout(t); cardTimers.current.delete(id); }
+    lastSerialized.current.delete(id);
+    setSpecialists(prev => prev.filter(s => s.id !== id));
+    if (isLoaded.current && schoolId) {
+      // Explicit delete — the ONLY code path that removes from the DB.
+      supabase.from('specialists').delete().eq('id', id).then(({ error }) => {
+        if (error) {
+          console.error('Delete specialist error:', error);
+          toast.error(`Couldn't delete specialist — ${error.message}`);
+        }
+      });
+    }
+  };
 
   const toggleDay = (id: string, day: string) => {
     const spec = specialists.find(s => s.id === id);
@@ -630,6 +683,11 @@ const StepSpecialists = () => {
         secondSchoolName: s.second_school_name || '',
       }));
       setSpecialists(prev => [...prev, ...imported]);
+      if (isLoaded.current && schoolId) {
+        const rows = imported.map(buildRow);
+        rows.forEach((r, i) => lastSerialized.current.set(imported[i].id, JSON.stringify(r)));
+        persistRows(rows);
+      }
       toast.success(`AI auto-filled ${imported.length} specialist${imported.length === 1 ? '' : 's'} from your template.`);
     } catch (err: any) {
       console.error('AI parse error', err);
@@ -674,7 +732,14 @@ const StepSpecialists = () => {
         return;
       }
 
-      if (imported.length > 0) setSpecialists(prev => [...prev, ...imported]);
+      if (imported.length > 0) {
+        setSpecialists(prev => [...prev, ...imported]);
+        if (isLoaded.current && schoolId) {
+          const rows = imported.map(buildRow);
+          rows.forEach((r, i) => lastSerialized.current.set(imported[i].id, JSON.stringify(r)));
+          persistRows(rows);
+        }
+      }
       setImportSummary({ importedCount: imported.length, blankDayCount, errors });
 
       // If most rows failed, also try AI as a recovery path.

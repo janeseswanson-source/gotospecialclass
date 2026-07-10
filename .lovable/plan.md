@@ -1,51 +1,45 @@
 
 ## Problem
 
-Recess/lunch bands in the schedule grid render labels like:
+After Quick-Adding several specialists, the "Saved" indicator lights up, but pressing Continue leaves the database with only the very first specialist (e.g. Swanson/Art). Confirmed against production data — the school has exactly one specialist row despite multiple being added on screen.
 
-`AM Recess · AM Recess · AM Recess · … · Primary (1, 2, 3) · 9:30 AM–9:45 AM`
+## Root cause
 
-Two bugs feed this:
+`StepSpecialists` uses a fragile **"delete everything missing + upsert all"** autosave pattern, driven by two overlapping timers (a 1s useEffect debounce and a 0ms save inside `addSpecialist`) and coalesced through a single `pendingRerunRef` boolean.
 
-1. `buildRecessBands` in `src/lib/scheduleGrid.ts` joins every `grade_band` group name into the label, and dedup is case/whitespace-sensitive — so noisy config rows (labels like "AM Recess", stray whitespace, mixed case) get concatenated instead of merged.
-2. When multiple grade bands share the exact same window, they render as separate rows in some views but in the main grid they collapse into one row where the label repeats the kind for every group.
+Any autosave call that fires with a stale `items` array will nuke rows that were just added by a concurrent save, because `keepIds` is derived from that stale array and everything else in the DB gets deleted. The `savingRef` / `pendingRerunRef` gate only guarantees that ONE rerun happens after the in-flight save — it does not guarantee the winning save uses the freshest state on every race, especially when Continue triggers unmount mid-flight.
 
-## Fix (UI only)
+## Fix
 
-**File: `src/lib/scheduleGrid.ts` — `buildRecessBands`**
+Replace "delete missing + upsert all" with **per-card operations**. Deletions only happen when the user explicitly deletes a card. Saves only ever touch the row(s) that changed. This eliminates the entire class of "one save wipes out other rows" races.
 
-- Normalize group names before dedup: trim, collapse whitespace, compare case-insensitively.
-- Drop any group whose normalized value equals the band kind ("AM Recess", "PM Recess", "Lunch") — those are garbage labels, not grade bands.
-- If, after cleanup, multiple distinct grade bands share the same window, merge them into one banner and join with " & " (e.g. `AM Recess · Primary (1,2,3) & Intermediate (4,5) · 9:30–9:45 AM`).
-- Cap at 3 joined groups; overflow becomes `+N more`.
+### `src/pages/setup/steps/StepSpecialists.tsx`
 
-**File: `src/components/schedule/ScheduleGrid.tsx` — band row (lines ~265–273)**
+1. **Remove the delete-missing block** from `autoSave`. It becomes a pure upsert.
 
-Redesign the band row into a single, cleaner full-width banner:
+2. **Add `deleteSpecialist(id)`** — the ONLY code path that deletes from the DB. Called by the trash icon and the pending-delete confirm dialog. The current `remove()` handler also calls this.
 
-```
-[icon]  AM Recess · Primary (1,2,3) & Intermediate (4,5)          9:30 – 9:45 AM
-```
+3. **Immediate insert on Quick Add.** `addSpecialist` awaits a single-row upsert to the DB before/while updating local state — so the new card exists in the DB the instant it appears on screen. No dependence on the debounced autosave to persist new cards.
 
-- One `<tr>` spanning all day columns (already the case).
-- Left: small icon per kind (Sun for AM Recess, Utensils for Lunch, Cloud for PM Recess), then kind name in bold, then a subtle dot separator, then the merged band names in muted color.
-- Right-aligned: time range in mono, muted.
-- Softer amber styling: thinner border, lighter background, no repeated per-column tint.
-- Never render the kind text more than once per row.
+4. **Per-card debounced upsert on edit.** Replace the whole-array debounce with a `Map<id, timer>` keyed by specialist id. Editing card X schedules a 800ms upsert of card X only. Editing card Y schedules a separate timer for card Y. Concurrent edits never conflict.
 
-**File: `src/pages/schedule/MasterAdminViewPage.tsx` — `chromeForDay` (lines ~248–274) and chrome render (lines ~534–560)**
+5. **Flush on unmount** iterates the per-card timer map and awaits all pending upserts (Promise.all), guaranteeing every dirty card is saved before Continue navigates.
 
-Same treatment for the Master Admin View:
-- Merge same-window entries across bands into one row per kind+window.
-- Render as one full-width banner per window (colspan across all 5 day columns) instead of five per-day cells that each repeat the label.
-- Same icon + label + right-aligned time layout.
+6. **Bulk import path** (`Upload Filled Template` → line ~632 and ~677): after `setSpecialists(prev => [...prev, ...imported])`, immediately `upsert(imported)` in one call, so imports are persisted atomically without relying on the debounce.
 
-## Out of scope
+7. **Remove the `savingRef` / `pendingRerunRef` gate** — no longer needed. Per-card serialization is achieved by the per-card debounce map: a new edit to card X clears the previous card-X timer before scheduling a new one.
 
-No changes to data model, PDFs, XLSX exports, or the recess/lunch setup wizard. Behavior of drag/drop, conflict detection, and time-slot math is untouched — this is purely how the band row is composed and rendered.
+8. **Keep the "(Unnamed specialist)" placeholder** for blank names so NOT NULL still passes.
+
+9. **Save status indicator** remains: any per-card save flips status to 'saving' → 'saved' → 'idle' after 2s.
+
+### Files touched
+- `src/pages/setup/steps/StepSpecialists.tsx` — autoSave/addSpecialist/remove/useEffect rewritten as described.
+
+### Out of scope
+- No schema changes, no RLS changes, no changes to the Teachers step, Setup wizard shell, or `useFlushOnUnmount`.
+- No changes to the import parser, PLUS rotation matrix, or the card UI itself.
 
 ## Technical notes
 
-- `RecessBand` shape is unchanged; only the `label` content and the JSX for the row change.
-- Icons imported from `lucide-react` (already used elsewhere).
-- Colors stay on the existing `amber-*` tokens used today.
+The current 1s debounce + "delete everything not in items" pattern was chosen for simplicity but is incompatible with rapid successive edits: any save that runs with a stale `items` list will delete rows that a later save already inserted. Switching to per-card upsert + explicit delete removes the shared "keepIds" contention entirely — the same pattern the Teachers step (per-teacher upsert) already uses successfully.
