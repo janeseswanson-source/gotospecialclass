@@ -121,28 +121,45 @@ export function friendlyBandLabel(gradeBand: string | null | undefined, bandLabe
  * many config rows must not stack seventeen identical "AM Recess" rows.
  */
 export function buildRecessBands(rows: any[], bandLabels?: Record<string, string>): RecessBand[] {
-  interface Draft { kind: string; start: string; end: string; ids: (string | number)[]; groups: string[] }
+  interface Draft { kind: string; start: string; end: string; ids: (string | number)[]; groups: string[]; seen: Set<string> }
   const drafts = new Map<string, Draft>();
+  const normalize = (s: string) => s.trim().replace(/\s+/g, " ").toLowerCase();
   const add = (kind: string, r: any, i: number, start: string, end: string) => {
     const key = `${kind}|${start}|${end}`;
     let d = drafts.get(key);
-    if (!d) { d = { kind, start, end, ids: [], groups: [] }; drafts.set(key, d); }
+    if (!d) { d = { kind, start, end, ids: [], groups: [], seen: new Set() }; drafts.set(key, d); }
     d.ids.push(r.id ?? i);
-    const g = friendlyBandLabel(r.grade_band, bandLabels);
-    if (g && !d.groups.includes(g)) d.groups.push(g);
+    const raw = friendlyBandLabel(r.grade_band, bandLabels);
+    if (!raw) return;
+    const norm = normalize(raw);
+    if (!norm) return;
+    // Reject garbage labels that just echo the kind (e.g. "AM Recess").
+    if (norm === normalize(kind)) return;
+    if (d.seen.has(norm)) return;
+    d.seen.add(norm);
+    d.groups.push(raw.trim().replace(/\s+/g, " "));
   };
   rows.forEach((r, i) => {
     if (r.am_recess_start && r.am_recess_end) add("AM Recess", r, i, r.am_recess_start, r.am_recess_end);
     if (r.lunch_start && r.lunch_end) add("Lunch", r, i, r.lunch_start, r.lunch_end);
     if (r.pm_recess_start && r.pm_recess_end) add("PM Recess", r, i, r.pm_recess_start, r.pm_recess_end);
   });
-  return Array.from(drafts.values()).map((d) => ({
-    id: `${d.kind.toLowerCase().replace(/\s+/g, "-")}-${d.ids[0]}`,
-    label: d.groups.length ? `${d.kind} · ${d.groups.join(" & ")}` : d.kind,
-    start_time: d.start,
-    end_time: d.end,
-  }));
+  return Array.from(drafts.values()).map((d) => {
+    const MAX = 3;
+    const shown = d.groups.slice(0, MAX);
+    const overflow = d.groups.length - shown.length;
+    const groupStr = shown.length
+      ? shown.join(" & ") + (overflow > 0 ? ` +${overflow} more` : "")
+      : "";
+    return {
+      id: `${d.kind.toLowerCase().replace(/\s+/g, "-")}-${d.ids[0]}`,
+      label: groupStr ? `${d.kind} · ${groupStr}` : d.kind,
+      start_time: d.start,
+      end_time: d.end,
+    };
+  });
 }
+
 
 // --- Conflict detection (single source of truth for grid + warning panel) ---
 //
