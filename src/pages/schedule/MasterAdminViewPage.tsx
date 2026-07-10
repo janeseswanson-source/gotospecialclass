@@ -6,7 +6,7 @@ import { useSchool } from '@/contexts/SchoolContext';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
-import { Printer, FileSpreadsheet, CalendarPlus } from 'lucide-react';
+import { Printer, FileSpreadsheet, CalendarPlus, Sun, Utensils, Cloud, LogOut } from 'lucide-react';
 import logo from '@/assets/logo.png';
 import { formatTime } from '@/lib/utils';
 import { BRAND } from '@/brand/brand';
