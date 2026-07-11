@@ -103,13 +103,36 @@ export function buildCompactTimeSlots(
  *  it's already readable (e.g. "primary", "K-2") → "" for blank/"all"/opaque
  *  keys. Shared by the grid, the admin view, the PDF planner, and the XLSX
  *  export so every surface names bands the same way. */
+const OPAQUE_KEY_RE = /^band_[a-z0-9]+$/i;
+
 export function friendlyBandLabel(gradeBand: string | null | undefined, bandLabels?: Record<string, string> | null): string {
   const key = (gradeBand ?? "").trim();
   if (!key || key === "all") return "";
-  const custom = bandLabels?.[key];
-  if (custom) return custom;
-  if (/^band_[a-z0-9]+$/i.test(key)) return ""; // opaque auto key with no label — say nothing
+  // The stored label MAP can itself carry garbage (older wizard versions saved
+  // the raw band_ key, or the period name, as the label) — sanitize map values
+  // exactly like raw keys instead of trusting any non-empty string.
+  const custom = (bandLabels?.[key] ?? "").trim();
+  if (custom && !OPAQUE_KEY_RE.test(custom) && custom !== key) return custom;
+  if (OPAQUE_KEY_RE.test(key)) return ""; // opaque auto key with no usable label — say nothing
   return key.charAt(0).toUpperCase() + key.slice(1);
+}
+
+/** Convert the STORED shape of schools.recess_grade_bands — an ARRAY of
+ *  {key,label,grades} — into the key→label map every display surface consumes.
+ *  Garbage labels (opaque band_ keys, label==key) are skipped here too, so a
+ *  polluted school record can never print them. Several pages used to cast the
+ *  raw array as a map, which silently dropped ALL labels. */
+export function bandLabelMapFromStored(raw: unknown): Record<string, string> {
+  const map: Record<string, string> = {};
+  if (!Array.isArray(raw)) return map;
+  for (const b of raw as Array<{ key?: string; label?: string }>) {
+    const key = (b?.key ?? "").trim();
+    const label = (b?.label ?? "").trim();
+    if (!key || !label) continue;
+    if (OPAQUE_KEY_RE.test(label) || label === key) continue;
+    map[key] = label;
+  }
+  return map;
 }
 
 /** Convert recess_lunch_config rows into RecessBand objects for the grid.

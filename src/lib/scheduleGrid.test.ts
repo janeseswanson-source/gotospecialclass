@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTimeSlots, buildRecessBands, friendlyBandLabel, computeAutoFit, computeConflictIds, swapPlacements, minToHMS } from "./scheduleGrid";
+import { buildTimeSlots, buildRecessBands, friendlyBandLabel, bandLabelMapFromStored, computeAutoFit, computeConflictIds, swapPlacements, minToHMS } from "./scheduleGrid";
 import type { BlockData } from "@/components/schedule/ScheduleGrid";
 
 const mkBlock = (over: Partial<BlockData>): BlockData => ({
@@ -67,6 +67,13 @@ describe("friendlyBandLabel", () => {
     expect(friendlyBandLabel("band_xgvk5p", {})).toBe("");
     expect(friendlyBandLabel("band_xgvk5p", null)).toBe("");
   });
+  it("sanitizes garbage MAP values (label = raw key, or label = another band_ key)", () => {
+    // Older wizard versions saved the raw key AS the label — must never print.
+    expect(friendlyBandLabel("band_o3re5m", { band_o3re5m: "band_o3re5m" })).toBe("");
+    expect(friendlyBandLabel("band_o3re5m", { band_o3re5m: "band_zzz999" })).toBe("");
+    // A readable key whose map value just echoes the key falls back to capitalization.
+    expect(friendlyBandLabel("primary", { primary: "primary" })).toBe("Primary");
+  });
   it("blank / 'all' → empty", () => {
     expect(friendlyBandLabel("all")).toBe("");
     expect(friendlyBandLabel("")).toBe("");
@@ -75,6 +82,24 @@ describe("friendlyBandLabel", () => {
   it("readable keys pass through capitalized", () => {
     expect(friendlyBandLabel("primary")).toBe("Primary");
     expect(friendlyBandLabel("K-2")).toBe("K-2");
+  });
+});
+
+describe("bandLabelMapFromStored", () => {
+  it("converts the stored array to a key→label map, skipping garbage", () => {
+    const map = bandLabelMapFromStored([
+      { key: "kindergarten", label: "Kindergarten", grades: ["K"] },
+      { key: "band_o3re5m", label: "band_o3re5m", grades: ["1", "2"] }, // label==key garbage
+      { key: "band_xgvk5p", label: "3–5", grades: ["3", "4", "5"] },     // real label survives
+      { key: "", label: "orphan" },
+      { key: "nolabel", label: "" },
+    ]);
+    expect(map).toEqual({ kindergarten: "Kindergarten", band_xgvk5p: "3–5" });
+  });
+  it("non-array input (the old broken cast scenario) → empty map", () => {
+    expect(bandLabelMapFromStored({ band_x: "K–2" })).toEqual({});
+    expect(bandLabelMapFromStored(null)).toEqual({});
+    expect(bandLabelMapFromStored(undefined)).toEqual({});
   });
 });
 

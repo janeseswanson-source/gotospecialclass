@@ -13,7 +13,7 @@ import { BRAND } from '@/brand/brand';
 import PageHeader from '@/components/layout/PageHeader';
 import WeekCyclePicker from '@/components/schedule/WeekCyclePicker';
 import { buildWeekCycle, type WeekStrategy } from '@/lib/weekCycle';
-import { friendlyBandLabel } from '@/lib/scheduleGrid';
+import { friendlyBandLabel, bandLabelMapFromStored } from '@/lib/scheduleGrid';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const;
 const DAY_SHORT: Record<string, typeof DAYS[number]> = {
@@ -243,7 +243,9 @@ export default function MasterAdminViewPage() {
   // ── Chrome rows from recess_lunch_config (source of truth) ──
   // Merge same-window entries across grade bands into ONE banner per window,
   // instead of repeating the kind ("AM Recess · AM Recess · ...") per column.
-  const bandLabels = (school?.recess_grade_bands as Record<string, string> | null) ?? null;
+  // recess_grade_bands is stored as an ARRAY of {key,label,grades} — it must be
+  // converted (casting it as a map silently dropped every real label).
+  const bandLabels = bandLabelMapFromStored(school?.recess_grade_bands);
   type ChromeRow = { key: string; kind: string; groups: string[]; time: string };
   const chromeRowsFor = (kind: 'RECESS' | 'LUNCH' | 'DISMISSAL'): ChromeRow[] => {
     if (kind === 'DISMISSAL') {
@@ -510,13 +512,12 @@ export default function MasterAdminViewPage() {
                                   {specialistName(b.specialist_id)}
                                   {b.teacher_id ? ` · ${teacherName(b.teacher_id)}` : ''}
                                 </div>
-                                {/* Own time when it differs from the row label —
-                                    so a print-out can never mislabel a block. */}
-                                {(b.start_time !== start || b.end_time !== end) && (
-                                  <div className="text-[9px] font-mono text-muted-foreground">
-                                    {formatTime(b.start_time)}–{formatTime(b.end_time)}
-                                  </div>
-                                )}
+                                {/* Every cell prints its own time — a print-out
+                                    must be self-evident even cut off from the
+                                    row label ("time in case it is different"). */}
+                                <div className="text-[9px] font-mono text-muted-foreground">
+                                  {formatTime(b.start_time)}–{formatTime(b.end_time)}
+                                </div>
                               </div>
                               {b.week_label && (
                                 <span className="text-[9px] font-bold uppercase rounded bg-accent/20 text-accent px-1 py-0.5">

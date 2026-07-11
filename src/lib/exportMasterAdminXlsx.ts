@@ -20,7 +20,7 @@ import { formatTime } from "@/lib/utils";
 import { NAVY, GOLD, CREAM, WHITE, MUTE, GRIDLINE, ZEBRA, subjectColors, parseMin } from "@/lib/exportColors";
 import { BRAND } from "@/brand/brand";
 import { resolveDisplayQuote } from "@/lib/quoteService";
-import { friendlyBandLabel } from "@/lib/scheduleGrid";
+import { friendlyBandLabel, bandLabelMapFromStored } from "@/lib/scheduleGrid";
 import { buildBrandHeader, headerCell, addBrandLogo } from "@/lib/exportScheduleXlsx";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"] as const;
@@ -246,7 +246,8 @@ export async function exportMasterAdminXlsx(opts: {
   // ── Recess / Lunch bands (from the wizard's recess & lunch config) ──
   // Band keys go through friendlyBandLabel so raw band_xxxxxx never prints;
   // identical rows dedupe (a staggered school has many config rows).
-  const bandLabelMap = ((school as any)?.recess_grade_bands as Record<string, string> | null) ?? null;
+  // Stored as an ARRAY of {key,label,grades}; the old cast-as-map dropped every label.
+  const bandLabelMap = bandLabelMapFromStored((school as any)?.recess_grade_bands);
   const bandLines = new Set<string>();
   for (const r of (recessData ?? []) as any[]) {
     const friendly = friendlyBandLabel(r.grade_band, bandLabelMap);

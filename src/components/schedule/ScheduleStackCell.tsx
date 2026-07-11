@@ -179,11 +179,14 @@ export default function ScheduleStackCell({
             {grade}
           </span>
         )}
-        <span className="font-mono text-[10px] font-semibold text-foreground/80 truncate">
-          {slotTime && formatTime(slotTime) === formatTime(start)
-            ? `–${formatTime(end)}`
-            : `${formatTime(start)}–${formatTime(end)}`}
-        </span>
+        {/* Time only when the stack does NOT start at the row's slot time — the
+            row label already carries it, and the "–11:00 AM" end-only form read
+            like a stray number. Mixed durations keep their per-row →end marker. */}
+        {!(slotTime && formatTime(slotTime) === formatTime(start)) && (
+          <span className="font-mono text-[10px] font-semibold text-foreground/80 truncate">
+            {formatTime(start)}–{formatTime(end)}
+          </span>
+        )}
         {week && (
           <span className="ml-auto shrink-0 rounded border border-amber-500/40 bg-amber-500/15 px-1 text-[8px] font-bold leading-[12px] text-amber-700 dark:text-amber-300 uppercase">
             {week}

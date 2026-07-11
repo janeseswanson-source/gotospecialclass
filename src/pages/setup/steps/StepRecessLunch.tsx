@@ -130,7 +130,14 @@ const StepRecessLunch = () => {
         });
       } else {
         configRows.forEach((r) => {
-          const band = bandByKey.get(r.grade_band) ?? { key: r.grade_band, label: r.grade_band === 'all' ? 'Whole School' : r.grade_band, grades: [...gradesServed] };
+          // A config row whose band key is missing from the stored bands must
+          // NOT get the raw key as its display label (that's how "band_o3re5m"
+          // leaked into prints) — name it by its grades instead.
+          const band = bandByKey.get(r.grade_band) ?? {
+            key: r.grade_band,
+            label: r.grade_band === 'all' ? 'Whole School' : (gradeRangeLabel(gradesServed) || 'Group'),
+            grades: [...gradesServed],
+          };
           PERIOD_ORDER.forEach(p => {
             const cols = periodColumns(p);
             const start = (r as any)[cols.start] || '';
@@ -175,17 +182,26 @@ const StepRecessLunch = () => {
 
   // ------- Persistence -------
   const buildPayload = useCallback(() => {
+    // A stored band label must NAME the group, not echo the period or the raw
+    // key — older saves leaked "AM Recess" / "band_xxxxxx" labels into every
+    // schedule view and export. Fall back to a grade-range name ("K–2").
+    const cleanLabel = (key: string, label: string, grades: string[]): string => {
+      const l = (label ?? '').trim();
+      const periodNames = new Set(Object.values(PERIOD_LABEL).map(v => v.toLowerCase()));
+      const isGarbage = !l || l === key || /^band_[a-z0-9]+$/i.test(l) || periodNames.has(l.toLowerCase());
+      return isGarbage ? gradeRangeLabel(grades) : l;
+    };
     // Unique bands across all rows, keyed by bandKey (defaulting empty -> 'all').
     const bandIndex = new Map<string, StoredBand>();
     PERIOD_ORDER.forEach(p => cards[p].forEach(r => {
       const key = (r.bandKey || 'all').trim() || 'all';
       if (!bandIndex.has(key)) {
-        bandIndex.set(key, { key, label: r.label, grades: r.grades });
+        bandIndex.set(key, { key, label: cleanLabel(key, r.label, r.grades), grades: r.grades });
       } else {
         // Merge grades so the stored band reflects every row using the same key.
         const existing = bandIndex.get(key)!;
         const merged = Array.from(new Set([...existing.grades, ...r.grades]));
-        bandIndex.set(key, { ...existing, grades: merged });
+        bandIndex.set(key, { ...existing, grades: merged, label: cleanLabel(key, existing.label, merged) });
       }
     }));
 

@@ -12,7 +12,6 @@ import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import { aiErrorToast } from '@/lib/aiError';
 import { supabase } from '@/integrations/supabase/client';
-import { downloadTemplate } from '@/lib/templateDownload';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -562,16 +561,38 @@ const StepSpecialists = () => {
   // { imported, errors, blankDayCount, headerFound }. headerFound=false means
   // we couldn't locate a header row with a "name"/"subject" column, in which
   // case the caller should fall back to AI extraction.
+  /** The simple take-in template: TWO columns, generated at click time. Built
+   *  client-side so it can never be shadowed by a stale admin_templates
+   *  override in storage (which is how an old 14-column sheet kept
+   *  downloading after the repo file was replaced). */
+  const downloadSpecialistTemplate = () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['Teacher Name', 'Specialist (Art, Tech, PE...)'],
+      ['Swanson', 'Art'],
+      ['Mike', 'PE'],
+    ]);
+    (ws as any)['!cols'] = [{ wch: 24 }, { wch: 28 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Specialists');
+    XLSX.writeFile(wb, 'specialists_template.xlsx');
+  };
+
   const buildSpecialistsFromGrid = (rows: string[][]) => {
     const errors: { row: number; name: string; raw: string; reason: string }[] = [];
     const imported: Specialist[] = [];
     let blankDayCount = 0;
 
-    // Find the header row: first row containing a "name" cell AND a "subject" cell.
+    // Find the header row: first row containing a "name" cell AND a subject-ish
+    // cell. "Specialist" counts as subject-ish (the simple 2-column template
+    // says "Specialist (Art, Tech, PE...)") — but NOT when the same cell also
+    // says teacher/name, since old templates title their NAME column
+    // "Specialist Teacher".
+    const isSubjectHeader = (c: string) =>
+      c.includes('subject') || (c.includes('specialist') && !c.includes('teacher') && !c.includes('name'));
     let headerIdx = -1;
     for (let i = 0; i < Math.min(rows.length, 5); i++) {
       const lower = rows[i].map(c => (c || '').toString().toLowerCase());
-      if (lower.some(c => c.includes('name')) && lower.some(c => c.includes('subject'))) {
+      if (lower.some(c => c.includes('name')) && lower.some(isSubjectHeader)) {
         headerIdx = i; break;
       }
     }
@@ -583,7 +604,10 @@ const StepSpecialists = () => {
     const nameIdx = findIdx('name');
     const phoneIdx = findIdx('phone');
     const emailIdx = findIdx('email');
-    const subjectIdx = findIdx('subject');
+    const subjectIdx = (() => {
+      const bySubject = findIdx('subject');
+      return bySubject !== -1 ? bySubject : header.findIndex(isSubjectHeader);
+    })();
     const locationIdx = header.findIndex(h => h === 'location' || h.includes('room') || h.startsWith('location'));
     const daysIdx = findIdx('working day', 'days_working', 'working_days', 'days at school', 'working');
     const twoSchoolsIdx = findIdx('two school', 'two_school', 'second site');
@@ -768,7 +792,7 @@ const StepSpecialists = () => {
           <p className="text-xs text-accent mt-0.5 uppercase tracking-wide">Bulk deploy your specialist roster. Use our tactical template for fastest results.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="outline" className="gap-1.5 border-accent text-accent hover:bg-accent/10" onClick={() => downloadTemplate('specialists', '/templates/specialists_template.xlsx')}>
+          <Button size="sm" variant="outline" className="gap-1.5 border-accent text-accent hover:bg-accent/10" onClick={downloadSpecialistTemplate}>
             <Download className="h-3.5 w-3.5" /> Download Template
           </Button>
           <Button size="sm" className="gap-1.5" onClick={() => fileRef.current?.click()} disabled={aiParsing}>
@@ -1196,7 +1220,7 @@ const StepSpecialists = () => {
           <AlertDialogFooter>
             <AlertDialogCancel>Close</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => downloadTemplate('specialists', '/templates/specialists_template.xlsx')}
+              onClick={downloadSpecialistTemplate}
             >
               Download Template
             </AlertDialogAction>

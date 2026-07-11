@@ -16,7 +16,7 @@ import { toast } from "@/hooks/use-toast";
 import { analyzeScheduleBlocks, type ScheduleWarning } from "@/lib/strategyFeasibility";
 import { warningMeta } from "@/lib/warningMeta";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, computeConflictIds, computeAutoFit, minToHMS, parseTime } from "@/lib/scheduleGrid";
+import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, bandLabelMapFromStored, computeConflictIds, computeAutoFit, minToHMS, parseTime } from "@/lib/scheduleGrid";
 import { evaluateDrop, placementProblem } from "@/lib/gridTargets";
 import AddBlockDialog, { type AddBlockPayload } from "@/components/schedule/AddBlockDialog";
 import { buildWeekCycle } from "@/lib/weekCycle";
@@ -276,14 +276,8 @@ export default function MasterSchedulePage() {
     setSpecialists(specRes.data ?? []);
     setTeachers(teachRes.data ?? []);
     setRecessConfig(recessRes.data ?? []);
-    const rawBands = (schoolRes.data as any)?.recess_grade_bands;
-    if (Array.isArray(rawBands)) {
-      const map: Record<string, string> = {};
-      rawBands.forEach((b: any) => { if (b?.key && b?.label) map[b.key] = b.label; });
-      setRecessBandLabels(map);
-    } else {
-      setRecessBandLabels({});
-    }
+    // Shared converter also drops garbage labels (raw band_ keys stored as labels).
+    setRecessBandLabels(bandLabelMapFromStored((schoolRes.data as any)?.recess_grade_bands));
     setClubs(clubsRes.data ?? []);
     setCalendarEvents(calRes.data ?? []);
     setSchoolYear(schoolRes.data?.school_year ?? undefined);

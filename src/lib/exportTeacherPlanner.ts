@@ -5,6 +5,7 @@ import { SpecialistPlanner, type PlannerBlock, type RecessRow } from "@/pdf/Spec
 import { enumerateWeeks, getMondayOf } from "@/pdf/lib/weekDates";
 import { logActivity } from "@/lib/activityLogger";
 import { resolveDisplayQuote } from "@/lib/quoteService";
+import { bandLabelMapFromStored } from "@/lib/scheduleGrid";
 
 interface Options {
   schoolId: string;
@@ -61,7 +62,7 @@ export async function exportTeacherPlanner(opts: Options): Promise<boolean> {
       weeks,
       weekLabels,
       recessConfig: (recess ?? []) as RecessRow[],
-      bandLabels: ((school as any)?.recess_grade_bands as Record<string, string> | null) ?? null,
+      bandLabels: bandLabelMapFromStored((school as any)?.recess_grade_bands),
       includeNotesBox,
       calendarEvents: calEvents ?? [],
       quote,
