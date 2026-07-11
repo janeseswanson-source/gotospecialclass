@@ -1,27 +1,24 @@
 ## Plan
 
-Two operational steps — no code changes.
+Redeploy edge functions so the latest engine improvements go live.
 
-### 1. Apply pending migrations
+### Redeploy edge functions
 
-Run any unapplied migrations, including `20260711000000_clean_band_labels.sql`, which normalizes garbage labels (empty, `band_xxx` keys, period names like "AM Recess") in `schools.recess_grade_bands` into readable grade-range names (`K–2`, `K`, or `Group`). Pure data cleanup — no schema change, no RLS/GRANT changes.
-
-Sibling migrations already in the folder that will also apply if not yet run:
-- `20260707000000_specialist_meeting.sql`
-- `20260707150000_coverage_relaxed.sql`
-
-### 2. Redeploy edge functions
-
-Redeploy so the latest engine copies (shared `_engine/` files) are picked up:
+Single call to `supabase--deploy_edge_functions` with:
 
 - `generate-schedule`
 - `generate-cpsat`
 - `run-generation-job`
-- `refine-schedule`
-- `parse-calendar`
+- `refine-schedule` (engine copy under `_engine/` changed)
+- `parse-calendar` (PDF-following calendar parser)
+
+### Not included
+
+- No migrations this round — the `clean_band_labels` cleanup already ran last turn.
+- No frontend or business-logic edits.
+- No secrets changes.
 
 ### Technical details
 
-- Migration is executed via the migration tool (approval flow).
-- Edge functions are redeployed via `supabase--deploy_edge_functions` with the five names above in one call.
-- No frontend or business-logic edits.
+- Deploys pick up the shared engine files that were synced into each function's `_engine/` folder via `scripts/sync-engine.sh`.
+- Engine improvements shipping: grade adjacency, rescue probe (scheduler), PDF-following calendar parsing.
