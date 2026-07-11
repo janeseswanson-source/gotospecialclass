@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import ScheduleGrid, { type BlockData, type RecessBand } from "@/components/schedule/ScheduleGrid";
 import { getSubjectBadgeClass } from "@/lib/subjectColors";
 import { cn } from "@/lib/utils";
-import { parseTime } from "@/lib/scheduleGrid";
+import { parseTime, friendlyBandLabel, bandLabelMapFromStored } from "@/lib/scheduleGrid";
 import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
 import WeekCyclePicker from "@/components/schedule/WeekCyclePicker";
 import { buildWeekCycle, type WeekStrategy } from "@/lib/weekCycle";
@@ -82,16 +82,33 @@ function expandBandGrades(band: string): string[] {
   return out;
 }
 
-function bandsForSpecialist(gradesServed: string[], rows: RecessRow[]): RecessBand[] {
+function bandsForSpecialist(
+  gradesServed: string[],
+  rows: RecessRow[],
+  bandDefsRaw?: unknown,
+): RecessBand[] {
+  // schools.recess_grade_bands ({key,label,grades}) is the authority for which
+  // grades a band covers and what it's called — the grade_band KEY is often an
+  // opaque auto id ("band_o3re5m") that parses to nothing and must never print.
+  const defs = Array.isArray(bandDefsRaw) ? (bandDefsRaw as Array<{ key?: string; grades?: unknown }>) : [];
+  const gradesByKey = new Map<string, string[]>();
+  for (const d of defs) {
+    if (d?.key && Array.isArray(d.grades)) gradesByKey.set(d.key, d.grades.map((g) => String(g).trim()));
+  }
+  const bandLabels = bandLabelMapFromStored(bandDefsRaw);
   const out: RecessBand[] = [];
   for (const row of rows) {
     const isAll = (row.grade_band ?? "all").toLowerCase() === "all";
     if (!isAll) {
-      const bandGrades = expandBandGrades(row.grade_band);
-      const overlap = bandGrades.some((g) => gradesServed.includes(g));
-      if (!overlap) continue;
+      const bandGrades = gradesByKey.get(row.grade_band) ?? expandBandGrades(row.grade_band);
+      // Only filter when the grades actually resolved — an opaque key with no
+      // stored definition used to make the band VANISH from the grid, which is
+      // worse than showing recess to a specialist it may not apply to.
+      const resolvable = bandGrades.some((g) => /^(K|\d+)$/i.test(g));
+      if (resolvable && !bandGrades.some((g) => gradesServed.includes(g))) continue;
     }
-    const prefix = isAll ? "" : `${row.grade_band} `;
+    const friendly = isAll ? "" : friendlyBandLabel(row.grade_band, bandLabels);
+    const prefix = friendly ? `${friendly} ` : "";
     const push = (label: string, s: string | null, e: string | null, suffix: string) => {
       if (s && e) out.push({ id: `${row.id}-${suffix}`, label: `${prefix}${label}`, start_time: s, end_time: e });
     };
@@ -112,6 +129,7 @@ export default function SpecialistPlannerPage() {
   const [loadError, setLoadError] = useState(false);
   const [timeSlots, setTimeSlots] = useState<string[]>([]);
   const [recessRows, setRecessRows] = useState<RecessRow[]>([]);
+  const [bandDefs, setBandDefs] = useState<unknown>(null);
   const [weekFilter, setWeekFilter] = useState<string>("all");
 
   useEffect(() => {
@@ -128,6 +146,7 @@ export default function SpecialistPlannerPage() {
     const { data: specs } = await supabase.from("specialists").select("*").eq("school_id", selectedSchoolId!);
     const { data: teachers } = await supabase.from("classroom_teachers").select("id, name").eq("school_id", selectedSchoolId!);
     const { data: recess } = await supabase.from("recess_lunch_config").select("*").eq("school_id", selectedSchoolId!);
+    const { data: schoolRow } = await supabase.from("schools").select("recess_grade_bands").eq("id", selectedSchoolId!).maybeSingle();
 
     let allBlocks: any[] = [];
     if (gen) {
@@ -158,6 +177,7 @@ export default function SpecialistPlannerPage() {
     setBlocks(mapped);
     setTimeSlots([...new Set(mapped.map((b) => b.start_time))].sort());
     setRecessRows((recess ?? []) as RecessRow[]);
+    setBandDefs((schoolRow as any)?.recess_grade_bands ?? null);
 
     const enriched: SpecialistWithLoad[] = (specs ?? []).map((s) => {
       const myBlocks = allBlocks.filter((b) => b.specialist_id === s.id);
@@ -270,7 +290,7 @@ export default function SpecialistPlannerPage() {
   const selectedBlocks = selectedSpec
     ? blocks.filter((b) => b.specialist_name === selectedSpec.name && weekVisible(b.week_label))
     : [];
-  const selectedBands = selectedSpec ? bandsForSpecialist(selectedSpec.gradesServed, recessRows) : [];
+  const selectedBands = selectedSpec ? bandsForSpecialist(selectedSpec.gradesServed, recessRows, bandDefs) : [];
 
   // Per-day teaching load + internal planning gaps for the selected specialist —
   // "their reality": how full each day is and where the open planning time falls.
