@@ -223,7 +223,7 @@ const StepCalendarUpload = () => {
         toast.error('Failed to save events');
       } else {
         toast.success(`${rows.length} events saved and approved`);
-        setStep(SETUP_STEPS.RECESS_LUNCH);
+        setStep(SETUP_STEPS.CONTRACTUAL_MINUTES);
       }
     } catch (err) {
       toast.error('Failed to save events');
@@ -278,7 +278,7 @@ const StepCalendarUpload = () => {
                 onClick={() => setStep(SETUP_STEPS.SCHOOL_INFO)}
                 className="text-primary hover:underline font-medium"
               >
-                Step 2 (School Info)
+                School Info
               </button>{' '}
               first, or enter one below.
             </div>
@@ -490,7 +490,7 @@ const StepCalendarUpload = () => {
       )}
 
       <div className="flex justify-between">
-        <Button variant="outline" onClick={() => setStep(SETUP_STEPS.SCHOOL_INFO)}>Back</Button>
+        <Button variant="outline" onClick={() => setStep(SETUP_STEPS.TEACHERS)}>Back</Button>
         <div className="flex gap-2">
           {/* Save is offered whenever there are events worth saving — a manually
               added event (no AI parse) used to have NO save button, so
@@ -507,7 +507,7 @@ const StepCalendarUpload = () => {
               if (events.some(e => e.title && e.date)) {
                 toast.warning('Unsaved events were skipped — use "Approve & Save" to keep them.');
               }
-              setStep(SETUP_STEPS.RECESS_LUNCH);
+              setStep(SETUP_STEPS.CONTRACTUAL_MINUTES);
             }}
           >
             {events.some(e => e.title && e.date) ? 'Skip without saving' : 'Continue'}

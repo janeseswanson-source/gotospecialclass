@@ -210,7 +210,8 @@ const StepSchoolInfo = () => {
     if (!data.schoolName.trim()) { toast.error('Please enter a school name'); return; }
     if (data.gradesServed.length === 0) { toast.error('Please select at least one grade'); return; }
     if (rotationsBeforeSchool) { toast.error("Rotations can't start before school does."); return; }
-    setStep(SETUP_STEPS.CALENDAR);
+    // Happy path skips the optional Calendar step — it lives in the Extras group.
+    setStep(SETUP_STEPS.RECESS_LUNCH);
   };
 
   return (

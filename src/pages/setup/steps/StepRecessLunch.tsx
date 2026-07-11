@@ -731,7 +731,7 @@ const StepRecessLunch = () => {
       )}
 
       <div className="flex justify-between pt-2">
-        <Button variant="outline" onClick={() => setStep(SETUP_STEPS.CALENDAR)}>Back</Button>
+        <Button variant="outline" onClick={() => setStep(SETUP_STEPS.SCHOOL_INFO)}>Back</Button>
         {/* Invalid rows block the WHOLE autosave (valid rows included) — letting
             Continue through would silently drop the entire recess config. */}
         <div className="flex flex-col items-end gap-1">

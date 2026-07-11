@@ -19,6 +19,7 @@ import ScrabbleTray from "./ScrabbleTray";
 import { computeConflictIds, parseTime } from "@/lib/scheduleGrid";
 import { legalTargets, type DropEval } from "@/lib/gridTargets";
 import { getSubjectLeftBorderClass } from "@/lib/subjectColors";
+import { getGradeLeftBorderClass } from "@/lib/gradeColors";
 import { X, Sun, Utensils, Cloud, Coffee } from "lucide-react";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
@@ -85,6 +86,9 @@ interface ScheduleGridProps {
   /** When set, empty cells show a hover "+" that asks the page to open its
    *  Add-class flow for (day, time). The page owns legality + persistence. */
   onAddBlock?: (day: string, time: string) => void;
+  /** What the colored left rail encodes. Default "subject" (master grid);
+   *  the Specialist Planner passes "grade" so grades-together reads at a glance. */
+  colorBy?: "subject" | "grade";
 }
 
 /** A droppable grid cell. Paints the legal-target wash while a drag is active. */
@@ -144,7 +148,7 @@ export default function ScheduleGrid({
   blocks, timeSlots, onBlockClick, onBlockDrop, lockedIds, onToggleLock,
   recessBands, schoolStart, schoolEnd, onNotesChange, notesEditable, conflictIds,
   trayBlocks, liftedIds, highlightIds, ghostIds, originIds, deletedIds, stickyTopOffset,
-  onAddBlock,
+  onAddBlock, colorBy = "subject",
 }: ScheduleGridProps) {
   // Touch/keyboard "pick up to move": the block waiting for a target slot.
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -331,6 +335,7 @@ export default function ScheduleGrid({
                               selectedId={selectedId}
                               dndEnabled={!!onBlockDrop}
                               activeDragId={activeId}
+                              colorBy={colorBy}
                             />
                           ) : onAddBlock && !moveMode ? (
                             <button
@@ -361,7 +366,7 @@ export default function ScheduleGrid({
         {activeBlock ? (
           <div className={cn(
             "pointer-events-none w-44 rounded-md border bg-card px-2 py-1.5 text-[11px] shadow-xl ring-2 ring-primary/50",
-            getSubjectLeftBorderClass(activeBlock.subject),
+            colorBy === "grade" ? getGradeLeftBorderClass(activeBlock.grade) : getSubjectLeftBorderClass(activeBlock.subject),
           )}>
             <div className="flex items-center gap-1">
               {activeBlock.grade && (

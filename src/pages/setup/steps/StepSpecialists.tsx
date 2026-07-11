@@ -883,7 +883,7 @@ const StepSpecialists = () => {
                 <Input className="h-8 text-xs" type="number" min={0} value={s.weeklyPlanningMinutes} onChange={(e) => update(s.id, 'weeklyPlanningMinutes', Math.max(0, Number(e.target.value)))} />
               </div>
               <div className="space-y-1">
-                <FieldLabel className="text-xs" tooltip="When this specialist's planning time occurs. Defaults to the school-wide setting from step 2.">Planning Time Occurs</FieldLabel>
+                <FieldLabel className="text-xs" tooltip="When this specialist's planning time occurs. Defaults to the school-wide setting from School Info.">Planning Time Occurs</FieldLabel>
                 <select className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs" value={s.planningType} onChange={(e) => update(s.id, 'planningType', e.target.value)}>
                   <option value="before_school">Before school</option>
                   <option value="during_rotations">During rotations</option>

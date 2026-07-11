@@ -123,9 +123,8 @@ export interface SubjectColors {
   accentArgb: string; fillArgb: string;
 }
 
-/** Resolve a subject to its canonical color set in every representation. */
-export function subjectColorsFor(subject?: string | null): SubjectColors {
-  const h = subjectHue(subject);
+/** Expand a band hue (or the gold/cream fallback) into every representation. */
+function bandColorsFor(h: number | null): SubjectColors {
   const accent: Hsl = h === null ? PALETTE.goldDeep : { h, s: SUBJECT_BAND.accent.s, l: SUBJECT_BAND.accent.l };
   const fill: Hsl = h === null ? PALETTE.cream : { h, s: SUBJECT_BAND.fill.s, l: SUBJECT_BAND.fill.l };
   return {
@@ -135,6 +134,39 @@ export function subjectColorsFor(subject?: string | null): SubjectColors {
     accentHex: hslToHex(accent), fillHex: hslToHex(fill),
     accentArgb: hslToArgb(accent), fillArgb: hslToArgb(fill),
   };
+}
+
+/** Resolve a subject to its canonical color set in every representation. */
+export function subjectColorsFor(subject?: string | null): SubjectColors {
+  return bandColorsFor(subjectHue(subject));
+}
+
+// ── Grade color band ─────────────────────────────────────────────────────────
+// Same machinery as subjects: ONE saturation/lightness band, distinct hues per
+// grade, so "which grades sit together?" reads at a glance (Specialist Planner
+// rails). Adjacent grades get strongly-contrasting hues; TK shares K's color.
+export const GRADE_HUES = {
+  k: 276, "1": 220, "2": 194, "3": 152, "4": 96, "5": 24, "6": 352, "7": 312, "8": 250,
+} as const;
+export type GradeKey = keyof typeof GRADE_HUES;
+
+/** Canonical key for a grade label ("K", "TK", "3", "Grade 5"…), or null. */
+export function gradeKey(grade?: string | null): GradeKey | null {
+  const g = (grade ?? "").trim().toLowerCase();
+  if (!g) return null;
+  if (/^(t?k\b|t?k$|kinder|pre-?k)/.test(g)) return "k";
+  const m = g.match(/[1-8]/);
+  return m ? (m[0] as GradeKey) : null;
+}
+
+export function gradeHue(grade?: string | null): number | null {
+  const k = gradeKey(grade);
+  return k === null ? null : GRADE_HUES[k];
+}
+
+/** Resolve a grade to its canonical color set (same band as subjects). */
+export function gradeColorsFor(grade?: string | null): SubjectColors {
+  return bandColorsFor(gradeHue(grade));
 }
 
 // ── Product identity ─────────────────────────────────────────────────────────

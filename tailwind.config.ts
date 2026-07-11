@@ -1,5 +1,5 @@
 import type { Config } from "tailwindcss";
-import { SUBJECT_HUES, SUBJECT_BAND, PALETTE, hslCss } from "./src/brand/brand";
+import { SUBJECT_HUES, SUBJECT_BAND, GRADE_HUES, PALETTE, hslCss } from "./src/brand/brand";
 
 // Subject colors as STATIC named tokens (so `text-subject-art` etc. are
 // JIT-generated — runtime arbitrary values would not be). Same HSL band the
@@ -11,12 +11,22 @@ for (const [k, h] of Object.entries(SUBJECT_HUES)) {
   subjectColorTokens[`subject-${k}-fill`] = hslCss({ h, s: SUBJECT_BAND.fill.s, l: SUBJECT_BAND.fill.l });
 }
 
+// Grade colors — same band, one token per grade (Specialist Planner rails).
+const gradeColorTokens: Record<string, string> = { "grade-any": hslCss(PALETTE.goldDeep) };
+for (const [k, h] of Object.entries(GRADE_HUES)) {
+  gradeColorTokens[`grade-${k}`] = hslCss({ h, s: SUBJECT_BAND.accent.s, l: SUBJECT_BAND.accent.l });
+  gradeColorTokens[`grade-${k}-dk`] = hslCss({ h, s: SUBJECT_BAND.accentDark.s, l: SUBJECT_BAND.accentDark.l });
+  gradeColorTokens[`grade-${k}-fill`] = hslCss({ h, s: SUBJECT_BAND.fill.s, l: SUBJECT_BAND.fill.l });
+}
+
 export default {
   darkMode: ["class"],
   content: ["./pages/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./app/**/*.{ts,tsx}", "./src/**/*.{ts,tsx}"],
-  // Subject color classes are built via template literals (`text-subject-${key}`),
-  // so the JIT scanner can't see them — safelist the full derived set.
-  safelist: Object.keys(subjectColorTokens).flatMap((name) => [`text-${name}`, `border-l-${name}`, `bg-${name}`]),
+  // Subject/grade color classes are built via template literals
+  // (`text-subject-${key}`, `border-l-grade-${key}`), so the JIT scanner can't
+  // see them — safelist the full derived set.
+  safelist: [...Object.keys(subjectColorTokens), ...Object.keys(gradeColorTokens)]
+    .flatMap((name) => [`text-${name}`, `border-l-${name}`, `bg-${name}`]),
   prefix: "",
   theme: {
     container: {
@@ -32,6 +42,7 @@ export default {
       },
       colors: {
         ...subjectColorTokens,
+        ...gradeColorTokens,
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

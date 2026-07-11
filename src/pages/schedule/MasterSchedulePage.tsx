@@ -37,6 +37,7 @@ import WeekCyclePicker from "@/components/schedule/WeekCyclePicker";
 import MobileDayPager from "@/components/schedule/MobileDayPager";
 import FilterRail, { FilterRailSection } from "@/components/layout/FilterRail";
 import { getSubjectColorClass, getSubjectLeftBorderClass } from "@/lib/subjectColors";
+import { SETUP_STEPS } from "@/pages/setup/stepIndex";
 import { Undo2, Redo2, Wand2, Download, FileText, Printer, Keyboard } from "lucide-react";
 
 // Deferred: the AI chat (streamdown + shiki + mermaid) and the PDF export modals
@@ -48,8 +49,16 @@ const AdminExportModal = lazy(() => import("./exports/AdminExportModal"));
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
+// Symbolic indices from stepIndex — the old numeric literals silently went
+// stale (off by one) when the Contractual Minutes step was inserted.
 const FIX_STEP_MAP: Record<string, number> = {
-  recess: 3, specialists: 4, teachers: 5, rotation: 6, clubs: 7, events: 8, conflicts: 9,
+  recess: SETUP_STEPS.RECESS_LUNCH,
+  specialists: SETUP_STEPS.SPECIALISTS,
+  teachers: SETUP_STEPS.TEACHERS,
+  rotation: SETUP_STEPS.ADMIN_ROTATION,
+  clubs: SETUP_STEPS.CLUBS,
+  events: SETUP_STEPS.EVENTS,
+  conflicts: SETUP_STEPS.CONFLICTS,
 };
 
 // ONE label source for strategies (lib/conflictStrategies) — three divergent

@@ -15,6 +15,7 @@ import { useDraggable } from "@dnd-kit/core";
 import { cn, formatTime } from "@/lib/utils";
 import { AlertTriangle, Lock, GripVertical } from "lucide-react";
 import { getSubjectLeftBorderClass, getSubjectColorClass } from "@/lib/subjectColors";
+import { getGradeLeftBorderClass } from "@/lib/gradeColors";
 import type { BlockData } from "./ScheduleGrid";
 
 interface Props {
@@ -39,18 +40,24 @@ interface Props {
   dndEnabled?: boolean;
   /** The id currently being pointer-dragged (rendered semi-transparent). */
   activeDragId?: string | null;
+  /** What the colored left rail encodes (default "subject"). In "grade" mode a
+   *  mixed-grade stack drops the shared rail and colors each row's rail off its
+   *  OWN grade instead — one rail color per grade, never a lie. */
+  colorBy?: "subject" | "grade";
 }
 
 /** One draggable rotation row. Extracted so `useDraggable` runs at the row level. */
 function BlockRow({
   block, teacher, showGrade, differingEnd, isSelected, isLocked, isGhost, isOrigin, isDeleted,
-  dndEnabled, isActiveDrag, onBlockClick, onPickUp,
+  dndEnabled, isActiveDrag, onBlockClick, onPickUp, railClass,
 }: {
   block: BlockData;
   teacher: string;
   /** Render this row's own grade chip (multi-grade stacks — the shared header
    *  chip would mislabel the other grades' rows). */
   showGrade: boolean;
+  /** Per-row left rail (grade mode, mixed-grade stacks only). */
+  railClass?: string;
   /** This row ends at a different time than the header range (mixed durations
    *  sharing a start slot) — show its own end time so the header doesn't lie. */
   differingEnd: boolean;
@@ -77,6 +84,7 @@ function BlockRow({
       onClick={(e) => { e.stopPropagation(); if (!isGhost) onBlockClick?.(block); }}
       className={cn(
         "flex items-center gap-1.5 rounded px-1 py-0.5 cursor-pointer hover:bg-foreground/5 transition-colors motion-reduce:transition-none min-w-0",
+        railClass && cn("rounded-l-none", railClass),
         isSelected && "ring-1 ring-primary bg-primary/10",
         canDrag && "active:cursor-grabbing",
         (isDragging || isActiveDrag) && "opacity-40",
@@ -123,7 +131,7 @@ function BlockRow({
 
 export default function ScheduleStackCell({
   blocks, slotTime, conflictIds, lockedIds, highlightIds, ghostIds, originIds, deletedIds,
-  onBlockClick, onPickUp, selectedId, dndEnabled, activeDragId,
+  onBlockClick, onPickUp, selectedId, dndEnabled, activeDragId, colorBy = "subject",
 }: Props) {
   if (!blocks.length) return null;
   // Dedupe by grade + subject + teacher (keep first); preserves order so the
@@ -152,7 +160,12 @@ export default function ScheduleStackCell({
   const isHighlighted = rows.some((r) => highlightIds?.has(r.id));
   const allGhost = rows.length > 0 && rows.every((r) => ghostIds?.has(r.id));
   const allOrigin = rows.length > 0 && rows.every((r) => originIds?.has(r.id));
-  const borderClass = getSubjectLeftBorderClass(head.subject);
+  const gradeMode = colorBy === "grade";
+  // Grade mode: one shared rail when the whole stack is one grade; a MIXED
+  // stack colors each row's rail individually (a single color would lie).
+  const borderClass = gradeMode
+    ? (multiGrade ? "border-l-[3px] border-l-border" : getGradeLeftBorderClass(head.grade))
+    : getSubjectLeftBorderClass(head.subject);
   const tintClass = getSubjectColorClass(head.subject);
 
   return (
@@ -207,6 +220,7 @@ export default function ScheduleStackCell({
             block={b}
             teacher={b.teacher_name ?? b.specialist_name ?? "—"}
             showGrade={multiGrade}
+            railClass={gradeMode && multiGrade ? getGradeLeftBorderClass(b.grade) : undefined}
             differingEnd={b.end_time !== end}
             isSelected={selectedId === b.id}
             isLocked={!!lockedIds?.has(b.id)}

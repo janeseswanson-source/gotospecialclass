@@ -1,10 +1,11 @@
-import { useEffect } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useSetup } from '@/contexts/SetupContext';
-import { CheckCircle2, Circle, Lock } from 'lucide-react';
+import { CheckCircle2, ChevronDown, Circle, Lock, PlusCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { SETUP_STEPS, REQUIRED_STEP_ORDER, EXTRA_STEP_ORDER } from './stepIndex';
 import StepWelcome from './steps/StepWelcome';
 import StepSchoolInfo from './steps/StepSchoolInfo';
 import StepCalendarUpload from './steps/StepCalendarUpload';
@@ -33,7 +34,7 @@ interface StepDef {
 const STEPS: StepDef[] = [
   {
     label: 'Welcome', blurb: 'Quick intro and what you’ll set up.', Component: StepWelcome,
-    why: 'A 5-minute tour of the 12 steps so you know what’s ahead.',
+    why: 'A 5-minute tour — 7 required steps, plus optional extras you can add any time.',
   },
   {
     label: 'School Info', blurb: 'Bell times, grades, planning minutes.', Component: StepSchoolInfo,
@@ -125,8 +126,27 @@ const SetupWizardContent = () => {
 
   const current = STEPS[step] ?? STEPS[0];
   const StepComponent = current.Component;
-  const completedCount = Array.from(visitedSteps).filter(i => i < step).length;
-  const progressPct = Math.round(((step) / (STEPS.length - 1)) * 100);
+
+  const isExtraStep = EXTRA_STEP_ORDER.includes(step);
+  const requiredPos = isExtraStep
+    ? REQUIRED_STEP_ORDER.indexOf(SETUP_STEPS.CONFLICTS) // extras sit between Teachers and Conflicts
+    : Math.max(0, REQUIRED_STEP_ORDER.indexOf(step));
+  // Progress reflects the REQUIRED journey only — skipping extras never stalls it.
+  const progressPct = Math.round((requiredPos / (REQUIRED_STEP_ORDER.length - 1)) * 100);
+
+  // Rail display order: the required path, with the Extras group between
+  // Teachers and Conflicts. Step INDICES are untouched — this is presentation.
+  const conflictsPos = REQUIRED_STEP_ORDER.indexOf(SETUP_STEPS.CONFLICTS);
+  const displayOrder = [
+    ...REQUIRED_STEP_ORDER.slice(0, conflictsPos),
+    ...EXTRA_STEP_ORDER,
+    ...REQUIRED_STEP_ORDER.slice(conflictsPos),
+  ];
+  const posOf = (i: number) => displayOrder.indexOf(i);
+  const curPos = posOf(step);
+  const extrasVisitedCount = EXTRA_STEP_ORDER.filter(i => visitedSteps.has(i)).length;
+  const [extrasOpen, setExtrasOpen] = useState(false);
+  useEffect(() => { if (isExtraStep) setExtrasOpen(true); }, [isExtraStep]);
 
   return (
     <div className="animate-fade-in">
@@ -135,7 +155,9 @@ const SetupWizardContent = () => {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Setup Wizard</h1>
           <p className="text-sm text-muted-foreground">
-            Step {step + 1} of {STEPS.length} — {current.label}
+            {isExtraStep
+              ? <>Extras (optional) — {current.label}</>
+              : <>Step {requiredPos + 1} of {REQUIRED_STEP_ORDER.length} — {current.label}</>}
           </p>
         </div>
         <div className="hidden sm:flex items-center gap-3">
@@ -154,21 +176,37 @@ const SetupWizardContent = () => {
           <Select value={String(step)} onValueChange={(v) => setStep(Number(v))}>
             <SelectTrigger className="w-full">
               <SelectValue>
-                {step + 1}. {current.label}
+                {isExtraStep ? current.label : `${requiredPos + 1}. ${current.label}`}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
-              {STEPS.map((s, i) => {
-                const isVisited = visitedSteps.has(i);
-                return (
-                  <SelectItem key={i} value={String(i)}>
-                    <span className="flex items-center gap-2">
-                      {isVisited && i !== step && <CheckCircle2 className="h-3.5 w-3.5 text-primary" />}
-                      <span>{i + 1}. {s.label}</span>
-                    </span>
-                  </SelectItem>
-                );
-              })}
+              <SelectGroup>
+                {REQUIRED_STEP_ORDER.map((i, n) => {
+                  const isVisited = visitedSteps.has(i);
+                  return (
+                    <SelectItem key={i} value={String(i)}>
+                      <span className="flex items-center gap-2">
+                        {isVisited && i !== step && <CheckCircle2 className="h-3.5 w-3.5 text-primary" />}
+                        <span>{n + 1}. {STEPS[i].label}</span>
+                      </span>
+                    </SelectItem>
+                  );
+                })}
+              </SelectGroup>
+              <SelectGroup>
+                <SelectLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">Extras (optional)</SelectLabel>
+                {EXTRA_STEP_ORDER.map((i) => {
+                  const isVisited = visitedSteps.has(i);
+                  return (
+                    <SelectItem key={i} value={String(i)}>
+                      <span className="flex items-center gap-2">
+                        {isVisited && i !== step && <CheckCircle2 className="h-3.5 w-3.5 text-primary" />}
+                        <span>{STEPS[i].label}</span>
+                      </span>
+                    </SelectItem>
+                  );
+                })}
+              </SelectGroup>
             </SelectContent>
           </Select>
           <div className="animate-slide-up" key={step}>
@@ -187,46 +225,113 @@ const SetupWizardContent = () => {
           {/* Vertical stepper rail */}
           <nav aria-label="Setup steps" className="sticky top-4 self-start">
             <ol className="space-y-0.5 rounded-xl border border-border bg-card p-2">
-              {STEPS.map((s, i) => {
+              {REQUIRED_STEP_ORDER.map((i) => {
+                const s = STEPS[i];
                 const isActive = i === step;
                 const isVisited = visitedSteps.has(i);
-                const isDone = isVisited && i < step;
-                const isLocked = !isVisited && i > step;
+                const isDone = isVisited && posOf(i) < curPos;
+                const isLocked = !isVisited && posOf(i) > curPos;
                 return (
-                  <li key={s.label}>
-                    <button
-                      type="button"
-                      onClick={() => setStep(i)}
-                      className={cn(
-                        'group flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition-colors',
-                        isActive
-                          ? 'bg-primary/10 text-foreground'
-                          : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-                      )}
-                    >
-                      <span
+                  <Fragment key={s.label}>
+                    {/* The Extras group lives between Teachers and Conflicts. */}
+                    {i === SETUP_STEPS.CONFLICTS && (
+                      <li>
+                        <button
+                          type="button"
+                          onClick={() => setExtrasOpen((o) => !o)}
+                          aria-expanded={extrasOpen}
+                          className="group flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                        >
+                          <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-dashed border-border bg-background text-muted-foreground">
+                            <PlusCircle className="h-3 w-3" />
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-1.5 text-sm font-medium leading-tight">
+                              Extras
+                              <span className="rounded bg-muted px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Optional</span>
+                            </span>
+                            <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
+                              {extrasVisitedCount > 0
+                                ? `${extrasVisitedCount} of ${EXTRA_STEP_ORDER.length} visited`
+                                : 'Calendar, contracts, PLC, clubs, events.'}
+                            </span>
+                          </span>
+                          <ChevronDown className={cn('mt-1 h-4 w-4 shrink-0 transition-transform', extrasOpen && 'rotate-180')} />
+                        </button>
+                        {extrasOpen && (
+                          <ol className="ml-4 mt-0.5 space-y-0.5 border-l border-border pl-2">
+                            {EXTRA_STEP_ORDER.map((j) => {
+                              const e = STEPS[j];
+                              const eActive = j === step;
+                              const eDone = visitedSteps.has(j) && !eActive;
+                              return (
+                                <li key={e.label}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setStep(j)}
+                                    className={cn(
+                                      'group flex w-full items-start gap-3 rounded-lg px-3 py-1.5 text-left transition-colors',
+                                      eActive
+                                        ? 'bg-primary/10 text-foreground'
+                                        : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+                                    )}
+                                  >
+                                    <span
+                                      className={cn(
+                                        'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border',
+                                        eActive
+                                          ? 'border-primary bg-primary text-primary-foreground'
+                                          : eDone
+                                          ? 'border-primary/60 bg-primary/15 text-primary'
+                                          : 'border-border bg-background text-muted-foreground',
+                                      )}
+                                    >
+                                      {eDone ? <CheckCircle2 className="h-2.5 w-2.5" /> : <Circle className="h-2.5 w-2.5" />}
+                                    </span>
+                                    <span className="min-w-0 flex-1">
+                                      <span className={cn('block text-[13px] font-medium leading-tight', eActive && 'text-foreground')}>{e.label}</span>
+                                      <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{e.blurb}</span>
+                                    </span>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ol>
+                        )}
+                      </li>
+                    )}
+                    <li>
+                      <button
+                        type="button"
+                        onClick={() => setStep(i)}
                         className={cn(
-                          'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold',
+                          'group flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left transition-colors',
                           isActive
-                            ? 'border-primary bg-primary text-primary-foreground'
-                            : isDone
-                            ? 'border-primary/60 bg-primary/15 text-primary'
-                            : 'border-border bg-background text-muted-foreground',
+                            ? 'bg-primary/10 text-foreground'
+                            : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
                         )}
                       >
-                        {isDone ? <CheckCircle2 className="h-3 w-3" /> : isLocked ? <Lock className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className={cn('flex items-center gap-1.5 text-sm font-medium leading-tight', isActive && 'text-foreground')}>
-                          {s.label}
-                          {s.optional && (
-                            <span className="rounded bg-muted px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Optional</span>
+                        <span
+                          className={cn(
+                            'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px] font-semibold',
+                            isActive
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : isDone
+                              ? 'border-primary/60 bg-primary/15 text-primary'
+                              : 'border-border bg-background text-muted-foreground',
                           )}
+                        >
+                          {isDone ? <CheckCircle2 className="h-3 w-3" /> : isLocked ? <Lock className="h-3 w-3" /> : <Circle className="h-3 w-3" />}
                         </span>
-                        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{s.blurb}</span>
-                      </span>
-                    </button>
-                  </li>
+                        <span className="min-w-0 flex-1">
+                          <span className={cn('flex items-center gap-1.5 text-sm font-medium leading-tight', isActive && 'text-foreground')}>
+                            {s.label}
+                          </span>
+                          <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{s.blurb}</span>
+                        </span>
+                      </button>
+                    </li>
+                  </Fragment>
                 );
               })}
             </ol>

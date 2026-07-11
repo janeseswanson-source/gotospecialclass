@@ -302,7 +302,7 @@ const StepReview = () => {
               ) : (
                 <p className="text-xs text-destructive">
                   No strategies selected.{' '}
-                  <button type="button" onClick={() => setStep(SETUP_STEPS.CONFLICTS)} className="underline font-semibold">Add one in step 9</button>.
+                  <button type="button" onClick={() => setStep(SETUP_STEPS.CONFLICTS)} className="underline font-semibold">Add one in the Conflicts step</button>.
                 </p>
               )}
             </div>

@@ -351,7 +351,7 @@ const StepContractualMinutes = () => {
       )}
 
       <div className="flex justify-between pt-2">
-        <Button variant="outline" onClick={() => setStep(SETUP_STEPS.TEACHERS)}>Back</Button>
+        <Button variant="outline" onClick={() => setStep(SETUP_STEPS.CALENDAR)}>Back</Button>
         <Button onClick={() => setStep(SETUP_STEPS.ADMIN_ROTATION)}>Continue</Button>
       </div>
     </div>

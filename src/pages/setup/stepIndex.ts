@@ -17,3 +17,26 @@ export const SETUP_STEPS = {
 
 export type SetupStepKey = keyof typeof SETUP_STEPS;
 export type SetupStepIndex = (typeof SETUP_STEPS)[SetupStepKey];
+
+// The happy path: these seven steps are all a coordinator MUST touch before
+// generating. The five extras are grouped behind one collapsible rail entry
+// and chain among themselves (Calendar → Contractual Minutes → Admin Rotation
+// → Clubs → Events → Conflicts). Step INDICES never change — only the order
+// they're presented in.
+export const REQUIRED_STEP_ORDER: number[] = [
+  SETUP_STEPS.WELCOME,
+  SETUP_STEPS.SCHOOL_INFO,
+  SETUP_STEPS.RECESS_LUNCH,
+  SETUP_STEPS.SPECIALISTS,
+  SETUP_STEPS.TEACHERS,
+  SETUP_STEPS.CONFLICTS,
+  SETUP_STEPS.REVIEW,
+];
+
+export const EXTRA_STEP_ORDER: number[] = [
+  SETUP_STEPS.CALENDAR,
+  SETUP_STEPS.CONTRACTUAL_MINUTES,
+  SETUP_STEPS.ADMIN_ROTATION,
+  SETUP_STEPS.CLUBS,
+  SETUP_STEPS.EVENTS,
+];

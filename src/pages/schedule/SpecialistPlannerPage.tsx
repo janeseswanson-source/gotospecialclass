@@ -429,7 +429,9 @@ export default function SpecialistPlannerPage() {
               </ul>
             </div>
 
-            <ScheduleGrid blocks={selectedBlocks} timeSlots={timeSlots} recessBands={selectedBands} />
+            {/* Grade-colored rails: on a per-specialist grid the subject never
+                varies, so the rail encodes GRADE — "grades together" at a glance. */}
+            <ScheduleGrid blocks={selectedBlocks} timeSlots={timeSlots} recessBands={selectedBands} colorBy="grade" />
           </div>
         </div>
       ) : (
@@ -462,7 +464,7 @@ export default function SpecialistPlannerPage() {
                   </div>
                   <span className="text-xs text-primary">Open →</span>
                 </button>
-                <ScheduleGrid blocks={sBlocks} timeSlots={timeSlots} />
+                <ScheduleGrid blocks={sBlocks} timeSlots={timeSlots} colorBy="grade" />
               </div>
             );
           })}

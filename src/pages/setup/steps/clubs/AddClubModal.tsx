@@ -132,7 +132,7 @@ export const AddClubModal = ({
             <Select value={draft.leadSpecialistId ?? ''} onValueChange={(v) => setDraft(d => ({ ...d, leadSpecialistId: v || null }))}>
               <SelectTrigger><SelectValue placeholder="Select specialist..." /></SelectTrigger>
               <SelectContent>
-                {specialists.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">No specialists yet — add them in Step 4.</div>}
+                {specialists.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">No specialists yet — add them in the Specialists step.</div>}
                 {specialists.map(s => (
                   <SelectItem key={s.id} value={s.id}>
                     {s.name}{s.subject ? ` — ${s.subject}` : ''}

@@ -9,7 +9,7 @@ import { FieldLabel } from '@/components/ui/field-label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { X, Info, AlertTriangle, XCircle, CheckCircle2, Sparkles, GripVertical, Eye, ChevronDown, Settings, Plus } from 'lucide-react';
+import { X, Info, AlertTriangle, XCircle, CheckCircle2, Sparkles, GripVertical, Eye, ChevronDown, Settings, Plus, PlusCircle, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { getStrategyNote, getRecommendedStrategies, type StrategyContext } from '@/lib/strategyFeasibility';
@@ -572,7 +572,7 @@ const StepConflict = () => {
                         clubsCount > 0 ? (
                           <div className="ml-10 border-l-2 border-l-emerald-400 pl-3 py-1">
                             <p className="text-xs text-emerald-700 dark:text-emerald-300">
-                              ✓ Will use {clubsCount} club{clubsCount === 1 ? '' : 's'} from Step 7.
+                              ✓ Will use {clubsCount} club{clubsCount === 1 ? '' : 's'} from the Clubs extra.
                             </p>
                           </div>
                         ) : (
@@ -584,7 +584,7 @@ const StepConflict = () => {
                                 onClick={() => setStep(SETUP_STEPS.CLUBS)}
                                 className="font-semibold underline-offset-2 hover:underline"
                               >
-                                add some on Step 7
+                                add some in Extras → Clubs
                               </button>
                               .
                             </p>
@@ -811,9 +811,26 @@ const StepConflict = () => {
         )}
       </div>
 
+      {/* The happy path skips the five optional steps — surface them here so a
+          coordinator who wants them still finds them without hunting the rail. */}
+      <button
+        type="button"
+        onClick={() => setStep(SETUP_STEPS.CALENDAR)}
+        className="flex w-full items-start gap-3 rounded-xl border border-dashed border-border bg-muted/30 p-4 text-left transition-colors hover:border-primary/40 hover:bg-muted/50"
+      >
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-muted text-muted-foreground"><PlusCircle className="h-4 w-4" /></span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold text-foreground">Optional extras</span>
+          <span className="mt-0.5 block text-xs text-muted-foreground">
+            School calendar, contractual minutes, PLC/admin rotation, clubs, and events — add any of them now or after generating.
+          </span>
+        </span>
+        <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
+      </button>
+
       {/* Navigation */}
       <div className="flex justify-between pt-2">
-        <Button variant="outline" onClick={() => setStep(SETUP_STEPS.EVENTS)}>Back</Button>
+        <Button variant="outline" onClick={() => setStep(SETUP_STEPS.TEACHERS)}>Back</Button>
         {selected.length === 0 ? (
           <TooltipProvider>
             <Tooltip>
