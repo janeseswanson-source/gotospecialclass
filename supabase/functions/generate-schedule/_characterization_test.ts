@@ -75,7 +75,10 @@ const EXPECTED: Record<string, CharSnapshot> = {
     scoreBreakdown: {
       errors: 0, warnings: 0, full_week_coverage: 600, am_pm_satisfied: 0,
       day_pref_satisfied: 0, planning_target_met: 150, cart_back_to_back: 0,
-      k_grade_after_780: -20, spec_dayload_stdev: -0.783, class_repeats: -225,
+      // DELIBERATE RE-PIN (grade-adjacency post-pass): the pass legally moved a
+      // late K session EARLIER — its K-guard is one-way (early→late forbidden,
+      // late→early is a strict improvement), so -20 became -0.
+      k_grade_after_780: -0, spec_dayload_stdev: -0.783, class_repeats: -225,
       grade_cohesion: 0, grade_day_spread: -1000, contract_min: 0, subject_gap: 0,
       subject_day_clustering: -480, teacher_planning: -63.75,
     },

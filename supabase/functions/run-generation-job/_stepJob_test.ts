@@ -19,6 +19,7 @@ function deps(over: Partial<StepDeps> = {}): StepDeps {
   return {
     now: () => NOW,
     timeLimitS: 60,
+    schoolStrategies: [],
     runCpsat: async (): Promise<CpsatOutcome> => ({ ok: true, generationId: "cpsat-gen", quality: 92, solverStatus: "OPTIMAL" }),
     runSearch: async (): Promise<SearchOutcome> => ({ ok: true, generationId: "search-gen", quality: 80 }),
     runRefine: async (): Promise<RefineOutcome> => ({ ok: true, improved: false, generationId: null, quality: null, structurallyLimited: false }),
@@ -148,25 +149,43 @@ Deno.test("fallback: CP-SAT unavailable (503) → best-of-3 search → refine, f
 });
 
 // ─── quality floor: below 85% the pipeline doesn't settle ────────────────────
-Deno.test("quality floor: refine converging below 85% burns rescue rounds instead of completing", async () => {
+Deno.test("quality floor: refine converging below 85% burns rescue rounds, then probes a rotation", async () => {
   let refineCalls = 0;
+  let probeCalls = 0;
   const d = deps({
     runRefine: async () => { refineCalls++; return { ok: true, improved: false, generationId: null, quality: null, structurallyLimited: false }; },
+    // Probe finds nothing better (worse quality) — original kept.
+    runSearch: async (_id, override) => { if (override?.length) probeCalls++; return { ok: true, generationId: "probe-gen", quality: 60 }; },
   });
-  // Start in refine with a mediocre 70% best.
+  // Start in refine with a mediocre 70% best; the school has NO rotation.
   let job = baseJob({ phase: "refine", best_generation_id: "gen-70", progress: { phase: "refine", bestQuality: 70 } });
   // Each rescue grants REFINE_NOIMPROVE_LIMIT (2) more passes; MAX_RESCUE_ROUNDS
-  // = 4 → total refine calls = 2 + 4×2 = 10 before it finally completes.
+  // = 4 → 2 + 4×2 = 10 refine calls, then ONE strategy-probe step completes.
   let r;
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 12; i++) {
     r = await stepJob(job, d);
     if ((r.update as any).status === "complete") break;
     job = apply(job, r.update);
   }
   assertEquals(refineCalls, 10, "2 base passes + 4 rescues × 2 passes");
+  assertEquals(probeCalls, 1, "one rotation probe after rescues exhaust");
   assertEquals((r!.update as any).status, "complete");
-  assertEquals((r!.update as any).best_generation_id, "gen-70");
+  assertEquals((r!.update as any).best_generation_id, "gen-70", "worse probe discarded");
   assertEquals(((r!.update as any).progress as any).rescueRound, 4);
+  assertEquals(((r!.update as any).progress as any).probeAdopted, false);
+});
+
+Deno.test("quality floor: rotation-configured school completes at rescue exhaustion (no probe)", async () => {
+  let searchCalls = 0;
+  const d = deps({
+    schoolStrategies: ["ab_week"],
+    runRefine: async () => ({ ok: true, improved: false, generationId: null, quality: null, structurallyLimited: false }),
+    runSearch: async () => { searchCalls++; return { ok: true, generationId: "x", quality: 90 }; },
+  });
+  const job = baseJob({ phase: "refine", best_generation_id: "gen-70", progress: { phase: "refine", bestQuality: 70, rescueRound: 4, noImproveStreak: 1 } });
+  const r = await stepJob(job, d);
+  assertEquals((r.update as any).status, "complete");
+  assertEquals(searchCalls, 0, "a school that already rotates is never probed");
 });
 
 Deno.test("quality floor: an improvement mid-rescue that crosses the floor completes at convergence", async () => {
@@ -201,6 +220,80 @@ Deno.test("quality floor: structurally_limited stops immediately even below the 
   const r = await stepJob(job, d);
   assertEquals((r.update as any).status, "complete");
   assertEquals(((r.update as any).progress as any).rescueRound, 0, "no rescue against a capacity wall");
+});
+
+// ─── strategy probe ──────────────────────────────────────────────────────────
+Deno.test("strategy probe: call shape is ab_week-first with no duplicates", async () => {
+  let seen: string[] | undefined;
+  const d = deps({
+    schoolStrategies: ["quick_30", "makeup"],
+    runSearch: async (_id, override) => { seen = override; return { ok: true, generationId: "p", quality: 50 }; },
+  });
+  const job = baseJob({ phase: "strategy_probe", best_generation_id: "gen-70", progress: { phase: "search", bestQuality: 70, probedStrategy: true } });
+  await stepJob(job, d);
+  assertEquals(seen, ["ab_week", "quick_30", "makeup"]);
+});
+
+Deno.test("strategy probe: strictly-better probe adopted, loser deleted, breadcrumb recorded", async () => {
+  const deleted: string[] = [];
+  const d = deps({
+    runSearch: async () => ({ ok: true, generationId: "probe-88", quality: 88 }),
+    deleteGeneration: async (id) => { deleted.push(id); },
+  });
+  const job = baseJob({ phase: "strategy_probe", best_generation_id: "gen-70", progress: { phase: "search", bestQuality: 70, probedStrategy: true } });
+  const r = await stepJob(job, d);
+  assertEquals((r.update as any).status, "complete");
+  assertEquals((r.update as any).best_generation_id, "probe-88");
+  assertEquals(deleted, ["gen-70"]);
+  assert(String((r.update as any).fallback_reason).includes("strategy_probe_adopted:ab_week"));
+  assertEquals(((r.update as any).progress as any).probeAdopted, true);
+});
+
+Deno.test("strategy probe: equal-quality probe is discarded (strictly better only)", async () => {
+  const deleted: string[] = [];
+  const d = deps({
+    runSearch: async () => ({ ok: true, generationId: "probe-70", quality: 70 }),
+    deleteGeneration: async (id) => { deleted.push(id); },
+  });
+  const job = baseJob({ phase: "strategy_probe", best_generation_id: "gen-70", progress: { phase: "search", bestQuality: 70, probedStrategy: true } });
+  const r = await stepJob(job, d);
+  assertEquals((r.update as any).best_generation_id, "gen-70");
+  assertEquals(deleted, ["probe-70"], "losing probe generation cleaned up");
+  assertEquals(((r.update as any).progress as any).probeAdopted, false);
+});
+
+Deno.test("strategy probe: a failed probe search completes with the original best", async () => {
+  const d = deps({ runSearch: async () => ({ ok: false, error: "boom" }) });
+  const job = baseJob({ phase: "strategy_probe", best_generation_id: "gen-70", progress: { phase: "search", bestQuality: 70, probedStrategy: true } });
+  const r = await stepJob(job, d);
+  assertEquals((r.update as any).status, "complete");
+  assertEquals((r.update as any).best_generation_id, "gen-70");
+});
+
+Deno.test("strategy probe: one-shot — probedStrategy=true at convergence completes without probing", async () => {
+  let searchCalls = 0;
+  const d = deps({
+    runRefine: async () => ({ ok: true, improved: false, generationId: null, quality: null, structurallyLimited: false }),
+    runSearch: async () => { searchCalls++; return { ok: true, generationId: "x", quality: 95 }; },
+  });
+  const job = baseJob({ phase: "refine", best_generation_id: "gen-70", progress: { phase: "refine", bestQuality: 70, rescueRound: 4, noImproveStreak: 1, probedStrategy: true } });
+  const r = await stepJob(job, d);
+  assertEquals((r.update as any).status, "complete");
+  assertEquals(searchCalls, 0);
+});
+
+Deno.test("strategy probe: wall guard finalizes a probe-phase job without searching", async () => {
+  let searchCalls = 0;
+  const d = deps({ runSearch: async () => { searchCalls++; return { ok: true, generationId: "x", quality: 95 }; } });
+  const job = baseJob({
+    phase: "strategy_probe", best_generation_id: "gen-70",
+    progress: { phase: "search", bestQuality: 70, probedStrategy: true },
+    started_at: new Date(NOW - WALL_MS - 1000).toISOString(),
+  });
+  const r = await stepJob(job, d);
+  assertEquals((r.update as any).status, "complete");
+  assertEquals((r.update as any).best_generation_id, "gen-70");
+  assertEquals(searchCalls, 0);
 });
 
 Deno.test("CP-SAT model verdict (model_invalid) also falls back to the JS solver", async () => {

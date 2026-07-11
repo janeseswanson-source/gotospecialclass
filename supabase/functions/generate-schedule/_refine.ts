@@ -32,6 +32,7 @@ import { computeQualityConfidence, type QualityConfidence } from "./_confidence.
 import { buildPerturbationBaseline, countMovedBlocks, perturbationAdjust, DEFAULT_PERTURBATION_WEIGHT } from "./_perturbation.ts";
 import { mulberry32, deriveSeed, type Rng } from "./_random.ts";
 import { qualityPercent } from "../_shared/scoring-rubric.ts";
+import { reorderGradeRuns } from "./_adjacency.ts";
 import { buildConstraintContext, violations, type ConstraintBlock } from "../_shared/constraints.ts";
 
 export interface RefineTeacher {
@@ -197,7 +198,15 @@ export function refineSchedule(blocks: Block[], ctx: RefineContext, opts?: Refin
     afterSA, sa.score, scoringInput, specialists, grades, school, recessConfigs,
     baseOccupancy, mulberry32(deriveSeed(seed, "lns")), weightOverrides, { rounds: lnsRounds, objectiveAdjust },
   );
-  const candidateBlocks = directedRepair(lns.blocks, repairCtx, mulberry32(deriveSeed(seed, "rep1")));
+  // Non-teaching reservations (lunch/planning/meeting/PLUS/admin) constrain
+  // the adjacency pass but never move.
+  const nonTeaching = blocks.filter((b) => !isTeachingBlock(b));
+  // Grade-adjacency as the LAST transform, inside the accept gate: refine can
+  // never persist a scrambled layout, and re-refines re-apply adjacency.
+  const candidateBlocks = reorderGradeRuns(
+    directedRepair(lns.blocks, repairCtx, mulberry32(deriveSeed(seed, "rep1"))) as never,
+    { school, recessConfigs, teachers, fixedContext: nonTeaching as never },
+  ).blocks as unknown as Block[];
   const candWarnings = computeWarnings(candidateBlocks, specialists, grades);
   const candScored = scoreSchedule(
     { blocks: candidateBlocks, warnings: candWarnings, preferenceViolations },

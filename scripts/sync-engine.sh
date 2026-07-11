@@ -16,7 +16,7 @@ cd "$(dirname "$0")/.."
 
 SRC="supabase/functions/generate-schedule"
 FILES=(
-  index.ts _annealing.ts _confidence.ts _conflict.ts _editTools.ts _lns.ts
+  index.ts _adjacency.ts _annealing.ts _confidence.ts _conflict.ts _editTools.ts _lns.ts
   _monteCarlo.ts _occupancy.ts _perturbation.ts _random.ts _refine.ts _scoring.ts
   _weightlearning.ts _simulate.ts
 )

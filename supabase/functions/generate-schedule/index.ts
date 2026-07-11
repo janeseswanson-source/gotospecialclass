@@ -42,6 +42,7 @@ export { OccupancyTracker, type Interval };
 // leaf helpers back from here) is safe: all cross-references are inside function
 // bodies, evaluated at runtime, never at module init. See _annealing.ts header.
 import { runSimulatedAnnealing } from "./_annealing.ts";
+import { reorderGradeRuns } from "./_adjacency.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -2011,6 +2012,11 @@ export function generateScheduleBlocks(
    *  retry loop explore independent permutation streams while keeping
    *  determinism for the same (generationId, seedSalt) pair. */
   seedSalt: number = 0,
+  /** Probe support: generate with THESE strategies instead of the school's
+   *  saved ones (the rescue strategy probe tries an A/B rotation on a copy).
+   *  Also bypasses the standard-only shortcut so a school without conflict
+   *  grades can still probe a rotation. */
+  strategiesOverride?: string[],
 ): SchedulerResult {
   // ─── E: Pre-flight feasibility ────────────────────────────────────
   // Capacity is counted in SESSIONS, not specialist-days: a specialist teaches
@@ -2038,9 +2044,11 @@ export function generateScheduleBlocks(
   }
   // Demand = one session per (class, specialist). A/B and AA/BB strategies
   // spread the same coverage across two weeks, halving weekly demand.
-  const feasStrategies: string[] = (school.conflict_strategies && school.conflict_strategies.length > 0)
-    ? school.conflict_strategies
-    : [school.conflict_strategy ?? "standard"];
+  const feasStrategies: string[] = strategiesOverride?.length
+    ? strategiesOverride
+    : (school.conflict_strategies && school.conflict_strategies.length > 0)
+      ? school.conflict_strategies
+      : [school.conflict_strategy ?? "standard"];
   const feasTwoWeek = feasStrategies.includes("ab_week") || feasStrategies.includes("aa_bb_week");
   const requiredSessions = Math.ceil((teachers.length * specialists.length) / (feasTwoWeek ? 2 : 1));
   // `feasibilityShortfall` is attached to the warnings later (see below) when
@@ -2057,9 +2065,7 @@ export function generateScheduleBlocks(
   // Never borrow planning_minutes (often 200+) as a class length — a null/zero
   // class_duration must fall back to 45, not to the specialist's weekly prep.
   const classDuration = (school.class_duration && school.class_duration > 0) ? school.class_duration : 45;
-  const strategies: string[] = (school.conflict_strategies && school.conflict_strategies.length > 0)
-    ? school.conflict_strategies
-    : [school.conflict_strategy ?? "standard"];
+  const strategies: string[] = strategiesOverride?.length ? strategiesOverride : feasStrategies;
   const conflictGrades: string[] = school.conflict_grades ?? [];
   const conflictTiming: string = school.conflict_timing ?? "before";
 
@@ -2202,9 +2208,14 @@ export function generateScheduleBlocks(
       weightOverrides,
     ).total;
   };
+  // Fixed context for the grade-adjacency post-pass: reservations that
+  // constrain teacher/grade occupancy but must never move.
+  const adjFixedOf = () => [...lunchBlocks, ...plusBlocks, ...meetingBlocks, ...adminBlocks, ...lockedBlocks];
 
   // If conflict_timing is "after", user resolves conflicts manually — use standard
-  if (conflictTiming === "after" || conflictGrades.length === 0) {
+  // The probe must be able to run a rotation even for a school with no
+  // conflict grades — but NON-overridden behavior stays exactly as before.
+  if (!strategiesOverride?.length && (conflictTiming === "after" || conflictGrades.length === 0)) {
     const standardClosure = (rng: Rng): StrategyResult =>
       generateStandard(generationId, specialists, gradeTeachers, school, recessConfigs, classDuration, occupancy.clone(), adminBlocks, rng);
     const cal = calibrateMonteCarlo(standardClosure, mcSeed, "standard");
@@ -2214,10 +2225,14 @@ export function generateScheduleBlocks(
       const saSeed = deriveSeed(mcSeed, "sa:standard");
       const saRng = mulberry32(saSeed);
       const sa = runSimulatedAnnealing(mc.best, mc.bestScore, scoringInput, specialists, grades, school, recessConfigs, occupancy, saRng, weightOverrides);
-      const finalWarnings = computeWarnings(sa.blocks, specialists, grades);
-      const breakdown = scoreSchedule({ blocks: sa.blocks, warnings: finalWarnings, preferenceViolations: sa.preferenceViolations }, scoringInput, weightOverrides).breakdown;
+      // Grade-adjacency post-pass: order same-grade classes into contiguous
+      // runs per specialist-day (score-invariant under its guards) — applied
+      // BEFORE scoring so the persisted breakdown reflects the final layout.
+      const saOrdered = reorderGradeRuns(sa.blocks as never, { school, recessConfigs, teachers, fixedContext: adjFixedOf() as never }).blocks as unknown as Block[];
+      const finalWarnings = computeWarnings(saOrdered, specialists, grades);
+      const breakdown = scoreSchedule({ blocks: saOrdered, warnings: finalWarnings, preferenceViolations: sa.preferenceViolations }, scoringInput, weightOverrides).breakdown;
       return {
-        blocks: [...lunchBlocks, ...plusBlocks, ...meetingBlocks, ...sa.blocks],
+        blocks: [...lunchBlocks, ...plusBlocks, ...meetingBlocks, ...saOrdered],
         chosenStrategy: "standard",
         attemptedStrategies: [{ strategy: "standard", error_count: 0, warning_count: 0 }],
         fallbackReason: null,
@@ -2230,10 +2245,11 @@ export function generateScheduleBlocks(
         saImprovement: sa.improvement,
       };
     }
-    const finalWarnings = computeWarnings(mc.best.blocks, specialists, grades);
-    const breakdown = scoreSchedule({ blocks: mc.best.blocks, warnings: finalWarnings, preferenceViolations: mc.best.preferenceViolations }, scoringInput, weightOverrides).breakdown;
+    const mcOrdered = reorderGradeRuns(mc.best.blocks as never, { school, recessConfigs, teachers, fixedContext: adjFixedOf() as never }).blocks as unknown as Block[];
+    const finalWarnings = computeWarnings(mcOrdered, specialists, grades);
+    const breakdown = scoreSchedule({ blocks: mcOrdered, warnings: finalWarnings, preferenceViolations: mc.best.preferenceViolations }, scoringInput, weightOverrides).breakdown;
     return {
-      blocks: [...lunchBlocks, ...plusBlocks, ...meetingBlocks, ...mc.best.blocks],
+      blocks: [...lunchBlocks, ...plusBlocks, ...meetingBlocks, ...mcOrdered],
       chosenStrategy: "standard",
       attemptedStrategies: [{ strategy: "standard", error_count: 0, warning_count: 0 }],
       fallbackReason: null,
@@ -2373,6 +2389,11 @@ export function generateScheduleBlocks(
     extraWarnings.push(...validateExtraRotation(baseBlocks, conflictGrades));
   }
 
+  // Grade-adjacency post-pass — last transform before scoring/persist so the
+  // saved breakdown reflects the final layout. Makeup/club/event add-ons are
+  // in baseBlocks but immovable by the pass's own predicate.
+  baseBlocks = reorderGradeRuns(baseBlocks as never, { school, recessConfigs, teachers, fixedContext: adjFixedOf() as never }).blocks as unknown as Block[];
+
   const finalWarnings = computeWarnings(baseBlocks, specialists, grades, teachers);
   const breakdown = scoreSchedule(
     { blocks: baseBlocks, warnings: finalWarnings, preferenceViolations },
@@ -2432,7 +2453,14 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       userId = user.id;
     }
 
-    const { school_id, locked_block_ids } = await req.json();
+    const { school_id, locked_block_ids, strategies_override } = await req.json();
+    // Probe support (run-generation-job's rescue strategy probe): generate with
+    // these strategies instead of the school's saved ones. Sanitized against
+    // the known-strategy set; unknown/garbage values are dropped.
+    const KNOWN_STRATEGIES = new Set(["ab_week", "aa_bb_week", "quick_30", "big_group", "extra_rotation", "standard", "makeup", "lunch_clubs", "event_planning"]);
+    const strategiesOverride: string[] = Array.isArray(strategies_override)
+      ? strategies_override.filter((x: unknown) => typeof x === "string" && KNOWN_STRATEGIES.has(x))
+      : [];
     if (!school_id) {
       return new Response(JSON.stringify({ error: "school_id required" }), { status: 400, headers: corsHeaders });
     }
@@ -2625,7 +2653,7 @@ const __serveHandler = async (req: Request): Promise<Response> => {
       const candidate = generateScheduleBlocks(
         generation.id, specialists, teachers, grades, school, recessConfigs,
         clubs, specialEvents, calendarEvents, adminBlocks, lockedBlocks,
-        weightOverrides, attempt,
+        weightOverrides, attempt, strategiesOverride.length ? strategiesOverride : undefined,
       );
       const dt = performance.now() - t0;
       cumulativeAttemptMs += dt;
@@ -2809,7 +2837,9 @@ const __serveHandler = async (req: Request): Promise<Response> => {
             version: nextVersion,
             blocks_count: blocks.length,
             warnings_count: warnings.length,
-            strategy: (school.conflict_strategies && school.conflict_strategies.length > 0) ? school.conflict_strategies : [school.conflict_strategy ?? "standard"],
+            strategy: strategiesOverride.length
+              ? strategiesOverride
+              : (school.conflict_strategies && school.conflict_strategies.length > 0) ? school.conflict_strategies : [school.conflict_strategy ?? "standard"],
             chosen_strategy: schedulerResult!.chosenStrategy,
             fallback_reason: schedulerResult!.fallbackReason,
             monte_carlo_attempts: schedulerResult!.monteCarloAttempts,

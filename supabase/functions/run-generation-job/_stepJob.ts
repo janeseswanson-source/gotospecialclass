@@ -18,7 +18,8 @@
 // idempotent so a double-fired continuation can never double-run a step.
 
 export type JobStatus = "queued" | "running" | "polishing" | "complete" | "failed" | "cancelled";
-export type JobPhase = "cpsat" | "fallback_search" | "refine" | "done";
+export type JobPhase = "cpsat" | "fallback_search" | "refine" | "strategy_probe" | "done";
+export const ROTATION_STRATEGIES = ["ab_week", "aa_bb_week"];
 
 export const WALL_MS = 10 * 60 * 1000;
 export const MAX_SEARCH_ATTEMPTS = 3;
@@ -44,6 +45,10 @@ export interface JobProgress {
   noImproveStreak: number;
   /** Quality-floor rescue rounds consumed (see QUALITY_FLOOR). */
   rescueRound: number;
+  /** One-shot rotation probe consumed (set when ENTERING strategy_probe). */
+  probedStrategy: boolean;
+  /** The rotation probe produced a strictly better schedule and was adopted. */
+  probeAdopted: boolean;
   elapsedMs: number;
 }
 
@@ -74,8 +79,12 @@ export type RefineOutcome =
 export interface StepDeps {
   now: () => number;
   timeLimitS: number;
+  /** The school's configured conflict strategies (multi list, else single) —
+   *  loaded once per invocation by run-generation-job so stepJob stays pure.
+   *  Drives the rescue strategy probe's "lacks a rotation" entry condition. */
+  schoolStrategies: string[];
   runCpsat: (schoolId: string, timeLimitS: number) => Promise<CpsatOutcome>;
-  runSearch: (schoolId: string) => Promise<SearchOutcome>;
+  runSearch: (schoolId: string, strategiesOverride?: string[]) => Promise<SearchOutcome>;
   runRefine: (generationId: string, seedSalt: number) => Promise<RefineOutcome>;
   deleteGeneration: (id: string) => Promise<void>;
 }
@@ -112,6 +121,8 @@ function normalizeProgress(p: Partial<JobProgress> | null | undefined): JobProgr
     refinePass: p?.refinePass ?? 0,
     noImproveStreak: p?.noImproveStreak ?? 0,
     rescueRound: p?.rescueRound ?? 0,
+    probedStrategy: p?.probedStrategy ?? false,
+    probeAdopted: p?.probeAdopted ?? false,
     elapsedMs: p?.elapsedMs ?? 0,
   };
 }
@@ -227,9 +238,52 @@ export async function stepJob(job: JobRow, deps: StepDeps): Promise<StepResult> 
         const rescued: JobProgress = { ...p, noImproveStreak: 0, rescueRound: prog.rescueRound + 1 };
         return { update: { status: "polishing", phase: "refine", best_generation_id: bestGen, progress: rescued }, done: false, chain: true };
       }
+      // Rescues exhausted and still below the floor: if the school doesn't use
+      // a rotation, probe ONE A/B-rotation schedule and keep it only if it's
+      // strictly better. probedStrategy is set on ENTRY (+ the optimistic
+      // attempts guard), so a double-fired continuation can't double-probe.
+      // structurallyLimited can't reach here — it returned above.
+      const hasRotation = deps.schoolStrategies.some((str) => ROTATION_STRATEGIES.includes(str));
+      if (bestQ < QUALITY_FLOOR && !hasRotation && !prog.probedStrategy) {
+        return {
+          update: { status: "running", phase: "strategy_probe", best_generation_id: bestGen, progress: { ...p, phase: "search", probedStrategy: true } },
+          done: false, chain: true,
+        };
+      }
       return finish("complete", bestGen, p);
     }
     return { update: { status: "polishing", phase: "refine", best_generation_id: bestGen, progress: p }, done: false, chain: true };
+  }
+
+  // ── Strategy probe: one A/B-rotation attempt for a floor-stuck school ──
+  if (phase === "strategy_probe") {
+    const overrides = ["ab_week", ...deps.schoolStrategies.filter((str) => str !== "ab_week")];
+    const r = await deps.runSearch(job.school_id, overrides);
+    let bestGen = job.best_generation_id;
+    let bestQ = prog.bestQuality;
+    let adopted = false;
+    if (r.ok) {
+      if (bestGen === null || r.quality > bestQ) {
+        const loser = bestGen;
+        bestGen = r.generationId; bestQ = r.quality; adopted = true;
+        if (loser) await deps.deleteGeneration(loser);
+      } else {
+        await deps.deleteGeneration(r.generationId); // probe lost — clean up
+      }
+    }
+    const p: JobProgress = {
+      ...prog, phase: "search",
+      currentQuality: r.ok ? r.quality : prog.currentQuality,
+      bestQuality: bestQ, probedStrategy: true, probeAdopted: adopted, elapsedMs: elapsed,
+    };
+    const res = finish("complete", bestGen, p);
+    if (adopted) {
+      // Breadcrumb for a future UI banner ("save A/B rotation to settings?").
+      res.update.fallback_reason = [job.fallback_reason,
+        "strategy_probe_adopted:ab_week — this schedule uses an A/B rotation the school's settings don't include",
+      ].filter(Boolean).join(" | ");
+    }
+    return res;
   }
 
   // Unknown phase → finalize on whatever we have.

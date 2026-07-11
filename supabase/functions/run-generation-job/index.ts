@@ -54,9 +54,16 @@ Deno.serve(async (req) => {
   // Resolve the CP-SAT time budget from the school's size (60s, 120s for > 30 teachers).
   const { data: jobHead } = await supabase.from("generation_jobs").select("school_id").eq("id", job_id).maybeSingle();
   if (!jobHead) return json(404, { error: "job not found" });
-  const { count: teacherCount } = await supabase.from("classroom_teachers")
-    .select("id", { count: "exact", head: true }).eq("school_id", jobHead.school_id);
+  const [{ count: teacherCount }, { data: schoolRow }] = await Promise.all([
+    supabase.from("classroom_teachers").select("id", { count: "exact", head: true }).eq("school_id", jobHead.school_id),
+    supabase.from("schools").select("conflict_strategies, conflict_strategy").eq("id", jobHead.school_id).maybeSingle(),
+  ]);
   const timeLimitS = pickTimeLimitS(teacherCount ?? 0);
+  // The school's resolved strategies — drives the rescue strategy probe's
+  // "lacks a rotation" entry condition (stepJob stays pure).
+  const schoolStrategies: string[] = (schoolRow?.conflict_strategies as string[] | null)?.length
+    ? (schoolRow!.conflict_strategies as string[])
+    : [(schoolRow as any)?.conflict_strategy ?? "standard"];
 
   const mapRow = (r: any): JobRow => ({
     id: r.id, school_id: r.school_id, status: r.status, phase: r.phase, progress: r.progress ?? {},
@@ -65,6 +72,7 @@ Deno.serve(async (req) => {
   });
 
   const deps: InvocationDeps = {
+    schoolStrategies,
     now: () => Date.now(),
     timeLimitS,
 
@@ -76,8 +84,9 @@ Deno.serve(async (req) => {
       return { ok: false, unavailable: isSolverUnavailable(status, body?.code ?? null), code: body?.code ?? `http_${status}`, error: body?.error ?? `HTTP ${status}` };
     },
 
-    runSearch: async (schoolId): Promise<SearchOutcome> => {
-      const { status, body } = await callFn("generate-schedule", { school_id: schoolId });
+    runSearch: async (schoolId, strategiesOverride): Promise<SearchOutcome> => {
+      const { status, body } = await callFn("generate-schedule",
+        strategiesOverride?.length ? { school_id: schoolId, strategies_override: strategiesOverride } : { school_id: schoolId });
       if (status === 200 && body?.generation_id && !body?.error) {
         return { ok: true, generationId: body.generation_id, quality: qualityPercent(body.score_breakdown ?? null) };
       }

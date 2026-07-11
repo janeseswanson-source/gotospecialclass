@@ -22,6 +22,7 @@ import {
 } from "./_engine/index.ts";
 import { scoreSchedule, type ScoreableInput } from "./_engine/_scoring.ts";
 import { computeQualityConfidence } from "./_engine/_confidence.ts";
+import { reorderGradeRuns } from "./_engine/_adjacency.ts";
 import { qualityPercent } from "../_shared/scoring-rubric.ts";
 import { buildConstraintContext, violations, type ConstraintBlock } from "../_shared/constraints.ts";
 import { buildCpsatSpec, buildPostPassBlocks } from "./_spec_builder.ts";
@@ -264,7 +265,22 @@ Deno.serve(async (req) => {
       if (violations(cb, contextBlocks, ctx).length === 0) legalTeaching.push(teachingBlocks[i]);
       else dropped++;
     }
-    const scoredBlocks = [...legalTeaching, ...postPassBlocks];
+    // ── Grade-adjacency post-pass: contiguous same-grade runs per specialist-
+    // day. Applied AFTER the drop-check, then re-validated once — if the
+    // reordered set would drop anything the drop-check kept, revert. ──
+    let orderedTeaching = legalTeaching;
+    if (legalTeaching.length > 1) {
+      const reordered = reorderGradeRuns(legalTeaching as never, {
+        school, recessConfigs, teachers,
+        fixedContext: [...fixedBlocks, ...postPassBlocks] as never,
+      }).blocks as unknown as Block[];
+      const recheck = [...fixedBlocks, ...postPassBlocks, ...reordered].map((b, i) => ({ ...(b as unknown as ConstraintBlock), id: `r${i}` }));
+      const recheckCtx = buildConstraintContext(school, recessConfigs, recheck);
+      const base = fixedBlocks.length + postPassBlocks.length;
+      const allLegal = reordered.every((_, i) => violations(recheck[base + i], recheck, recheckCtx).length === 0);
+      if (allLegal) orderedTeaching = reordered;
+    }
+    const scoredBlocks = [...orderedTeaching, ...postPassBlocks];
     const persistBlocks = [...fixedBlocks, ...scoredBlocks];
 
     // ── Score the teaching + post-pass set (parity with generate-schedule) ──
