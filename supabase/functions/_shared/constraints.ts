@@ -22,7 +22,7 @@ export const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 const DAY_FULL_TO_SHORT: Record<string, string> = {
   Monday: "Mon",
   Tuesday: "Tue",
-  Wednesday: "Wed",
+  Wednesda/y: "Wed",
   Thursday: "Thu",
   Friday: "Fri",
 };
@@ -35,7 +35,7 @@ export type ViolationCode =
   | "specialist_double_book"
   | "teacher_double_book";
 
-export interface ConstraintBlock {
+ interface ConstraintBlock {
   id?: string;
   day_of_week: string;
   start_time: string;

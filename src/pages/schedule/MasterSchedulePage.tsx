@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSchool } from "@/contexts/SchoolContext";
 import { Button } from "@/components/ui/button";
-import { GitCompare, AlertTriangle, X as XIcon, Sparkles, Loader2, MessageSquare, Check, RotateCcw } from "lucide-react";
+import { GitCompare, AlertTriangle, X as XIcon, Sparkles, Loader2, MessageSquare, Check, RotateCcw, RefreshCw } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatTime as formatTimeDisplay, cn } from "@/lib/utils";
 import { CONFLICT_STRATEGIES } from "@/lib/conflictStrategies";
@@ -84,6 +84,8 @@ export default function MasterSchedulePage() {
   const [schoolEndTime, setSchoolEndTime] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  // Newest engine-affecting settings timestamp (ms) — drives the regenerate nudge.
+  const [settingsChangedAt, setSettingsChangedAt] = useState<number | null>(null);
   const [editBlock, setEditBlock] = useState<BlockData | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [filterSpecialist, setFilterSpecialist] = useState<string>("all");
@@ -247,11 +249,11 @@ export default function MasterSchedulePage() {
     try {
       [genRes, specRes, teachRes, recessRes, clubsRes, schoolRes, calRes] = await Promise.all([
         supabase.from("schedule_generations").select("*").eq("school_id", selectedSchoolId!).order("version", { ascending: false }),
-        supabase.from("specialists").select("id, name, subject").eq("school_id", selectedSchoolId!),
-        supabase.from("classroom_teachers").select("id, name, grade, combo_partner_id").eq("school_id", selectedSchoolId!),
+        supabase.from("specialists").select("id, name, subject, updated_at").eq("school_id", selectedSchoolId!),
+        supabase.from("classroom_teachers").select("id, name, grade, combo_partner_id, updated_at").eq("school_id", selectedSchoolId!),
         supabase.from("recess_lunch_config").select("*").eq("school_id", selectedSchoolId!),
         supabase.from("clubs").select("*").eq("school_id", selectedSchoolId!),
-        supabase.from("schools").select("school_year, start_time, end_time, recess_grade_bands").eq("id", selectedSchoolId!).maybeSingle(),
+        supabase.from("schools").select("school_year, start_time, end_time, recess_grade_bands, updated_at").eq("id", selectedSchoolId!).maybeSingle(),
         supabase.from("parsed_calendar_events").select("event_date, end_date, title, event_type").eq("school_id", selectedSchoolId!).eq("approved", true),
       ]);
     } catch (err) {
@@ -278,6 +280,20 @@ export default function MasterSchedulePage() {
     setRecessConfig(recessRes.data ?? []);
     // Shared converter also drops garbage labels (raw band_ keys stored as labels).
     setRecessBandLabels(bandLabelMapFromStored((schoolRes.data as any)?.recess_grade_bands));
+
+    // Latest engine-affecting settings change, for the "regenerate?" nudge:
+    // schools/specialists/teachers bump updated_at on edit; recess/clubs rows
+    // only carry created_at (an edit-in-place won't register — acceptable).
+    {
+      const stamps: number[] = [];
+      const push = (t?: string | null) => { const ms = t ? Date.parse(t) : NaN; if (Number.isFinite(ms)) stamps.push(ms); };
+      push((schoolRes.data as any)?.updated_at);
+      for (const s of specRes.data ?? []) push((s as any).updated_at);
+      for (const t of teachRes.data ?? []) push((t as any).updated_at);
+      for (const r of recessRes.data ?? []) push((r as any).created_at);
+      for (const c of clubsRes.data ?? []) push((c as any).created_at);
+      setSettingsChangedAt(stamps.length ? Math.max(...stamps) : null);
+    }
     setClubs(clubsRes.data ?? []);
     setCalendarEvents(calRes.data ?? []);
     setSchoolYear(schoolRes.data?.school_year ?? undefined);
@@ -1112,6 +1128,26 @@ export default function MasterSchedulePage() {
       {/* Honest capacity signal: the solver had to drop the full-coverage floor —
           this is a staffing/time limit, not a bug, and the coordinator should
           know what to change rather than just seeing a lower %. */}
+      {/* Settings changed AFTER this schedule was generated — nudge to regenerate.
+          60s slack: Prep saves strategies moments before enqueueing a generation. */}
+      {(() => {
+        if (!activeGen || settingsChangedAt == null) return null;
+        const genAtRaw = (activeGen as any).generated_at ?? (activeGen as any).created_at;
+        const genAt = genAtRaw ? Date.parse(genAtRaw) : NaN;
+        if (!Number.isFinite(genAt) || settingsChangedAt <= genAt + 60_000) return null;
+        return (
+          <div className="flex items-center gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 no-print">
+            <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0" />
+            <p className="flex-1 text-sm text-amber-700 dark:text-amber-300">
+              Your school settings changed after this schedule was generated — regenerate to pick them up.
+            </p>
+            <Button variant="outline" size="sm" className="h-7 shrink-0 gap-1 text-xs" onClick={() => navigate("/app/prep")}>
+              <RefreshCw className="h-3 w-3" /> Regenerate
+            </Button>
+          </div>
+        );
+      })()}
+
       {activeGen && (activeGen as any).coverage_relaxed && (
         <div className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 no-print">
           <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />

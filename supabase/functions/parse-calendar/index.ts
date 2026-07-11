@@ -9,6 +9,55 @@ const corsHeaders = {
     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
+/** Find the best PDF link on an HTML page (district calendar landing pages
+ *  usually link to the real calendar PDF), fetch it, and return the document
+ *  content blocks — or null when there's no good candidate / the fetch fails,
+ *  in which case the caller falls back to the page text. One fetch max. */
+async function tryFollowPdfLink(
+  html: string,
+  pageUrl: string,
+  toBase64: (buf: ArrayBuffer) => string,
+): Promise<any[] | null> {
+  try {
+    const candidates: Array<{ href: string; score: number }> = [];
+    // href + anchor text; matches ".pdf" paths including querystrings.
+    const linkRe = /<a\b[^>]*href\s*=\s*["']([^"']+\.pdf(?:\?[^"']*)?)["'][^>]*>([\s\S]{0,200}?)<\/a>/gi;
+    const scoreOf = (s: string) => {
+      let score = 0;
+      if (/calendar/i.test(s)) score += 4;
+      if (/school\s*year|academic/i.test(s)) score += 2;
+      if (/20\d\d/.test(s)) score += 2;
+      if (/amended|official|revised/i.test(s)) score += 1;
+      return score;
+    };
+    let m: RegExpExecArray | null;
+    while ((m = linkRe.exec(html)) !== null && candidates.length < 40) {
+      const href = m[1];
+      const anchorText = m[2].replace(/<[^>]+>/g, " ");
+      candidates.push({ href, score: scoreOf(href) + scoreOf(anchorText) });
+    }
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => b.score - a.score);
+    const best = candidates[0];
+    if (best.score <= 0 && candidates.length > 3) return null; // a pile of unrelated PDFs — don't guess
+    const resolved = new URL(best.href, pageUrl).toString();
+    console.info("parse-calendar: following PDF link", { resolved, score: best.score });
+    const resp = await fetch(resolved);
+    if (!resp.ok) return null;
+    const ct = (resp.headers.get("content-type") ?? "").toLowerCase();
+    if (!ct.includes("pdf") && !new URL(resolved).pathname.toLowerCase().endsWith(".pdf")) return null;
+    const buf = await resp.arrayBuffer();
+    if (buf.byteLength > 20 * 1024 * 1024) return null; // same 20MB cap as uploads
+    return [
+      { type: "document", source: { type: "base64", media_type: "application/pdf", data: toBase64(buf) } },
+      { type: "text", text: "Extract all calendar events from this school calendar PDF." },
+    ];
+  } catch (err) {
+    console.warn("parse-calendar: PDF link follow failed", err);
+    return null;
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -90,7 +139,11 @@ serve(async (req) => {
           ];
         } else {
           const textContent = await urlResponse.text();
-          contentForAI = [
+          // District calendar pages are usually LANDING pages that link to the
+          // real PDF. Follow the most calendar-looking PDF link automatically
+          // (one candidate, verified) before falling back to raw page text.
+          const pdfContent = await tryFollowPdfLink(textContent, calendar_url, toBase64);
+          contentForAI = pdfContent ?? [
             {
               type: "text",
               text: `Extract all calendar events from this school calendar content:\n\n${textContent.substring(0, 50000)}`,
