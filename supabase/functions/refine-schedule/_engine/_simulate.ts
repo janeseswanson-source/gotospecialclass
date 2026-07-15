@@ -120,6 +120,31 @@ console.log(`— durations — ${[...durs.entries()].map(([k, v]) => `${k}min:${
 const starts = new Set(teaching.map((b: any) => b.start_time));
 console.log(`— distinct start times (${starts.size}) — ${[...starts].sort().join(", ")}`);
 
+// Wheel purity: per wave (day + start time + week label; label-less blocks run
+// in every week), how many are single-grade? Mirrors the wheel_alignment term.
+{
+  const allLabels = new Set(teaching.map((b: any) => b.week_label).filter(Boolean));
+  const waveGrades = new Map<string, Set<string>>();
+  const NONG = new Set(["lunch", "planning", "makeup", "all", ""]);
+  for (const b of teaching) {
+    const g = String(b.grade ?? "").trim();
+    if (NONG.has(g.toLowerCase())) continue;
+    const ls = b.week_label ? [b.week_label] : (allLabels.size ? [...allLabels] : [""]);
+    for (const l of ls) {
+      const key = `${b.day_of_week}|${b.start_time}|${l}`;
+      (waveGrades.get(key) ?? waveGrades.set(key, new Set()).get(key)!).add(g);
+    }
+  }
+  const waves = [...waveGrades.entries()];
+  const pure = waves.filter(([, s]) => s.size === 1).length;
+  const mixedPenalty = waves.reduce((acc, [, s]) => acc + Math.max(0, s.size - 1), 0);
+  const pct = waves.length ? Math.round((pure / waves.length) * 100) : 100;
+  console.log(`— wheel purity — ${pure}/${waves.length} waves single-grade (${pct}%), mixed-wave penalty units: ${mixedPenalty}`);
+  for (const [key, s] of waves.filter(([, s]) => s.size > 1).slice(0, 8)) {
+    console.log(`   mixed ${key} → grades ${[...s].sort().join(",")}`);
+  }
+}
+
 // Per-teacher coverage (the starvation metric)
 console.log(`\n— per-teacher weekly sessions —`);
 let zero = 0;

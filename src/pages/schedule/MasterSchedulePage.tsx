@@ -91,6 +91,7 @@ export default function MasterSchedulePage() {
   const [schoolYear, setSchoolYear] = useState<string | undefined>(undefined);
   const [schoolStartTime, setSchoolStartTime] = useState<string | null>(null);
   const [schoolEndTime, setSchoolEndTime] = useState<string | null>(null);
+  const [earlyRelease, setEarlyRelease] = useState<{ day: string | null; end: string | null }>({ day: null, end: null });
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   // Newest engine-affecting settings timestamp (ms) — drives the regenerate nudge.
@@ -262,7 +263,7 @@ export default function MasterSchedulePage() {
         supabase.from("classroom_teachers").select("id, name, grade, combo_partner_id, updated_at").eq("school_id", selectedSchoolId!),
         supabase.from("recess_lunch_config").select("*").eq("school_id", selectedSchoolId!),
         supabase.from("clubs").select("*").eq("school_id", selectedSchoolId!),
-        supabase.from("schools").select("school_year, start_time, end_time, recess_grade_bands, updated_at").eq("id", selectedSchoolId!).maybeSingle(),
+        supabase.from("schools").select("school_year, start_time, end_time, early_release_day, early_release_end_time, recess_grade_bands, updated_at").eq("id", selectedSchoolId!).maybeSingle(),
         supabase.from("parsed_calendar_events").select("event_date, end_date, title, event_type").eq("school_id", selectedSchoolId!).eq("approved", true),
       ]);
     } catch (err) {
@@ -283,6 +284,10 @@ export default function MasterSchedulePage() {
 
     setSchoolStartTime(schoolRes.data?.start_time ?? null);
     setSchoolEndTime(schoolRes.data?.end_time ?? null);
+    setEarlyRelease({
+      day: (schoolRes.data as any)?.early_release_day ?? null,
+      end: (schoolRes.data as any)?.early_release_end_time ?? null,
+    });
 
     setSpecialists(specRes.data ?? []);
     setTeachers(teachRes.data ?? []);
@@ -1532,6 +1537,7 @@ export default function MasterSchedulePage() {
             recessConfig={recessConfig}
             bandLabels={recessBandLabels}
             calendarEvents={calendarEvents}
+            schoolHours={{ start: schoolStartTime, end: schoolEndTime, earlyReleaseDay: earlyRelease.day, earlyReleaseEnd: earlyRelease.end }}
           />
         )}
         {adminExportOpen && (

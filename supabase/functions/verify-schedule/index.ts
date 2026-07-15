@@ -58,7 +58,7 @@ Deno.serve(async (req) => {
       supabase.from("specialists").select("*").eq("school_id", schoolId),
       supabase.from("classroom_teachers").select("id, name, grade, room, am_pm_preference, day_preference, weekly_planning_minutes").eq("school_id", schoolId),
       supabase.from("recess_lunch_config").select("*").eq("school_id", schoolId),
-      supabase.from("schools").select("name, start_time, end_time, grades_served, class_duration, passing_time, setup_time, grade_time_config, keep_grades_together, contractual_minutes_extracted, early_release_day, early_release_end_time, recess_grade_bands, conflict_grades").eq("id", schoolId).maybeSingle(),
+      supabase.from("schools").select("name, start_time, end_time, grades_served, class_duration, passing_time, setup_time, grade_time_config, keep_grades_together, rotation_wheel_grades, contractual_minutes_extracted, early_release_day, early_release_end_time, recess_grade_bands, conflict_grades").eq("id", schoolId).maybeSingle(),
     ]);
 
     let blocks = (blocksRes.data ?? []) as EditBlock[];

@@ -8,7 +8,7 @@
 //
 // Legality per move is the SSOT validator (recess windows per grade, PLC
 // grade locks, teacher double-book across ALL specialists, school hours) plus
-// two score guards, because exactly two breakdown terms are order-sensitive
+// score guards, because exactly three breakdown terms are order-sensitive
 // within a specialist-day:
 //   - k_grade_after_780: a K/TK block must never move from before 13:00 to
 //     13:00+ (the reverse is fine — it can only help).
@@ -16,6 +16,12 @@
 //     preference must not be flipped across noon. (preferenceViolations are a
 //     frozen input to scoring, so a NEW violation wouldn't even be scored —
 //     it would just silently betray the preference.)
+//   - wheel_alignment (wheel mode only): moving a class between slots changes
+//     which grades share a wave SCHOOL-WIDE, not just for this specialist.
+//     No per-move guard is practical, so the pass uses check-and-revert: a
+//     day's permutation that worsens wave purity is rolled back wholesale.
+//     On a wheel-pure day every unit is its own single-grade run, so the pass
+//     is naturally a near-no-op there; the guard only bites on mixed days.
 // Every other term (spread, clustering, cohesion, repeats, stdev, coverage,
 // contract, planning) is permutation-invariant within a day, so under these
 // guards the pass is provably score-non-decreasing and can be applied last.
@@ -28,6 +34,7 @@ import {
   buildConstraintContext,
   violations,
 } from "../_shared/constraints.ts";
+import { wheelEnabled, wheelGradeFilter } from "./_scoring.ts";
 
 // Structural block shape (compatible with the engine's Block and the SSOT's
 // ConstraintBlock — kept local so this module has no import cycle on index.ts).
@@ -79,6 +86,37 @@ function isMovable(b: AdjBlock): boolean {
   return true;
 }
 
+const WHEEL_NON_GRADES = new Set(["lunch", "planning", "makeup", "all", ""]);
+
+/** Wheel penalty for ONE day across ALL specialists: per wave (start time ×
+ *  week label), each distinct grade beyond the first. Mirrors the
+ *  wheel_alignment scoring term (9c) restricted to a single day. Blocks with
+ *  no week label run in EVERY week, so they join each label's wave. */
+export function dayWheelPenalty(
+  day: string,
+  blocks: AdjBlock[],
+  inWheel: (grade: string) => boolean,
+): number {
+  const labels = new Set<string>();
+  for (const b of blocks) {
+    if (b.day_of_week === day && b.week_label) labels.add(b.week_label);
+  }
+  const gradesByWave = new Map<string, Set<string>>();
+  for (const b of blocks) {
+    if (b.day_of_week !== day || !b.specialist_id) continue;
+    const g = String(b.grade ?? "").trim();
+    if (WHEEL_NON_GRADES.has(g.toLowerCase()) || !inWheel(g)) continue;
+    const waveLabels = b.week_label ? [b.week_label] : (labels.size ? [...labels] : [""]);
+    for (const l of waveLabels) {
+      const key = `${b.start_time}|${l}`;
+      (gradesByWave.get(key) ?? gradesByWave.set(key, new Set()).get(key)!).add(g);
+    }
+  }
+  let mixed = 0;
+  for (const s of gradesByWave.values()) mixed += Math.max(0, s.size - 1);
+  return mixed;
+}
+
 /** Count maximal same-grade runs in a day's chronologically-sorted blocks. */
 export function countGradeRuns(dayBlocks: AdjBlock[]): number {
   const sorted = [...dayBlocks].sort((a, b) => toMin(a.start_time) - toMin(b.start_time));
@@ -105,6 +143,8 @@ export function reorderGradeRuns(
 ): { blocks: AdjBlock[]; stats: ReorderStats } {
   const stats: ReorderStats = { specialistDays: 0, changedDays: 0, movedBlocks: 0, runsBefore: 0, runsAfter: 0 };
   const fixedContext = ctx.fixedContext ?? [];
+  const wheelOn = wheelEnabled(ctx.school);
+  const inWheel = wheelGradeFilter(ctx.school);
 
   // Fixed-context identity set (a block may appear both in `blocks` and in
   // fixedContext when callers pass the merged list — never move those).
@@ -156,6 +196,8 @@ export function reorderGradeRuns(
     // and the revert below must restore the pre-reorder times.
     const dayBlocksBefore = idxs.map((i) => ({ ...out[i] }));
     stats.runsBefore += countGradeRuns(dayBlocksBefore);
+    const groupDay = key.split("|")[1];
+    const wheelBeforeDay = wheelOn ? dayWheelPenalty(groupDay, [...out, ...fixedContext], inWheel) : 0;
 
     // Per-duration classes: only equal-length units may exchange slots.
     const byDuration = new Map<number, Unit[]>();
@@ -253,8 +295,11 @@ export function reorderGradeRuns(
 
     const runsAfterDay = countGradeRuns(idxs.map((i) => out[i]));
     const runsBeforeDay = countGradeRuns(dayBlocksBefore);
-    // Paranoia: a reorder must never fragment a day further. Revert if it did.
-    if (runsAfterDay > runsBeforeDay) {
+    // Paranoia: a reorder must never fragment a day further. And in wheel
+    // mode it must never worsen the day's wave purity (wheel_alignment is
+    // order-sensitive within a day — see header). Revert wholesale if so.
+    const wheelAfterDay = wheelOn ? dayWheelPenalty(groupDay, [...out, ...fixedContext], inWheel) : 0;
+    if (runsAfterDay > runsBeforeDay || wheelAfterDay > wheelBeforeDay) {
       idxs.forEach((i, j) => {
         out[i].start_time = dayBlocksBefore[j].start_time;
         out[i].end_time = dayBlocksBefore[j].end_time;

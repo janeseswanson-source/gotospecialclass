@@ -27,7 +27,7 @@ export async function exportTeacherPlanner(opts: Options): Promise<boolean> {
       supabase.from("schedule_blocks").select("*").eq("generation_id", generationId),
       specQuery,
       supabase.from("classroom_teachers").select("id, name, grade").eq("school_id", schoolId),
-      supabase.from("schools").select("name, recess_grade_bands").eq("id", schoolId).maybeSingle(),
+      supabase.from("schools").select("name, school_year, start_time, end_time, early_release_day, early_release_end_time, recess_grade_bands").eq("id", schoolId).maybeSingle(),
       supabase.from("recess_lunch_config").select("*").eq("school_id", schoolId),
       supabase.from("parsed_calendar_events").select("event_date, end_date, title, event_type").eq("school_id", schoolId).eq("approved", true),
     ]);
@@ -59,12 +59,19 @@ export async function exportTeacherPlanner(opts: Options): Promise<boolean> {
       specialists: specs.map((s) => ({ id: s.id, name: s.name, subject: s.subject })),
       blocks,
       schoolName: school?.name,
+      schoolYear: school?.school_year ?? undefined,
       weeks,
       weekLabels,
       recessConfig: (recess ?? []) as RecessRow[],
       bandLabels: bandLabelMapFromStored((school as any)?.recess_grade_bands),
       includeNotesBox,
       calendarEvents: calEvents ?? [],
+      schoolHours: {
+        start: school?.start_time ?? null,
+        end: school?.end_time ?? null,
+        earlyReleaseDay: school?.early_release_day ?? null,
+        earlyReleaseEnd: school?.early_release_end_time ?? null,
+      },
       quote,
     });
 

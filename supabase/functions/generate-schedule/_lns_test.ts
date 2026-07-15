@@ -16,8 +16,10 @@ import { generateScheduleBlocks, computeWarnings, type Block, type StrategyResul
 import { scoreSchedule, type ScoreableInput } from "./_scoring.ts";
 import { buildScenario, countHardViolations, type CharStrategy } from "./_characterization_fixtures.ts";
 
-function buildLNSInputs(strategy: CharStrategy) {
-  const { specialists, teachers, grades, school, recessConfigs } = buildScenario(strategy);
+function buildLNSInputs(strategy: CharStrategy, schoolPatch: Record<string, unknown> = {}) {
+  const scenario = buildScenario(strategy);
+  const { specialists, teachers, grades, recessConfigs } = scenario;
+  const school = { ...(scenario.school as Record<string, unknown>), ...schoolPatch };
   const gen = generateScheduleBlocks(
     "00000000-0000-4000-a000-0000000000ln",
     specialists as never, teachers as never, grades, school, recessConfigs,
@@ -31,6 +33,7 @@ function buildLNSInputs(strategy: CharStrategy) {
       early_release_day: school.early_release_day as string,
       early_release_end_time: school.early_release_end_time as string,
       keep_grades_together: true,
+      rotation_wheel_grades: (school as any).rotation_wheel_grades ?? null,
       contractual_minutes_extracted: null,
     },
     specialists: (specialists as any[]).map((s) => ({ id: s.id, subject: s.subject, working_days: s.working_days })),
@@ -44,8 +47,8 @@ function buildLNSInputs(strategy: CharStrategy) {
   return { initial, initialScore, scoringInput, specialists, grades, school, recessConfigs };
 }
 
-function run(strategy: CharStrategy, seed: number, opts?: Parameters<typeof runLNS>[10]) {
-  const c = buildLNSInputs(strategy);
+function run(strategy: CharStrategy, seed: number, opts?: Parameters<typeof runLNS>[10], schoolPatch?: Record<string, unknown>) {
+  const c = buildLNSInputs(strategy, schoolPatch);
   const res = runLNS(
     c.initial, c.initialScore, c.scoringInput, c.specialists as never, c.grades,
     c.school, c.recessConfigs, new OccupancyTracker(), mulberry32(seed), undefined, opts,
@@ -81,7 +84,14 @@ Deno.test("LNS: improves the complaint-school (standard) fixture", () => {
   // 400 rounds (was 120): the grade_day_spread objective term made this seed's
   // first improving move rarer — probed seeds 7/42/999 improve at 120, but
   // 12345 needs ~400. The improvement guarantee itself is unchanged.
-  const { res } = run("standard", 12345, { rounds: 400 });
+  //
+  // rotation_wheel_grades []: wheel mode OFF reproduces the exact pre-wheel
+  // engine, where this fixture provably has LNS-reachable headroom. With the
+  // wheel ON, grade-major construction + in-pipeline SA already land this
+  // fixture on LNS's local optimum (probed seeds 7/42/999/12345 × rounds
+  // 400/1200 all return +0 — nothing left for these operators), so the wheel
+  // path is covered by the never-regresses test above instead.
+  const { res } = run("standard", 12345, { rounds: 400 }, { rotation_wheel_grades: [] });
   assert(res.improvement > 0, `expected LNS to improve standard, got +${res.improvement}`);
 });
 

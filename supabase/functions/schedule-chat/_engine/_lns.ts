@@ -28,7 +28,7 @@
 // affects output; an optional safetyMs is a never-reached valve (see SAOptions).
 
 import { type Rng } from "./_random.ts";
-import { scoreSchedule, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
+import { scoreSchedule, wheelEnabled, wheelGradeFilter, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
 import { type OccupancyTracker } from "./_occupancy.ts";
 import { buildOccupancyFromBlocks } from "./_annealing.ts";
 import {
@@ -404,6 +404,96 @@ export function declusterOnce(
   return false;
 }
 
+/** Enumerate wheel-consolidation swap pairs, best-first (wheel mode only).
+ *  A pair = a minority-grade block in a mixed wave (same day + start + week
+ *  across specialists) × a same-duration majority-grade block elsewhere in
+ *  that same specialist's day. Swapping their times purifies the wave while
+ *  both slots stay occupied by the same specialist, so occupancy shape is
+ *  preserved. Deterministic: waves ranked by mixedness, ties lexicographic. */
+export function enumerateWheelSwaps(
+  current: Block[],
+  combined: Set<Block>,
+  school: any,
+): Array<{ minority: Block; partner: Block }> {
+  if (!wheelEnabled(school)) return [];
+  const inWheel = wheelGradeFilter(school);
+  const NONG = new Set(["lunch", "planning", "makeup", "all", ""]);
+  const gradeOf = (b: Block) => String(b.grade ?? "").trim();
+  const isWaveBlock = (b: Block) =>
+    !!b.specialist_id && !NONG.has(gradeOf(b).toLowerCase()) && inWheel(gradeOf(b));
+
+  // Build waves; a label-less block runs in every week so it joins each label.
+  const labels = new Set(current.map((b) => b.week_label).filter(Boolean) as string[]);
+  const waves = new Map<string, Block[]>();
+  for (const b of current) {
+    if (!isWaveBlock(b)) continue;
+    const ls = b.week_label ? [b.week_label] : (labels.size ? [...labels] : [""]);
+    for (const l of ls) {
+      const k = `${b.day_of_week}|${b.start_time}|${l}`;
+      (waves.get(k) ?? waves.set(k, []).get(k)!).push(b);
+    }
+  }
+  const mixed = [...waves.entries()]
+    .map(([k, bs]) => {
+      const counts = new Map<string, number>();
+      for (const b of bs) counts.set(gradeOf(b), (counts.get(gradeOf(b)) ?? 0) + 1);
+      return { k, bs, counts };
+    })
+    .filter((w) => w.counts.size > 1)
+    .sort((a, b) => (b.counts.size - a.counts.size) || a.k.localeCompare(b.k));
+
+  const pairs: Array<{ minority: Block; partner: Block }> = [];
+  const seen = new Set<Block>();
+  for (const w of mixed) {
+    const majority = [...w.counts.entries()]
+      .sort((a, b) => (b[1] - a[1]) || a[0].localeCompare(b[0]))[0][0];
+    for (const blk of w.bs) {
+      if (gradeOf(blk) === majority || !isMutable(blk, combined) || seen.has(blk)) continue;
+      const dur = timeToMinutes(blk.end_time) - timeToMinutes(blk.start_time);
+      for (const other of current) {
+        if (other === blk || !isMutable(other, combined)) continue;
+        if (other.specialist_id !== blk.specialist_id) continue;
+        if (other.day_of_week !== blk.day_of_week) continue;
+        if ((other.week_label ?? null) !== (blk.week_label ?? null)) continue;
+        if (gradeOf(other) !== majority) continue;
+        if (other.start_time === blk.start_time) continue;
+        if (timeToMinutes(other.end_time) - timeToMinutes(other.start_time) !== dur) continue;
+        pairs.push({ minority: blk, partner: other });
+        seen.add(blk);
+      }
+    }
+  }
+  return pairs;
+}
+
+/** Apply one wheel swap as a candidate block list (input untouched). */
+export function applyWheelSwap(
+  current: Block[],
+  swap: { minority: Block; partner: Block },
+): Block[] {
+  const { minority, partner } = swap;
+  return current.map((b) => {
+    if (b === minority) return { ...b, start_time: partner.start_time, end_time: partner.end_time };
+    if (b === partner) return { ...b, start_time: minority.start_time, end_time: minority.end_time };
+    return b;
+  });
+}
+
+/** Wheel-consolidation move for directedRepair: try ranked swaps until one
+ *  passes `accept` (SSOT + strict score improvement — a swap that mixes some
+ *  other wave more than it purifies this one is rejected by the score gate). */
+export function consolidateWheelOnce(
+  current: Block[],
+  combined: Set<Block>,
+  school: any,
+  accept: (cand: Block[]) => boolean,
+): boolean {
+  for (const swap of enumerateWheelSwaps(current, combined, school)) {
+    if (accept(applyWheelSwap(current, swap))) return true;
+  }
+  return false;
+}
+
 export interface RepairContext {
   scoringInput: ScoreableInput;
   specialists: Specialist[];
@@ -451,6 +541,11 @@ export function directedRepair(blocks: Block[], ctx: RepairContext, rng: Rng, ma
 
     // 2. De-cluster same-day subject duplicates.
     if (declusterOnce(current, combined, baseOccupancy, school, recessConfigs, classStartMin, rng, accept)) improved = true;
+
+    // 3. Consolidate grade wheels (wheel mode): purify the most-mixed wave by
+    //    swapping a minority-grade block with a majority-grade block within
+    //    the same specialist's day.
+    if (consolidateWheelOnce(current, combined, school, accept)) improved = true;
 
     if (!improved) break;
   }
@@ -506,10 +601,19 @@ export function runLNS(
     if (mutable.length < 2) break;
 
     // Choose an operator (seeded): 0=destroy specialist, 1=destroy weekday,
-    // 2=destroy grade, 3=REASSIGN a repeating class onto distinct specialists.
-    const op = Math.floor(rng() * 4);
+    // 2=destroy grade, 3=REASSIGN a repeating class onto distinct specialists,
+    // 4=WHEEL swap (purify a mixed grade wave; wheel mode only).
+    const wheelOps = wheelEnabled(school) ? 1 : 0;
+    const op = Math.floor(rng() * (4 + wheelOps));
     let rebuilt: Block[] | null;
-    if (op === 3) {
+    if (op === 4) {
+      // Wheel consolidation: swap a mixed wave's minority-grade block with a
+      // same-duration majority-grade block within the same specialist's day.
+      const swaps = enumerateWheelSwaps(currentBlocks, combined, school);
+      if (swaps.length === 0) { T *= COOLING; continue; }
+      const pick = swaps[Math.floor(rng() * Math.min(swaps.length, 8))];
+      rebuilt = applyWheelSwap(currentBlocks, pick);
+    } else if (op === 3) {
       // Reassignment: only operator that changes which specialist a class sees.
       const repeatClasses = classesWithRepeats(mutable);
       if (repeatClasses.length === 0) { T *= COOLING; continue; }

@@ -30,7 +30,7 @@
 // ─────────────────────────────────────────────────────────────────────────
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { shuffle, deriveSeed, mulberry32, type Rng } from "./_random.ts";
-import { scoreSchedule, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
+import { scoreSchedule, wheelEnabled, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
 import { qualityPercent } from "../_shared/scoring-rubric.ts";
 import { calibrateMonteCarlo, monteCarloRun, MonteCarloBudgetExceededError } from "./_monteCarlo.ts";
 import { computeQualityConfidence } from "./_confidence.ts";
@@ -1109,6 +1109,47 @@ function assignDay(
 
 // ─── Strategy implementations ────────────────────────────────────────
 
+// ─── Wheel-mode construction helpers ─────────────────────────────────
+// A "wheel" = every specialist services the SAME grade's classrooms in one
+// time slot. assignDay already sends CONSECUTIVELY-processed classes to
+// distinct specialists in the earliest shared wave (stable rotIndex +
+// round-robin), so keeping each grade's classes contiguous in the processing
+// order is what makes wheels fall out of the existing assignment logic.
+
+/** MC shuffle that preserves grade contiguity: shuffle the order of grade
+ *  groups, and shuffle classes within each group, but never interleave. */
+function shuffleGradeBlocked<T extends { grade: string }>(items: T[], rng: Rng): T[] {
+  const byGrade = new Map<string, T[]>();
+  for (const it of items) {
+    (byGrade.get(it.grade) ?? byGrade.set(it.grade, []).get(it.grade)!).push(it);
+  }
+  const groups = shuffle([...byGrade.values()], rng);
+  return groups.flatMap((g) => shuffle(g, rng));
+}
+
+/** Group a grade-teacher list into contiguous whole-grade groups (input order preserved). */
+function gradeGroupsOf<T extends { grade: string }>(items: T[]): T[][] {
+  const byGrade = new Map<string, T[]>();
+  for (const it of items) {
+    (byGrade.get(it.grade) ?? byGrade.set(it.grade, []).get(it.grade)!).push(it);
+  }
+  return [...byGrade.values()];
+}
+
+/** A/B split by WHOLE grades, greedily balanced by class count. A per-class
+ *  interleave (i % 2) puts half of a grade in each week, which makes a
+ *  whole-grade wheel structurally impossible. */
+function splitWholeGrades<T extends { grade: string }>(items: T[]): { a: T[]; b: T[] } {
+  const groups = gradeGroupsOf(items).sort((x, y) => y.length - x.length);
+  const a: T[] = [];
+  const b: T[] = [];
+  for (const g of groups) {
+    if (a.length <= b.length) a.push(...g);
+    else b.push(...g);
+  }
+  return { a, b };
+}
+
 function generateStandard(
   generationId: string,
   specialists: Specialist[],
@@ -1129,7 +1170,15 @@ function generateStandard(
   // Phase 3C: Monte Carlo permutation of grade-teacher ordering +
   // randomized starting rotation. Default (rng undefined) preserves
   // the deterministic Phase 3A ordering.
-  const orderedGT = rng ? shuffle(gradeTeachers, rng) : gradeTeachers;
+  //
+  // Wheel mode: the shuffle must keep each grade's classes CONTIGUOUS —
+  // contiguous processing is what lands a grade's classes on distinct
+  // specialists in the same wave (see shuffleGradeBlocked). MC diversity is
+  // preserved at both levels (group order + within-group order).
+  const wheelOn = wheelEnabled(school);
+  const orderedGT = rng
+    ? (wheelOn ? shuffleGradeBlocked(gradeTeachers, rng) : shuffle(gradeTeachers, rng))
+    : gradeTeachers;
   const rotationStart = rng ? Math.floor(rng() * Math.max(1, specialists.length)) : 0;
 
   // Stamp a STABLE rotation index on each class (its position in the
@@ -1143,8 +1192,15 @@ function generateStandard(
   // specials all week while others got a full slate. Rotating the daily
   // processing start spreads the shortage so every class gets a roughly
   // equal share. Step by ~classes/day so each day exposes a fresh window.
+  //
+  // Wheel mode rotates WHOLE grade groups instead of slicing the flat list —
+  // a flat slice would split one grade's run across the day boundary and
+  // break its wave. Which grade goes first still changes daily, so the
+  // starvation-sharing intent is preserved.
   const n = indexed.length;
   const rotStep = Math.max(1, Math.floor(n / DAYS.length));
+  const gradeGroups = wheelOn ? gradeGroupsOf(indexed) : [];
+  const groupRotStep = Math.max(1, Math.floor(gradeGroups.length / DAYS.length));
 
   const blocks: Block[] = [];
   const preferenceViolations: PreferenceViolation[] = [];
@@ -1155,8 +1211,14 @@ function generateStandard(
     const endMin = getEndMinForDay(day, school);
     const recessWindowsForGrade = (grade: string) => getRecessWindowsForDay(day, school, recessConfigs, grade);
 
-    const rotAmt = n > 0 ? (dIdx * rotStep) % n : 0;
-    const dayOrder = rotAmt === 0 ? indexed : indexed.slice(rotAmt).concat(indexed.slice(0, rotAmt));
+    let dayOrder: typeof indexed;
+    if (wheelOn && gradeGroups.length > 0) {
+      const gRot = (dIdx * groupRotStep) % gradeGroups.length;
+      dayOrder = gradeGroups.slice(gRot).concat(gradeGroups.slice(0, gRot)).flat();
+    } else {
+      const rotAmt = n > 0 ? (dIdx * rotStep) % n : 0;
+      dayOrder = rotAmt === 0 ? indexed : indexed.slice(rotAmt).concat(indexed.slice(0, rotAmt));
+    }
 
     const r = assignDay(
       day, dayOrder, specialists, occupancy, generationId,
@@ -1214,15 +1276,27 @@ function generateABWeek(
   // list in half so Week A and Week B are actually distinct. Otherwise both
   // weeks would receive the identical non-conflict assignments and the
   // strategy would be invisible in the output.
+  //
+  // Wheel mode splits by WHOLE grades (balanced by class count): a per-class
+  // interleave strands half of a grade in each week, making a whole-grade
+  // wheel structurally impossible ("a different wheel due to amount of
+  // classes" — each week runs its own wheel over complete grades).
+  const wheelOn = wheelEnabled(school);
   const splitSource = conflictGT.length > 0 ? conflictGT : nonConflictGT;
-  const groupA = splitSource.filter((_, i) => i % 2 === 0);
-  const groupB = splitSource.filter((_, i) => i % 2 !== 0);
+  const { a: groupA, b: groupB } = wheelOn
+    ? splitWholeGrades(splitSource)
+    : {
+        a: splitSource.filter((_, i) => i % 2 === 0),
+        b: splitSource.filter((_, i) => i % 2 !== 0),
+      };
   const sharedNC = conflictGT.length > 0 ? nonConflictGT : [];
 
   // Phase 3C: optional permutation + rotation offset.
-  const orderedNC = rng ? shuffle(sharedNC, rng) : sharedNC;
-  const orderedA = rng ? shuffle(groupA, rng) : groupA;
-  const orderedB = rng ? shuffle(groupB, rng) : groupB;
+  const mcShuffle = <T extends { grade: string }>(xs: T[]): T[] =>
+    rng ? (wheelOn ? shuffleGradeBlocked(xs, rng) : shuffle(xs, rng)) : xs;
+  const orderedNC = mcShuffle(sharedNC);
+  const orderedA = mcShuffle(groupA);
+  const orderedB = mcShuffle(groupB);
 
   const blocks: Block[] = [];
   const preferenceViolations: PreferenceViolation[] = [];
@@ -1320,15 +1394,23 @@ function generateAABBWeek(
 
   // Same split-fallback as ab_week: if no conflict grades, halve the
   // full grade list so the AA and BB weeks aren't carbon copies.
+  // Wheel mode: whole-grade split + grade-blocked shuffle (see generateABWeek).
+  const wheelOn = wheelEnabled(school);
   const splitSourceAB = conflictGT.length > 0 ? conflictGT : nonConflictGT;
-  const groupA = splitSourceAB.filter((_, i) => i % 2 === 0);
-  const groupB = splitSourceAB.filter((_, i) => i % 2 !== 0);
+  const { a: groupA, b: groupB } = wheelOn
+    ? splitWholeGrades(splitSourceAB)
+    : {
+        a: splitSourceAB.filter((_, i) => i % 2 === 0),
+        b: splitSourceAB.filter((_, i) => i % 2 !== 0),
+      };
   const sharedNCAB = conflictGT.length > 0 ? nonConflictGT : [];
 
   // Phase 3C: optional MC permutation.
-  const orderedNC = rng ? shuffle(sharedNCAB, rng) : sharedNCAB;
-  const orderedA = rng ? shuffle(groupA, rng) : groupA;
-  const orderedB = rng ? shuffle(groupB, rng) : groupB;
+  const mcShuffle = <T extends { grade: string }>(xs: T[]): T[] =>
+    rng ? (wheelOn ? shuffleGradeBlocked(xs, rng) : shuffle(xs, rng)) : xs;
+  const orderedNC = mcShuffle(sharedNCAB);
+  const orderedA = mcShuffle(groupA);
+  const orderedB = mcShuffle(groupB);
 
   const blocks: Block[] = [];
   const preferenceViolations: PreferenceViolation[] = [];
@@ -2189,6 +2271,7 @@ export function generateScheduleBlocks(
       early_release_day: school.early_release_day,
       early_release_end_time: school.early_release_end_time,
       keep_grades_together: (school as any).keep_grades_together ?? true,
+      rotation_wheel_grades: (school as any).rotation_wheel_grades ?? null,
       contractual_minutes_extracted: (school as any).contractual_minutes_extracted ?? null,
     },
     specialists: specialists.map((s) => ({ id: s.id, subject: s.subject, working_days: s.working_days })),

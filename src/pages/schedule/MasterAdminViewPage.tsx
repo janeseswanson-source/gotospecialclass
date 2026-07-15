@@ -14,22 +14,13 @@ import PageHeader from '@/components/layout/PageHeader';
 import WeekCyclePicker from '@/components/schedule/WeekCyclePicker';
 import { buildWeekCycle, type WeekStrategy } from '@/lib/weekCycle';
 import { friendlyBandLabel, bandLabelMapFromStored } from '@/lib/scheduleGrid';
+import { gradeRank, formatGradeOrdinal } from '@/lib/gradeOrdinal';
+import { getGradeAccentTextClass } from '@/lib/gradeColors';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const;
 const DAY_SHORT: Record<string, typeof DAYS[number]> = {
   Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday',
 };
-
-// Stable grade ordering: K, TK, PreK first, then numeric.
-function gradeRank(g: string | null | undefined): number {
-  if (!g) return 999;
-  const u = g.toUpperCase();
-  if (u === 'TK') return -2;
-  if (u === 'PREK' || u === 'PRE-K') return -3;
-  if (u === 'K') return -1;
-  const n = parseInt(g, 10);
-  return Number.isFinite(n) ? n : 998;
-}
 
 type Block = {
   id: string;
@@ -249,7 +240,15 @@ export default function MasterAdminViewPage() {
   type ChromeRow = { key: string; kind: string; groups: string[]; time: string };
   const chromeRowsFor = (kind: 'RECESS' | 'LUNCH' | 'DISMISSAL'): ChromeRow[] => {
     if (kind === 'DISMISSAL') {
-      return endTime ? [{ key: 'dismissal', kind: 'Dismissal', groups: [], time: formatTime(endTime) }] : [];
+      if (!endTime) return [];
+      // Early release ("School ends 1:15 Wed else 2:00") must show on the
+      // office's print-truth page, not just the setup wizard.
+      const erDay = (school?.early_release_day as string | null | undefined) ?? null;
+      const erEnd = (school?.early_release_end_time as string | null | undefined) ?? null;
+      const time = erDay && erEnd
+        ? `${formatTime(endTime)} (${formatTime(erEnd)} ${erDay.slice(0, 3)})`
+        : formatTime(endTime);
+      return [{ key: 'dismissal', kind: 'Dismissal', groups: [], time }];
     }
     const drafts = new Map<string, ChromeRow & { seen: Set<string> }>();
     const normalize = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -449,8 +448,8 @@ export default function MasterAdminViewPage() {
                         {slot.pairs.map((p, j) => (
                           <li key={j} className="flex gap-1">
                             {p.grade && (
-                              <span className="text-primary font-semibold w-6 truncate">
-                                {p.grade}
+                              <span className="text-primary font-semibold w-7 truncate">
+                                {formatGradeOrdinal(p.grade)}
                               </span>
                             )}
                             <span className="text-foreground truncate flex-1">
@@ -497,35 +496,51 @@ export default function MasterAdminViewPage() {
                         {cellBlocks.length === 0 ? (
                           <div className="opacity-30">·</div>
                         ) : (
-                          cellBlocks.map((b) => (
-                            <div key={b.id} className="flex items-baseline gap-1.5">
-                              {b.grade && (
-                                <span className="text-accent font-semibold w-6 shrink-0">
-                                  {b.grade}
-                                </span>
-                              )}
-                              <div className="flex-1 min-w-0">
-                                <div className="text-foreground font-medium truncate">
-                                  {b.subject || specialistSubject(b.specialist_id)}
-                                </div>
-                                <div className="text-muted-foreground truncate">
-                                  {specialistName(b.specialist_id)}
-                                  {b.teacher_id ? ` · ${teacherName(b.teacher_id)}` : ''}
-                                </div>
-                                {/* Every cell prints its own time — a print-out
-                                    must be self-evident even cut off from the
-                                    row label ("time in case it is different"). */}
-                                <div className="text-[9px] font-mono text-muted-foreground">
-                                  {formatTime(b.start_time)}–{formatTime(b.end_time)}
-                                </div>
+                          // Group the grade-sorted blocks into grade runs so the
+                          // slot reads as a wheel: "1st" once, then everyone
+                          // servicing 1st. The office scans the heading to know
+                          // which grade is at specials right now.
+                          cellBlocks
+                            .reduce<{ grade: string | null; items: Block[] }[]>((groups, b) => {
+                              const g = b.grade ?? null;
+                              const last = groups[groups.length - 1];
+                              if (last && last.grade === g) last.items.push(b);
+                              else groups.push({ grade: g, items: [b] });
+                              return groups;
+                            }, [])
+                            .map((grp, gi) => (
+                              <div key={gi} className="space-y-0.5">
+                                {grp.grade && (
+                                  <div className={`text-[12px] font-bold leading-tight ${getGradeAccentTextClass(grp.grade)}`}>
+                                    {formatGradeOrdinal(grp.grade)}
+                                  </div>
+                                )}
+                                {grp.items.map((b) => (
+                                  <div key={b.id} className={`flex items-baseline gap-1.5 ${grp.grade ? 'pl-1.5' : ''}`}>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-foreground font-medium truncate">
+                                        {b.subject || specialistSubject(b.specialist_id)}
+                                      </div>
+                                      <div className="text-muted-foreground truncate">
+                                        {specialistName(b.specialist_id)}
+                                        {b.teacher_id ? ` · ${teacherName(b.teacher_id)}` : ''}
+                                      </div>
+                                      {/* Every cell prints its own time — a print-out
+                                          must be self-evident even cut off from the
+                                          row label ("time in case it is different"). */}
+                                      <div className="text-[9px] font-mono text-muted-foreground">
+                                        {formatTime(b.start_time)}–{formatTime(b.end_time)}
+                                      </div>
+                                    </div>
+                                    {b.week_label && (
+                                      <span className="text-[9px] font-bold uppercase rounded bg-accent/20 text-accent px-1 py-0.5">
+                                        {b.week_label}
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
                               </div>
-                              {b.week_label && (
-                                <span className="text-[9px] font-bold uppercase rounded bg-accent/20 text-accent px-1 py-0.5">
-                                  {b.week_label}
-                                </span>
-                              )}
-                            </div>
-                          ))
+                            ))
                         )}
                       </div>
                     );

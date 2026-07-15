@@ -13,26 +13,39 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { CHAR_STRATEGIES, computeSnapshot, type CharSnapshot } from "./_characterization_fixtures.ts";
 
-// DELIBERATE RE-PIN (grade_day_spread): the new objective term penalizes each
-// extra distinct grade a specialist teaches per day (−20, objective-only — NOT
-// in the quality% rubric). It both adds a breakdown key and steers generation
-// toward same-grade days, so every snapshot moved. The large negative
-// winningScores are honest: these dense fixtures structurally require some
-// spread (5 specialists × 6 grades daily), and the soft term now prices it.
-// hardViolations stays 0 — the invariant that never changes.
+// DELIBERATE RE-PIN (wheel_alignment, default-ON wheel mode): the PM's grade
+// "wheel" — every specialist services the SAME grade's classrooms in a time
+// slot so that grade's teachers can meet. The wheel_alignment term (−20 per
+// extra distinct grade per wave, objective-only — NOT in the quality% rubric)
+// REPLACES grade_day_spread whenever wheel mode is on (they are mutually
+// exclusive: a wheel forces each specialist through one grade per wave, which
+// spread penalized at the same magnitude). Construction went grade-major
+// (shuffleGradeBlocked + whole-grade A/B splits), so every snapshot moved —
+// mostly dramatically for the better (standard −886.9 → +28.2).
+//
+// Re-pin gates that must NEVER regress across re-pins:
+//   - hardViolations stays 0 (the invariant that never changes)
+//   - full_week_coverage stays 600
+//   - class_repeats not worse for the wheel-aware constructions (standard
+//     −125→−100 BETTER, ab/aa_bb −325 SAME, quick_30 −225 SAME). big_group
+//     −150→−225 is a known objective trade on an untouched construction (MC
+//     now also prices wave purity); its rubric quality% still IMPROVES
+//     (penalty magnitude 776→553) and the refine loop's reassignClassDistinct
+//     targets repeats post-construction.
 const EXPECTED: Record<string, CharSnapshot> = {
   standard: {
     strategy: "standard",
     totalBlocks: 126,
     teachingBlocks: 104,
     chosenStrategy: "standard",
-    winningScore: -886.908,
+    winningScore: 28.172,
     scoreBreakdown: {
       errors: 0, warnings: 0, full_week_coverage: 600, am_pm_satisfied: 0,
       day_pref_satisfied: 0, planning_target_met: 150, cart_back_to_back: 0,
-      k_grade_after_780: 0, spec_dayload_stdev: -0.908, class_repeats: -125,
-      grade_cohesion: 0, grade_day_spread: -980, contract_min: 0, subject_gap: 0,
-      subject_day_clustering: -495, teacher_planning: -36,
+      k_grade_after_780: 0, spec_dayload_stdev: -0.828, class_repeats: -100,
+      grade_cohesion: 0, grade_day_spread: -0, wheel_alignment: -480,
+      contract_min: 0, subject_gap: 0,
+      subject_day_clustering: -105, teacher_planning: -36,
     },
     hardViolations: 0,
   },
@@ -41,13 +54,14 @@ const EXPECTED: Record<string, CharSnapshot> = {
     totalBlocks: 142,
     teachingBlocks: 120,
     chosenStrategy: "ab_week",
-    winningScore: -1430.979,
+    winningScore: 83.915,
     scoreBreakdown: {
       errors: 0, warnings: 0, full_week_coverage: 600, am_pm_satisfied: 0,
       day_pref_satisfied: 0, planning_target_met: 150, cart_back_to_back: 0,
-      k_grade_after_780: -40, spec_dayload_stdev: -0.979, class_repeats: -325,
-      grade_cohesion: 0, grade_day_spread: -1380, contract_min: 0, subject_gap: 0,
-      subject_day_clustering: -435, teacher_planning: 0,
+      k_grade_after_780: -0, spec_dayload_stdev: -1.085, class_repeats: -325,
+      grade_cohesion: 0, grade_day_spread: -0, wheel_alignment: -240,
+      contract_min: 0, subject_gap: -40,
+      subject_day_clustering: -60, teacher_planning: 0,
     },
     hardViolations: 0,
   },
@@ -56,13 +70,14 @@ const EXPECTED: Record<string, CharSnapshot> = {
     totalBlocks: 142,
     teachingBlocks: 120,
     chosenStrategy: "aa_bb_week",
-    winningScore: -1381.27,
+    winningScore: 79.014,
     scoreBreakdown: {
       errors: 0, warnings: 0, full_week_coverage: 600, am_pm_satisfied: 0,
       day_pref_satisfied: 0, planning_target_met: 150, cart_back_to_back: 0,
-      k_grade_after_780: -40, spec_dayload_stdev: -1.27, class_repeats: -325,
-      grade_cohesion: 0, grade_day_spread: -1180, contract_min: 0, subject_gap: 0,
-      subject_day_clustering: -585, teacher_planning: 0,
+      k_grade_after_780: -0, spec_dayload_stdev: -0.986, class_repeats: -325,
+      grade_cohesion: 0, grade_day_spread: -0, wheel_alignment: -200,
+      contract_min: 0, subject_gap: -40,
+      subject_day_clustering: -105, teacher_planning: 0,
     },
     hardViolations: 0,
   },
@@ -71,31 +86,33 @@ const EXPECTED: Record<string, CharSnapshot> = {
     totalBlocks: 126,
     teachingBlocks: 104,
     chosenStrategy: "quick_30",
-    winningScore: -1039.533,
+    winningScore: -516.033,
     scoreBreakdown: {
       errors: 0, warnings: 0, full_week_coverage: 600, am_pm_satisfied: 0,
       day_pref_satisfied: 0, planning_target_met: 150, cart_back_to_back: 0,
-      // DELIBERATE RE-PIN (grade-adjacency post-pass): the pass legally moved a
-      // late K session EARLIER — its K-guard is one-way (early→late forbidden,
-      // late→early is a strict improvement), so -20 became -0.
-      k_grade_after_780: -0, spec_dayload_stdev: -0.783, class_repeats: -225,
-      grade_cohesion: 0, grade_day_spread: -1000, contract_min: 0, subject_gap: 0,
-      subject_day_clustering: -480, teacher_planning: -63.75,
+      // The MC winner changed under the wheel objective; this candidate keeps
+      // one late K session (the adjacency pass can't move it early without
+      // worsening wave purity — its wheel guard reverts such days wholesale).
+      k_grade_after_780: -20, spec_dayload_stdev: -0.783, class_repeats: -225,
+      grade_cohesion: 0, grade_day_spread: -0, wheel_alignment: -740,
+      contract_min: 0, subject_gap: 0,
+      subject_day_clustering: -195, teacher_planning: -65.25,
     },
     hardViolations: 0,
   },
   big_group: {
     strategy: "big_group",
-    totalBlocks: 131,
-    teachingBlocks: 109,
+    totalBlocks: 130,
+    teachingBlocks: 108,
     chosenStrategy: "big_group",
-    winningScore: -966.074,
+    winningScore: -383.095,
     scoreBreakdown: {
       errors: 0, warnings: 0, full_week_coverage: 600, am_pm_satisfied: 0,
       day_pref_satisfied: 0, planning_target_met: 150, cart_back_to_back: 0,
-      k_grade_after_780: 0, spec_dayload_stdev: -1.324, class_repeats: -150,
-      grade_cohesion: 0, grade_day_spread: -940, contract_min: 0, subject_gap: 0,
-      subject_day_clustering: -600, teacher_planning: -24.75,
+      k_grade_after_780: -80, spec_dayload_stdev: -1.095, class_repeats: -225,
+      grade_cohesion: 0, grade_day_spread: -0, wheel_alignment: -580,
+      contract_min: 0, subject_gap: -40,
+      subject_day_clustering: -180, teacher_planning: -27,
     },
     hardViolations: 0,
   },

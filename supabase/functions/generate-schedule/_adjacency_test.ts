@@ -144,3 +144,50 @@ Deno.test("countGradeRuns counts maximal same-grade streaks", () => {
   ];
   assertEquals(countGradeRuns(grouped), 2);
 });
+
+// ─── Wheel guard (wheel_alignment is order-sensitive; pass must revert) ─────
+// school has no rotation_wheel_grades → wheel mode ON by default.
+
+/** Another specialist's day, passed as fixedContext so it can't move. */
+function musicDay(grades: string[]): AdjBlock[] {
+  const starts = [["08:00", "08:45"], ["08:50", "09:35"], ["09:40", "10:25"], ["10:30", "11:15"]];
+  return grades.map((g, i) =>
+    blk({ specialist_id: "music", subject: "Music", grade: g, teacher_id: `m${i}`, start_time: starts[i][0], end_time: starts[i][1] }));
+}
+
+Deno.test("wheel guard: reorder that would break pure waves is reverted", () => {
+  // Music (fixed) mirrors art's 5,3,5,3 → every wave is currently PURE.
+  // Grouping art into 5,5,3,3 would improve runs but mix waves 2 and 3 —
+  // the guard must roll the day back.
+  const art = interleavedDay();
+  const { blocks, stats } = reorderGradeRuns(art, {
+    school, recessConfigs, fixedContext: musicDay(["5", "3", "5", "3"]),
+  });
+  const sorted = [...blocks].sort((x, y) => x.start_time.localeCompare(y.start_time));
+  assertEquals(sorted.map((b) => b.grade), ["5", "3", "5", "3"], "wave purity outranks run grouping");
+  assertEquals(stats.runsAfter, stats.runsBefore, "reverted day keeps its original runs");
+});
+
+Deno.test("wheel guard: reorder that also improves wave purity is applied", () => {
+  // Music (fixed) is already grouped 5,5,3,3 → art's interleave is what mixes
+  // the waves; grouping art fixes runs AND purity. Must be applied.
+  const art = interleavedDay();
+  const { blocks } = reorderGradeRuns(art, {
+    school, recessConfigs, fixedContext: musicDay(["5", "5", "3", "3"]),
+  });
+  const sorted = [...blocks].sort((x, y) => x.start_time.localeCompare(y.start_time));
+  assertEquals(sorted.map((b) => b.grade), ["5", "5", "3", "3"]);
+});
+
+Deno.test("wheel guard: rotation_wheel_grades [] disables it (pre-wheel behavior)", () => {
+  // Identical setup to the revert test, but the school opted out of wheels —
+  // the pass groups runs exactly as before the guard existed.
+  const art = interleavedDay();
+  const { blocks } = reorderGradeRuns(art, {
+    school: { ...school, rotation_wheel_grades: [] },
+    recessConfigs,
+    fixedContext: musicDay(["5", "3", "5", "3"]),
+  });
+  const sorted = [...blocks].sort((x, y) => x.start_time.localeCompare(y.start_time));
+  assertEquals(sorted.map((b) => b.grade), ["5", "5", "3", "3"]);
+});

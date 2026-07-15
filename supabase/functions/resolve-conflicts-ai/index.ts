@@ -77,7 +77,7 @@ Deno.serve(async (req) => {
       supabase.from("specialists").select("id, name, subject, working_days, location, class_duration").eq("school_id", schoolId),
       supabase.from("classroom_teachers").select("id, name, grade, room").eq("school_id", schoolId),
       supabase.from("recess_lunch_config").select("*").eq("school_id", schoolId),
-      supabase.from("schools").select("name, start_time, end_time, grades_served, class_duration, passing_time, setup_time, grade_time_config, early_release_day, early_release_end_time, recess_grade_bands").eq("id", schoolId).maybeSingle(),
+      supabase.from("schools").select("name, start_time, end_time, grades_served, class_duration, passing_time, setup_time, grade_time_config, keep_grades_together, rotation_wheel_grades, early_release_day, early_release_end_time, recess_grade_bands").eq("id", schoolId).maybeSingle(),
     ]);
 
     const dbBlocks = (blocksRes.data ?? []) as any[];

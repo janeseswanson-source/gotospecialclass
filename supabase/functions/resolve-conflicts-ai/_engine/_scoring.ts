@@ -33,6 +33,7 @@ export interface ScoreBreakdown {
   class_repeats: number;
   grade_cohesion: number;
   grade_day_spread: number;
+  wheel_alignment: number;
   contract_min: number;
   subject_gap: number;
   subject_day_clustering: number;
@@ -67,6 +68,7 @@ export interface ScoreableInput {
     early_release_day?: string;
     early_release_end_time?: string;
     keep_grades_together?: boolean | null;
+    rotation_wheel_grades?: string[] | null;
     contractual_minutes_extracted?: ContractExtract | null;
   };
   specialists: Array<{ id: string; subject?: string | null; working_days?: string[] | null }>;
@@ -75,6 +77,32 @@ export interface ScoreableInput {
 }
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+
+// ─── Wheel mode (PM: "if there are four 1st grade classrooms then the grade
+// should be 1 for each specialist") ─────────────────────────────────────────
+// A "wheel" means all specialists service the SAME grade's classrooms in one
+// time slot, so that grade's teachers are free simultaneously (PLC) and the
+// office knows when each grade is at specials. Config rides the dormant
+// `schools.rotation_wheel_grades` column:
+//   null / undefined → wheel mode ON for every grade (product default)
+//   []               → wheel mode OFF (escape hatch: exact pre-wheel engine)
+//   ["1","2"]        → wheel mode ON, restricted to the listed grades
+export function wheelEnabled(
+  school: { rotation_wheel_grades?: string[] | null } | null | undefined,
+): boolean {
+  const v = school?.rotation_wheel_grades;
+  if (v == null) return true;
+  return v.length > 0;
+}
+
+export function wheelGradeFilter(
+  school: { rotation_wheel_grades?: string[] | null } | null | undefined,
+): (grade: string) => boolean {
+  const v = school?.rotation_wheel_grades;
+  if (v == null || v.length === 0) return () => true;
+  const set = new Set(v.map((g) => g.trim().toUpperCase()));
+  return (grade: string) => set.has(grade.trim().toUpperCase());
+}
 
 function timeToMinutes(t: string): number {
   const [h, m] = t.split(":").map(Number);
@@ -107,6 +135,20 @@ export const DEFAULT_WEIGHTS: Record<keyof ScoreBreakdown, number> = {
   // grades the combined cost is 15·(N−d) + w·(d−1), so any w < 15 makes MORE
   // grades per day strictly cheaper and the term would be self-defeating.
   grade_day_spread: -20,
+  // Per extra DISTINCT GRADE inside one teaching wave (same day + start time
+  // + week label) — the PM's "wheel": every specialist services the same
+  // grade's classrooms at once so that grade's teachers can meet. MUTUALLY
+  // EXCLUSIVE with grade_day_spread (see 9b/9c): a wheel forces each
+  // specialist through many grades per day, which spread penalizes at the
+  // same magnitude — with both active every wheel move would be score-
+  // neutral at best. Magnitude: matches the spread term it replaces (score
+  // scale stays stable), stays < class_repeats (-25) so purifying a wave can
+  // never justify manufacturing a repeat, and > subject_day_clustering (-15)
+  // so de-clustering doesn't casually re-mix a wave. Coverage (+100) and
+  // errors (-1000) dwarf it — a partial/mixed wheel is always preferred over
+  // dropping a class ("unless it is a different wheel due to amount of
+  // classes for that grade").
+  wheel_alignment: -20,
   contract_min: -0.05,   // per minute short on contractual subject/teacher minimums
   // Phase 4: verifier-aligned penalties.
   subject_gap: -40,            // per (grade, specialist) pair with zero sessions
@@ -240,9 +282,15 @@ export function scoreSchedule(
   // coordinators call "grades not together". Reserved pseudo-grades (Lunch /
   // Planning / Makeup) and whole-school "All" blocks (lunch clubs) don't count.
   // Same keep_grades_together gate as cohesion (same user intent).
+  //
+  // MUTUAL EXCLUSION with 9c: when wheel mode is on, spread is SKIPPED. A
+  // wheel-pure day necessarily walks each specialist through one grade per
+  // wave (many grades/day) — with both terms active at equal weight every
+  // wheel-purifying move would be fought to a standstill.
+  const wheelOn = wheelEnabled(input.school);
+  const NON_GRADES = new Set(["lunch", "planning", "makeup", "all", ""]);
   let gradeDaySpread = 0;
-  if (input.school?.keep_grades_together !== false) {
-    const NON_GRADES = new Set(["lunch", "planning", "makeup", "all", ""]);
+  if (!wheelOn && input.school?.keep_grades_together !== false) {
     const gradesBySpecDay = new Map<string, Set<string>>();
     for (const b of blocks) {
       if (!b.specialist_id) continue;
@@ -252,6 +300,33 @@ export function scoreSchedule(
       (gradesBySpecDay.get(key) ?? gradesBySpecDay.set(key, new Set()).get(key)!).add(g);
     }
     for (const set of gradesBySpecDay.values()) gradeDaySpread += Math.max(0, set.size - 1);
+  }
+
+  // 9c. Wheel alignment: per teaching wave (same day + start time + week
+  // label), each DISTINCT grade beyond the first. A pure wave = every
+  // specialist servicing the same grade = that grade's teachers free at once.
+  // Keyed on start_time only (not end) so a shorter K session sharing a wave
+  // start still counts as the same wave. A block with NO week label runs in
+  // every week, so it joins each label's wave. Soft: coverage and repeats
+  // dominate. (Mirrored by dayWheelPenalty in _adjacency.ts — keep in sync.)
+  let wheelMixedWaves = 0;
+  if (wheelOn) {
+    const inWheel = wheelGradeFilter(input.school);
+    const weekLabels = new Set<string>();
+    for (const b of blocks) if (b.week_label) weekLabels.add(b.week_label);
+    const gradesByWave = new Map<string, Set<string>>();
+    for (const b of blocks) {
+      if (!b.specialist_id) continue;
+      const g = String(b.grade ?? "").trim();
+      if (NON_GRADES.has(g.toLowerCase())) continue;
+      if (!inWheel(g)) continue;
+      const labels = b.week_label ? [b.week_label] : (weekLabels.size ? [...weekLabels] : [""]);
+      for (const l of labels) {
+        const key = `${b.day_of_week}|${b.start_time}|${l}`;
+        (gradesByWave.get(key) ?? gradesByWave.set(key, new Set()).get(key)!).add(g);
+      }
+    }
+    for (const set of gradesByWave.values()) wheelMixedWaves += Math.max(0, set.size - 1);
   }
 
   // 10. Contract minimums: compute shortfall minutes directly from
@@ -363,6 +438,7 @@ export function scoreSchedule(
     class_repeats: classRepeats * w.class_repeats,
     grade_cohesion: cohesionExtraDays * w.grade_cohesion,
     grade_day_spread: gradeDaySpread * w.grade_day_spread,
+    wheel_alignment: wheelMixedWaves * w.wheel_alignment,
     contract_min: contractShortfallMin * w.contract_min,
     subject_gap: subjectGapPairs * w.subject_gap,
     subject_day_clustering: dayClusterDupes * w.subject_day_clustering,

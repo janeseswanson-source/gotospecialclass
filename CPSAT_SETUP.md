@@ -81,3 +81,10 @@ back to the in-app metaheuristic and the school is never worse off.
 These schools solve to OPTIMAL in a few seconds. Cloud Run bills per request-second,
 so cost is negligible unless you raise `time_limit_s` for very large schools. More
 `--cpu` → faster proofs (CP-SAT parallelizes across workers).
+
+## Wheel alignment (engine-only for now)
+The grade-wheel objective (`wheel_alignment` in `_scoring.ts` — all specialists service
+the same grade's classrooms per time slot, gated by `schools.rotation_wheel_grades`)
+is implemented in the in-app metaheuristic engine only. The CP-SAT model does not yet
+optimize for it; CP-SAT results are still SSOT-checked and score-compared before
+adoption, so a wheel-aligned engine schedule wins when it scores better.

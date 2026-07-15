@@ -2,6 +2,7 @@ import { Document, Page, Text, View, Image, StyleSheet } from '@react-pdf/render
 import { abbrevSubject, lastName } from './lib/subjectAbbrev';
 import { generateSessionRanges } from './lib/sessionCalendar';
 import { PDF, PDF_BRAND, pdfSubjectColors } from './lib/pdfTheme';
+import { gradeRank, formatGradeOrdinal } from '@/lib/gradeOrdinal';
 import logoAsset from '@/assets/logo.png.asset.json';
 
 const LOGO_URL = (() => {
@@ -67,7 +68,8 @@ const styles = StyleSheet.create({
   bandRow: { flexDirection: 'row', borderBottom: `1pt solid ${PDF.ink}`, backgroundColor: PDF.cream, minHeight: 18 },
   bandCell: { padding: 4, fontSize: 8, fontFamily: PDF.fontBold, color: PDF.ink, textAlign: 'center', justifyContent: 'center' },
   subHeader: { fontSize: 6, fontFamily: PDF.fontBold, color: PDF.gold, marginBottom: 1 },
-  entry: { fontSize: 7, marginBottom: 1 },
+  gradeHeader: { fontSize: 7.5, fontFamily: PDF.fontBold, color: PDF.ink, marginBottom: 1 },
+  entry: { fontSize: 7, marginBottom: 1, marginLeft: 4 },
   footnote: { marginTop: 8, fontSize: 7, color: PDF.mute, fontStyle: 'italic' },
   legendPage: { paddingTop: 28, paddingBottom: 42, paddingHorizontal: 36, fontSize: 10, fontFamily: PDF.font },
   legendTitle: { fontSize: 16, fontFamily: PDF.fontBold, color: PDF.ink, marginBottom: 12 },
@@ -127,6 +129,43 @@ function buildLine(block: any, specialistsById: Map<string, any>, teachersById: 
   };
 }
 
+type GradeBlock = { grade?: string | null; [k: string]: unknown };
+
+/** Grade-sorted runs so a slot reads as a wheel: "1st" once, entries under it. */
+function groupByGrade(list: GradeBlock[]): { grade: string; items: GradeBlock[] }[] {
+  const sorted = [...list].sort((a, b) => gradeRank(a.grade) - gradeRank(b.grade));
+  const groups: { grade: string; items: GradeBlock[] }[] = [];
+  for (const b of sorted) {
+    const g = b.grade || '';
+    const last = groups[groups.length - 1];
+    if (last && last.grade === g) last.items.push(b);
+    else groups.push({ grade: g, items: [b] });
+  }
+  return groups;
+}
+
+function renderGradeGrouped(
+  list: GradeBlock[],
+  keyPrefix: string,
+  specialistsById: Map<string, unknown>,
+  teachersById: Map<string, Teacher>,
+) {
+  return groupByGrade(list).map((grp, gi) => (
+    <View key={`${keyPrefix}-g${gi}`}>
+      {grp.grade ? <Text style={styles.gradeHeader}>{formatGradeOrdinal(grp.grade)}</Text> : null}
+      {grp.items.map((bk, i) => {
+        const line = buildLine(bk, specialistsById, teachersById);
+        return (
+          <Text key={`${keyPrefix}-g${gi}-${i}`} style={styles.entry}>
+            <Text style={{ color: getSubjectColor(line.subjectFull) }}>{line.subjectAbbrev}</Text>
+            {` (${line.teacherDisplay})`}{line.isCombo ? '*' : ''}
+          </Text>
+        );
+      })}
+    </View>
+  ));
+}
+
 function renderCellEntries(
   cellBlocks: any[],
   specialistsById: Map<string, any>,
@@ -143,48 +182,20 @@ function renderCellEntries(
         {a.length > 0 && (
           <View>
             <Text style={styles.subHeader}>SESSION A</Text>
-            {a.map((bk, i) => {
-              const line = buildLine(bk, specialistsById, teachersById);
-              return (
-                <Text key={`a-${i}`} style={styles.entry}>
-                  <Text style={{ color: getSubjectColor(line.subjectFull) }}>{line.grade}-{line.subjectAbbrev}</Text>
-                  {` (${line.teacherDisplay})`}{line.isCombo ? '*' : ''}
-                </Text>
-              );
-            })}
+            {renderGradeGrouped(a, 'a', specialistsById, teachersById)}
           </View>
         )}
         {b.length > 0 && (
           <View style={{ marginTop: 2 }}>
             <Text style={styles.subHeader}>SESSION B</Text>
-            {b.map((bk, i) => {
-              const line = buildLine(bk, specialistsById, teachersById);
-              return (
-                <Text key={`b-${i}`} style={styles.entry}>
-                  <Text style={{ color: getSubjectColor(line.subjectFull) }}>{line.grade}-{line.subjectAbbrev}</Text>
-                  {` (${line.teacherDisplay})`}{line.isCombo ? '*' : ''}
-                </Text>
-              );
-            })}
+            {renderGradeGrouped(b, 'b', specialistsById, teachersById)}
           </View>
         )}
       </>
     );
   }
 
-  return (
-    <>
-      {cellBlocks.map((bk, i) => {
-        const line = buildLine(bk, specialistsById, teachersById);
-        return (
-          <Text key={i} style={styles.entry}>
-            <Text style={{ color: getSubjectColor(line.subjectFull) }}>{line.grade}-{line.subjectAbbrev}</Text>
-            {` (${line.teacherDisplay})`}{line.isCombo ? '*' : ''}
-          </Text>
-        );
-      })}
-    </>
-  );
+  return <>{renderGradeGrouped(cellBlocks, 'p', specialistsById, teachersById)}</>;
 }
 
 export const AdminOverview = ({

@@ -127,7 +127,6 @@ export default function SpecialistPlannerPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
-  const [timeSlots, setTimeSlots] = useState<string[]>([]);
   const [recessRows, setRecessRows] = useState<RecessRow[]>([]);
   const [bandDefs, setBandDefs] = useState<unknown>(null);
   const [weekFilter, setWeekFilter] = useState<string>("all");
@@ -175,7 +174,6 @@ export default function SpecialistPlannerPage() {
     }));
 
     setBlocks(mapped);
-    setTimeSlots([...new Set(mapped.map((b) => b.start_time))].sort());
     setRecessRows((recess ?? []) as RecessRow[]);
     setBandDefs((schoolRow as any)?.recess_grade_bands ?? null);
 
@@ -291,6 +289,10 @@ export default function SpecialistPlannerPage() {
     ? blocks.filter((b) => b.specialist_name === selectedSpec.name && weekVisible(b.week_label))
     : [];
   const selectedBands = selectedSpec ? bandsForSpecialist(selectedSpec.gradesServed, recessRows, bandDefs) : [];
+
+  // Per-grid time slots: only THIS specialist's start times. The old global
+  // union gave a Tue/Thu-only specialist empty rows for everyone else's slots.
+  const slotsFor = (bs: BlockData[]) => [...new Set(bs.map((b) => b.start_time))].sort();
 
   // Per-day teaching load + internal planning gaps for the selected specialist —
   // "their reality": how full each day is and where the open planning time falls.
@@ -451,7 +453,7 @@ export default function SpecialistPlannerPage() {
 
             {/* Grade-colored rails: on a per-specialist grid the subject never
                 varies, so the rail encodes GRADE — "grades together" at a glance. */}
-            <ScheduleGrid blocks={selectedBlocks} timeSlots={timeSlots} recessBands={selectedBands} colorBy="grade" />
+            <ScheduleGrid blocks={selectedBlocks} timeSlots={slotsFor(selectedBlocks)} recessBands={selectedBands} colorBy="grade" />
           </div>
         </div>
       ) : (
@@ -484,7 +486,12 @@ export default function SpecialistPlannerPage() {
                   </div>
                   <span className="text-xs text-primary">Open →</span>
                 </button>
-                <ScheduleGrid blocks={sBlocks} timeSlots={timeSlots} colorBy="grade" />
+                <ScheduleGrid
+                  blocks={sBlocks}
+                  timeSlots={slotsFor(sBlocks)}
+                  recessBands={bandsForSpecialist(s.gradesServed, recessRows, bandDefs)}
+                  colorBy="grade"
+                />
               </div>
             );
           })}

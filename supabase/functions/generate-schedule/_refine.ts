@@ -140,6 +140,7 @@ function buildScoringInput(ctx: RefineContext): ScoreableInput {
       early_release_day: ctx.school.early_release_day,
       early_release_end_time: ctx.school.early_release_end_time,
       keep_grades_together: ctx.school.keep_grades_together ?? true,
+      rotation_wheel_grades: ctx.school.rotation_wheel_grades ?? null,
       contractual_minutes_extracted: ctx.school.contractual_minutes_extracted ?? null,
     },
     specialists: ctx.specialists.map((s) => ({ id: s.id, subject: s.subject, working_days: s.working_days })),

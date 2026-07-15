@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, Download, AlertCircle } from 'lucide-react';
 import { renderPdfBlob, triggerDownload } from './exportShared';
-import { SpecialistPlanner, type RecessRow } from '@/pdf/SpecialistPlanner';
+import { SpecialistPlanner, type RecessRow, type SchoolHours } from '@/pdf/SpecialistPlanner';
 import { getMondayOf, enumerateWeeks, enumerateWeeksBetween, addDays } from '@/pdf/lib/weekDates';
 import { getDayLabelFor, type SchoolCalendarEvent } from '@/pdf/lib/holidays';
 import { resolveDisplayQuote } from '@/lib/quoteService';
@@ -23,6 +23,8 @@ interface Props {
   /** grade_band key → friendly label (schools.recess_grade_bands). */
   bandLabels?: Record<string, string> | null;
   calendarEvents?: SchoolCalendarEvent[];
+  /** Bell times incl. early release ("School Ends 1:15 Wed"). */
+  schoolHours?: SchoolHours;
 }
 
 type Phase = 'options' | 'generating' | 'preview' | 'error';
@@ -40,7 +42,7 @@ function isHolidayWeek(monday: Date, events?: SchoolCalendarEvent[]): boolean {
   return labeled === 5;
 }
 
-export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks, schoolId, schoolName, schoolYear, recessConfig = [], bandLabels, calendarEvents }: Props) => {
+export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks, schoolId, schoolName, schoolYear, recessConfig = [], bandLabels, calendarEvents, schoolHours }: Props) => {
   const [selection, setSelection] = useState<string>('all');
   const [weeksMode, setWeeksMode] = useState<WeeksMode>('this');
   const [customStart, setCustomStart] = useState<string>(todayIso());
@@ -110,6 +112,7 @@ export const SpecialistExportModal = ({ open, onOpenChange, specialists, blocks,
           recessConfig={recessConfig}
           bandLabels={bandLabels}
           calendarEvents={calendarEvents}
+          schoolHours={schoolHours}
           quote={quote}
         />
       );

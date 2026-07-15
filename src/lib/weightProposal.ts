@@ -11,7 +11,8 @@ const DEFAULTS: Record<string, number> = {
   errors: -1000, warnings: -50, full_week_coverage: 100, am_pm_satisfied: 10,
   day_pref_satisfied: 20, planning_target_met: 30, cart_back_to_back: -5,
   k_grade_after_780: -20, spec_dayload_stdev: -1, class_repeats: -25,
-  grade_cohesion: -4, contract_min: -0.05, subject_gap: -40,
+  grade_cohesion: -4, grade_day_spread: -20, wheel_alignment: -20,
+  contract_min: -0.05, subject_gap: -40,
   subject_day_clustering: -15, teacher_planning: -0.05,
 };
 
@@ -23,6 +24,8 @@ const LABEL: Record<string, string> = {
   k_grade_after_780: "keeping Kindergarten earlier in the day",
   cart_back_to_back: "avoiding rushed cart moves",
   grade_cohesion: "keeping each grade's specials grouped",
+  grade_day_spread: "same-day grade mixing",
+  wheel_alignment: "grade-wheel alignment across specialists",
   contract_min: "meeting contractual minutes",
   teacher_planning: "covering teacher planning time",
   spec_dayload_stdev: "balancing specialist day-loads",

@@ -120,7 +120,7 @@ Deno.serve(async (req) => {
   if (genErr || !gen) return json(404, { error: "Generation not found" });
 
   const [{ data: school }, { data: specialistsRaw }, { data: teachersRaw }, { data: blocksRaw }, { data: recessRaw }] = await Promise.all([
-    supabase.from("schools").select("id, name, grades_served, start_time, end_time, class_duration, passing_time, setup_time, grade_time_config, keep_grades_together, contractual_minutes_extracted, early_release_day, early_release_end_time, recess_grade_bands").eq("id", gen.school_id).maybeSingle(),
+    supabase.from("schools").select("id, name, grades_served, start_time, end_time, class_duration, passing_time, setup_time, grade_time_config, keep_grades_together, rotation_wheel_grades, contractual_minutes_extracted, early_release_day, early_release_end_time, recess_grade_bands").eq("id", gen.school_id).maybeSingle(),
     supabase.from("specialists").select("*").eq("school_id", gen.school_id),
     supabase.from("classroom_teachers").select("id, name, grade, room, am_pm_preference, day_preference, weekly_planning_minutes").eq("school_id", gen.school_id),
     supabase.from("schedule_blocks").select("*").eq("generation_id", generationId),

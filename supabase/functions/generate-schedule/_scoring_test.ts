@@ -293,8 +293,10 @@ Deno.test("scoreSchedule: grade_day_spread penalises a specialist teaching multi
     ] as any,
     warnings: [], preferenceViolations: [],
   };
-  const m = scoreSchedule(mixed, baseInput);
-  const c = scoreSchedule(clustered, baseInput);
+  // Wheel mode replaces spread (mutually exclusive); opt out to test the legacy term.
+  const wheelOff = { ...baseInput, school: { ...baseInput.school, rotation_wheel_grades: [] as string[] } };
+  const m = scoreSchedule(mixed, wheelOff);
+  const c = scoreSchedule(clustered, wheelOff);
   assertEquals(m.breakdown.grade_day_spread, -20, "2 grades on one specialist-day = 1 extra × −20");
   assertEquals(c.breakdown.grade_day_spread, 0, "one grade per day = no spread");
 });
@@ -311,8 +313,84 @@ Deno.test("scoreSchedule: grade_day_spread gated off by keep_grades_together=fal
     ] as any,
     warnings: [], preferenceViolations: [],
   };
-  const gatedOff = scoreSchedule(mixed, { ...baseInput, school: { ...baseInput.school, keep_grades_together: false } });
+  const gatedOff = scoreSchedule(mixed, { ...baseInput, school: { ...baseInput.school, rotation_wheel_grades: [] as string[], keep_grades_together: false } });
   assertEquals(gatedOff.breakdown.grade_day_spread, 0, "gate off → no penalty");
-  const gatedOn = scoreSchedule(mixed, baseInput);
+  const gatedOn = scoreSchedule(mixed, { ...baseInput, school: { ...baseInput.school, rotation_wheel_grades: [] as string[] } });
   assertEquals(gatedOn.breakdown.grade_day_spread, -20, "K+1 = 1 extra; Lunch/Planning/All ignored");
+});
+
+
+// ─── wheel_alignment (grade wheels across specialists) ───────────────
+// Default (no rotation_wheel_grades) = wheel mode ON; [] = off; subset restricts.
+Deno.test("scoreSchedule: wheel_alignment penalises mixed-grade waves, pure waves are free", () => {
+  const pure: ScoreableResult = {
+    blocks: [
+      block({ grade: "1", specialist_id: "s1", start_time: "09:00", end_time: "09:45" }),
+      block({ grade: "1", specialist_id: "s2", start_time: "09:00", end_time: "09:45", teacher_id: "t2" }),
+    ] as any,
+    warnings: [], preferenceViolations: [],
+  };
+  const mixed: ScoreableResult = {
+    blocks: [
+      block({ grade: "1", specialist_id: "s1", start_time: "09:00", end_time: "09:45" }),
+      block({ grade: "3", specialist_id: "s2", start_time: "09:00", end_time: "09:45", teacher_id: "t2" }),
+    ] as any,
+    warnings: [], preferenceViolations: [],
+  };
+  assertEquals(scoreSchedule(pure, baseInput).breakdown.wheel_alignment, 0, "one grade per wave = pure");
+  assertEquals(scoreSchedule(mixed, baseInput).breakdown.wheel_alignment, -20, "2 grades in one wave = 1 extra × −20");
+});
+
+Deno.test("scoreSchedule: wheel_alignment — A/B labels are separate waves; label-less blocks join every week", () => {
+  const abPure: ScoreableResult = {
+    blocks: [
+      block({ grade: "1", specialist_id: "s1", start_time: "09:00", end_time: "09:45", week_label: "A" }),
+      block({ grade: "3", specialist_id: "s2", start_time: "09:00", end_time: "09:45", teacher_id: "t2", week_label: "B" }),
+    ] as any,
+    warnings: [], preferenceViolations: [],
+  };
+  assertEquals(scoreSchedule(abPure, baseInput).breakdown.wheel_alignment, 0, "same start, different weeks = different waves");
+
+  const sharedMixes: ScoreableResult = {
+    blocks: [
+      // Label-less block runs in BOTH weeks → mixes with the A wave.
+      block({ grade: "2", specialist_id: "s1", start_time: "09:00", end_time: "09:45", week_label: null }),
+      block({ grade: "1", specialist_id: "s2", start_time: "09:00", end_time: "09:45", teacher_id: "t2", week_label: "A" }),
+    ] as any,
+    warnings: [], preferenceViolations: [],
+  };
+  assertEquals(scoreSchedule(sharedMixes, baseInput).breakdown.wheel_alignment, -20, "shared block joins the A wave");
+});
+
+Deno.test("scoreSchedule: wheel_alignment gating — [] disables, subset restricts, mutual exclusion with spread", () => {
+  const mixed: ScoreableResult = {
+    blocks: [
+      block({ grade: "1", specialist_id: "s1", start_time: "09:00", end_time: "09:45" }),
+      block({ grade: "3", specialist_id: "s2", start_time: "09:00", end_time: "09:45", teacher_id: "t2" }),
+      // Reserved pseudo-grades never count toward a wave.
+      block({ grade: "Lunch", specialist_id: "s1", start_time: "11:30", end_time: "12:00", teacher_id: null }),
+    ] as any,
+    warnings: [], preferenceViolations: [],
+  };
+  // Escape hatch: [] restores pre-wheel behavior exactly.
+  const off = scoreSchedule(mixed, { ...baseInput, school: { ...baseInput.school, rotation_wheel_grades: [] as string[] } });
+  assertEquals(off.breakdown.wheel_alignment, 0, "[] disables the wheel term");
+  // Subset: only listed grades participate — a wave mixing 1+3 is pure when only "1" is in the wheel.
+  const subset = scoreSchedule(mixed, { ...baseInput, school: { ...baseInput.school, rotation_wheel_grades: ["1"] } });
+  assertEquals(subset.breakdown.wheel_alignment, 0, "grade 3 outside the wheel doesn't mix the wave");
+  // Mutual exclusion: wheel ON zeroes spread; wheel OFF re-activates it.
+  // (Spread is per-SPECIALIST-day, so give one specialist two grades.)
+  const oneSpecTwoGrades: ScoreableResult = {
+    blocks: [
+      block({ grade: "1", specialist_id: "s1", start_time: "09:00", end_time: "09:45" }),
+      block({ grade: "3", specialist_id: "s1", start_time: "10:00", end_time: "10:45", teacher_id: "t2" }),
+    ] as any,
+    warnings: [], preferenceViolations: [],
+  };
+  const on = scoreSchedule(oneSpecTwoGrades, baseInput);
+  assertEquals(on.breakdown.grade_day_spread, 0, "wheel on → spread skipped");
+  assertEquals(on.breakdown.wheel_alignment, 0, "different waves → no wheel penalty either");
+  const offSpread = scoreSchedule(oneSpecTwoGrades, { ...baseInput, school: { ...baseInput.school, rotation_wheel_grades: [] as string[] } });
+  assertEquals(offSpread.breakdown.grade_day_spread, -20, "wheel off → spread active again");
+  assertEquals(offSpread.breakdown.wheel_alignment, 0, "wheel off → wheel term inert");
 });
