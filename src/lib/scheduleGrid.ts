@@ -280,6 +280,34 @@ export function isSpecialistLunchBlock(b: { grade?: string | null; subject?: str
     || (b.subject ?? "").trim().toLowerCase() === "specialist lunch";
 }
 
+const WEEK_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+
+/** Specialists who are OPEN during a slot: they work that day but have no
+ *  block of ANY kind (teaching, Specialist Lunch, PLC, Lunch Club…)
+ *  overlapping the window. A wheel with fewer classrooms than specialists
+ *  leaves someone Open by design — that's the school's flex capacity for
+ *  club/make-up minutes, and the office needs to see it.
+ *  `dayBlocks` = THIS day's blocks, all kinds, already week-filtered. `day`
+ *  is the short form ("Mon"). */
+export function openSpecialistsForSlot<T extends { id: string; working_days?: string[] | null }>(
+  specialists: T[],
+  dayBlocks: Array<{ specialist_id?: string | null; start_time: string; end_time: string }>,
+  day: string,
+  slotStart: string,
+  slotEnd: string,
+): T[] {
+  const s = parseTime(slotStart);
+  const e = parseTime(slotEnd);
+  const busy = new Set<string>();
+  for (const b of dayBlocks) {
+    if (!b.specialist_id) continue;
+    if (parseTime(b.start_time) < e && parseTime(b.end_time) > s) busy.add(b.specialist_id);
+  }
+  return specialists.filter(
+    (sp) => (sp.working_days ?? WEEK_DAYS).includes(day) && !busy.has(sp.id),
+  );
+}
+
 
 // --- Conflict detection (single source of truth for grid + warning panel) ---
 //

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTimeSlots, buildRecessBands, buildSpecialistBands, friendlyBandLabel, bandLabelMapFromStored, sanitizeBandLabel, isSpecialistLunchBlock, computeAutoFit, computeConflictIds, swapPlacements, minToHMS } from "./scheduleGrid";
+import { buildTimeSlots, buildRecessBands, buildSpecialistBands, friendlyBandLabel, bandLabelMapFromStored, sanitizeBandLabel, isSpecialistLunchBlock, openSpecialistsForSlot, computeAutoFit, computeConflictIds, swapPlacements, minToHMS } from "./scheduleGrid";
 import type { BlockData } from "@/components/schedule/ScheduleGrid";
 
 const mkBlock = (over: Partial<BlockData>): BlockData => ({
@@ -300,6 +300,41 @@ describe("buildSpecialistBands", () => {
     expect(bands).toHaveLength(1);
     expect(bands[0].kind).toBe("Lunch");
     expect(bands[0].label).toBe("Lunch");
+  });
+});
+
+describe("openSpecialistsForSlot", () => {
+  const specs = [
+    { id: "art", name: "Art", working_days: ["Mon", "Tue", "Wed", "Thu", "Fri"] },
+    { id: "garden", name: "Garden", working_days: ["Tue", "Thu"] },
+    { id: "pe", name: "PE", working_days: null },
+  ];
+  const blk = (specialist_id: string, start_time: string, end_time: string) => ({ specialist_id, start_time, end_time });
+
+  it("lists working specialists with no overlapping block", () => {
+    const open = openSpecialistsForSlot(specs, [blk("art", "08:05", "08:45")], "Tue", "08:05", "08:45");
+    expect(open.map((s) => s.id)).toEqual(["garden", "pe"]);
+  });
+
+  it("excludes specialists who don't work that day (never falsely Open)", () => {
+    const open = openSpecialistsForSlot(specs, [], "Mon", "08:05", "08:45");
+    expect(open.map((s) => s.id)).toEqual(["art", "pe"]); // garden is Tue/Thu only
+  });
+
+  it("any overlapping block counts — including chrome like Specialist Lunch", () => {
+    const open = openSpecialistsForSlot(specs, [blk("pe", "11:40:00", "12:10:00")], "Mon", "11:30", "12:00");
+    expect(open.map((s) => s.id)).toEqual(["art"]);
+  });
+
+  it("partial overlap makes not-Open; back-to-back stays Open", () => {
+    const dayBlocks = [blk("art", "10:15", "10:45"), blk("pe", "09:30", "10:15")];
+    const open = openSpecialistsForSlot(specs, dayBlocks, "Thu", "10:15", "11:00");
+    // art overlaps 10:15-10:45; pe ENDS exactly at slot start → Open.
+    expect(open.map((s) => s.id)).toEqual(["garden", "pe"]);
+  });
+
+  it("empty specialist list → empty", () => {
+    expect(openSpecialistsForSlot([], [blk("art", "08:00", "09:00")], "Mon", "08:00", "09:00")).toEqual([]);
   });
 });
 

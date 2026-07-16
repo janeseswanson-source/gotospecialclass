@@ -13,7 +13,7 @@ import { BRAND } from '@/brand/brand';
 import PageHeader from '@/components/layout/PageHeader';
 import WeekCyclePicker from '@/components/schedule/WeekCyclePicker';
 import { buildWeekCycle, type WeekStrategy } from '@/lib/weekCycle';
-import { friendlyBandLabel, bandLabelMapFromStored } from '@/lib/scheduleGrid';
+import { friendlyBandLabel, bandLabelMapFromStored, openSpecialistsForSlot } from '@/lib/scheduleGrid';
 import { gradeRank, formatGradeOrdinal } from '@/lib/gradeOrdinal';
 import { getGradeAccentTextClass } from '@/lib/gradeColors';
 
@@ -48,7 +48,7 @@ type Rotation = {
   notes: string | null;
 };
 
-type Specialist = { id: string; name: string; subject: string | null };
+type Specialist = { id: string; name: string; subject: string | null; working_days: string[] | null };
 type Teacher = { id: string; name: string; grade: string | null };
 type RecessRow = {
   id: string;
@@ -108,7 +108,7 @@ export default function MasterAdminViewPage() {
           .order('version', { ascending: false })
           .limit(1)
           .maybeSingle(),
-        supabase.from('specialists').select('id, name, subject').eq('school_id', selectedSchoolId!),
+        supabase.from('specialists').select('id, name, subject, working_days').eq('school_id', selectedSchoolId!),
         supabase
           .from('classroom_teachers')
           .select('id, name, grade')
@@ -297,6 +297,15 @@ export default function MasterAdminViewPage() {
           weekVisible(b.week_label)
       )
       .sort((a, b) => gradeRank(a.grade) - gradeRank(b.grade));
+  };
+
+  // ALL of a day's week-visible blocks (any kind, chrome included) — for the
+  // Open computation a specialist at lunch or in PLC is busy, not Open.
+  const dayBlocksAllKinds = (day: string) => {
+    const dayShort = day.slice(0, 3);
+    return blocks.filter(
+      (b) => (b.day_of_week === day || b.day_of_week === dayShort) && weekVisible(b.week_label)
+    );
   };
 
   async function handleXlsx() {
@@ -496,11 +505,12 @@ export default function MasterAdminViewPage() {
                         {cellBlocks.length === 0 ? (
                           <div className="opacity-30">·</div>
                         ) : (
-                          // Group the grade-sorted blocks into grade runs so the
-                          // slot reads as a wheel: "1st" once, then everyone
-                          // servicing 1st. The office scans the heading to know
-                          // which grade is at specials right now.
-                          cellBlocks
+                          <>
+                          {/* Group the grade-sorted blocks into grade runs so the
+                              slot reads as a wheel: "1st" once, then everyone
+                              servicing 1st. The office scans the heading to know
+                              which grade is at specials right now. */}
+                          {cellBlocks
                             .reduce<{ grade: string | null; items: Block[] }[]>((groups, b) => {
                               const g = b.grade ?? null;
                               const last = groups[groups.length - 1];
@@ -540,7 +550,16 @@ export default function MasterAdminViewPage() {
                                   </div>
                                 ))}
                               </div>
-                            ))
+                            ))}
+                          {/* Wheel flex capacity: a wave with fewer classrooms
+                              than specialists leaves someone OPEN — the block
+                              the office can tap for club/make-up minutes. */}
+                          {openSpecialistsForSlot(specialists, dayBlocksAllKinds(d), d.slice(0, 3), start, end).map((sp) => (
+                            <div key={`open-${sp.id}`} className="text-[10px] italic text-muted-foreground truncate">
+                              Open · {sp.name}{sp.subject ? ` (${sp.subject})` : ''}
+                            </div>
+                          ))}
+                          </>
                         )}
                       </div>
                     );
