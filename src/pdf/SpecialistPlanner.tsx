@@ -3,7 +3,7 @@ import { addDays, formatWeekHeader, formatDayHeader } from './lib/weekDates';
 import { getDayLabelFor, type SchoolCalendarEvent } from './lib/holidays';
 import { pickQuoteForWeek } from './lib/quotes';
 import { PDF, PDF_BRAND, pdfSubjectColors } from './lib/pdfTheme';
-import { friendlyBandLabel } from '@/lib/scheduleGrid';
+import { friendlyBandLabel, isSpecialistLunchBlock } from '@/lib/scheduleGrid';
 import { formatGradeOrdinal } from '@/lib/gradeOrdinal';
 import logoAsset from '@/assets/logo.png.asset.json';
 
@@ -186,68 +186,104 @@ function dedupeSlots(blocks: PlannerBlock[]): { start: string; end: string }[] {
   return [...map.values()].sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end));
 }
 
-/** Band name for print: custom wizard label → readable key → "All". Raw
- *  auto-generated `band_xxxxxx` keys must never reach paper. */
-function bandName(gradeBand: string | null | undefined, bandLabels?: Record<string, string> | null): string {
-  const friendly = friendlyBandLabel(gradeBand, bandLabels);
-  return friendly || 'All';
-}
-
 // ─── Standalone band rows, derived from recess_lunch_config (NOT from slot
 // collapse — the old approach dropped the band whenever any day had a class
 // starting in the slot, losing the recess info for the other four days). ─────
-interface BandRowSpec {
+export interface BandRowSpec {
   kind: string;           // left-rail label: "RECESS" / "LUNCH & RECESS"
   sort: string;           // HH:MM the row sorts into the stream by
   text: string;           // "K-2 Recess is 9:30 - 9:45   3-5 Recess is 10:00 - 10:15"
 }
 
-function buildBandRows(recess: RecessRow[], bandLabels?: Record<string, string> | null): BandRowSpec[] {
+/** Distinct meaningful labels for a window group, prefix-ready. A window
+ *  shared by an "all" row and a garbage-labelled band_ row has NO labels —
+ *  the phrase is then just "Recess is 10:00 - 10:15" (no "All" noise). */
+function groupPrefix(labels: string[]): string {
+  const MAX = 3;
+  const shown = labels.slice(0, MAX);
+  const overflow = labels.length - shown.length;
+  if (shown.length === 0) return '';
+  return shown.join(' & ') + (overflow > 0 ? ` +${overflow} more` : '') + ' ';
+}
+
+export function buildBandRows(recess: RecessRow[], bandLabels?: Record<string, string> | null): BandRowSpec[] {
   const rows: BandRowSpec[] = [];
   const window = (s?: string | null, e?: string | null) => `${fmtClock(s)} - ${fmtClock(e)}`;
+  // friendlyBandLabel sanitizes stored garbage (compound "AM Recess · band_x"
+  // labels, raw keys, period-name echoes) down to '' — never print junk.
+  const labelOf = (gradeBand: string | null | undefined) => friendlyBandLabel(gradeBand, bandLabels);
+  const collect = (group: { labels: string[]; seen: Set<string> }, gradeBand: string | null | undefined) => {
+    const l = labelOf(gradeBand);
+    if (!l) return;
+    const low = l.toLowerCase();
+    if (group.seen.has(low)) return;
+    group.seen.add(low);
+    group.labels.push(l);
+  };
 
-  // AM recess band.
-  const amParts: string[] = [];
-  let amMin: string | null = null;
+  // AM recess: one phrase per DISTINCT WINDOW (KK3 has 8 rows sharing one
+  // window — that's one phrase, not eight).
+  const amGroups = new Map<string, { start: string; labels: string[]; seen: Set<string> }>();
   for (const r of recess) {
     if (!r.am_recess_start || !r.am_recess_end) continue;
-    amParts.push(`${bandName(r.grade_band, bandLabels)} Recess is ${window(r.am_recess_start, r.am_recess_end)}`);
-    if (!amMin || r.am_recess_start < amMin) amMin = r.am_recess_start;
+    const k = `${r.am_recess_start}|${r.am_recess_end}`;
+    let g = amGroups.get(k);
+    if (!g) { g = { start: r.am_recess_start, labels: [], seen: new Set() }; amGroups.set(k, g); }
+    collect(g, r.grade_band);
   }
-  if (amParts.length && amMin) {
-    rows.push({ kind: 'RECESS', sort: amMin, text: [...new Set(amParts)].join('    ') });
+  if (amGroups.size) {
+    const groups = [...amGroups.entries()].sort((a, b) => a[1].start.localeCompare(b[1].start));
+    const text = groups
+      .map(([k, g]) => `${groupPrefix(g.labels)}Recess is ${window(...k.split('|') as [string, string])}`)
+      .join('    ');
+    rows.push({ kind: 'RECESS', sort: groups[0][1].start, text });
   }
 
-  // Lunch (+ following PM recess) band — her TPT phrasing:
+  // Lunch (+ its PM recess) — her TPT phrasing:
   // "K-2 Lunch is 11:00 - 11:30 w/ recess at 11:30 - 11:45".
-  const lunchParts: string[] = [];
-  let lunchMin: string | null = null;
+  const lunchGroups = new Map<string, { start: string; lunchW: string; pmW: string | null; labels: string[]; seen: Set<string> }>();
   const pmUsed = new Set<RecessRow>();
   for (const r of recess) {
     if (!r.lunch_start || !r.lunch_end) continue;
-    let part = `${bandName(r.grade_band, bandLabels)} Lunch is ${window(r.lunch_start, r.lunch_end)}`;
-    if (r.pm_recess_start && r.pm_recess_end) {
-      part += ` w/ recess at ${window(r.pm_recess_start, r.pm_recess_end)}`;
-      pmUsed.add(r);
+    const hasPm = !!(r.pm_recess_start && r.pm_recess_end);
+    if (hasPm) pmUsed.add(r);
+    const k = `${r.lunch_start}|${r.lunch_end}|${hasPm ? `${r.pm_recess_start}|${r.pm_recess_end}` : ''}`;
+    let g = lunchGroups.get(k);
+    if (!g) {
+      g = {
+        start: r.lunch_start,
+        lunchW: window(r.lunch_start, r.lunch_end),
+        pmW: hasPm ? window(r.pm_recess_start, r.pm_recess_end) : null,
+        labels: [], seen: new Set(),
+      };
+      lunchGroups.set(k, g);
     }
-    lunchParts.push(part);
-    if (!lunchMin || r.lunch_start < lunchMin) lunchMin = r.lunch_start;
+    collect(g, r.grade_band);
   }
-  if (lunchParts.length && lunchMin) {
+  if (lunchGroups.size) {
+    const groups = [...lunchGroups.values()].sort((a, b) => a.start.localeCompare(b.start));
+    const text = groups
+      .map((g) => `${groupPrefix(g.labels)}Lunch is ${g.lunchW}${g.pmW ? ` w/ recess at ${g.pmW}` : ''}`)
+      .join('    ');
     // Explicit break — 60pt rail would hyphenate "RE-CESS" otherwise.
-    rows.push({ kind: 'LUNCH &\nRECESS', sort: lunchMin, text: [...new Set(lunchParts)].join('    ') });
+    rows.push({ kind: 'LUNCH &\nRECESS', sort: groups[0].start, text });
   }
 
   // PM recess without a lunch window on the same band → its own row.
-  const pmParts: string[] = [];
-  let pmMin: string | null = null;
+  const pmGroups = new Map<string, { start: string; labels: string[]; seen: Set<string> }>();
   for (const r of recess) {
     if (pmUsed.has(r) || !r.pm_recess_start || !r.pm_recess_end) continue;
-    pmParts.push(`${bandName(r.grade_band, bandLabels)} PM Recess is ${window(r.pm_recess_start, r.pm_recess_end)}`);
-    if (!pmMin || r.pm_recess_start < pmMin) pmMin = r.pm_recess_start;
+    const k = `${r.pm_recess_start}|${r.pm_recess_end}`;
+    let g = pmGroups.get(k);
+    if (!g) { g = { start: r.pm_recess_start, labels: [], seen: new Set() }; pmGroups.set(k, g); }
+    collect(g, r.grade_band);
   }
-  if (pmParts.length && pmMin) {
-    rows.push({ kind: 'RECESS', sort: pmMin, text: [...new Set(pmParts)].join('    ') });
+  if (pmGroups.size) {
+    const groups = [...pmGroups.entries()].sort((a, b) => a[1].start.localeCompare(b[1].start));
+    const text = groups
+      .map(([k, g]) => `${groupPrefix(g.labels)}PM Recess is ${window(...k.split('|') as [string, string])}`)
+      .join('    ');
+    rows.push({ kind: 'RECESS', sort: groups[0][1].start, text });
   }
 
   return rows;
@@ -298,12 +334,39 @@ function PlannerPage({
   anyWeekLabels: boolean;
 }) {
   // Filter to this specialist + this week label
-  const mine = blocks.filter((b) => {
+  const all = blocks.filter((b) => {
     const matchSpec = b.specialist_id === specialist.id || b.specialist_name === specialist.name;
     if (!matchSpec) return false;
     if (weekLabel && b.week_label && b.week_label !== weekLabel) return false;
     return true;
   });
+
+  // Lunch shows as the LUNCH & RECESS band, not as per-day cells (Jane's
+  // paper-planner convention). Hide a slot only when EVERY block in it is the
+  // specialist's own lunch AND a config lunch window overlaps it — a lunch
+  // outside every configured window still prints (nothing silently lost).
+  const toMin = (t: string) => {
+    const [h, m] = t.slice(0, 5).split(':').map(Number);
+    return h * 60 + m;
+  };
+  const lunchWindows = recessConfig
+    .filter((r) => r.lunch_start && r.lunch_end)
+    .map((r) => ({ start: toMin(r.lunch_start!), end: toMin(r.lunch_end!) }));
+  const bySlot = new Map<string, PlannerBlock[]>();
+  for (const b of all) {
+    const k = `${b.start_time}-${b.end_time}`;
+    (bySlot.get(k) ?? bySlot.set(k, []).get(k)!).push(b);
+  }
+  const hiddenLunch = new Set<PlannerBlock>();
+  for (const slotBlocks of bySlot.values()) {
+    const s = toMin(slotBlocks[0].start_time);
+    const e = toMin(slotBlocks[0].end_time);
+    const allLunch = slotBlocks.every(isSpecialistLunchBlock);
+    const banded = lunchWindows.some((w) => s < w.end && w.start < e);
+    if (allLunch && banded) slotBlocks.forEach((b) => hiddenLunch.add(b));
+  }
+  const mine = all.filter((b) => !hiddenLunch.has(b));
+
   const slots = dedupeSlots(mine);
   const dayLabels = DAYS.map((_, i) => getDayLabelFor(addDays(monday, i), calendarEvents));
   const quote = (quoteProp && quoteProp.trim()) || pickQuoteForWeek(monday);

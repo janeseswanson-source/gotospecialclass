@@ -10,7 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import ScheduleGrid, { type BlockData, type RecessBand } from "@/components/schedule/ScheduleGrid";
 import { getSubjectBadgeClass } from "@/lib/subjectColors";
 import { cn } from "@/lib/utils";
-import { parseTime, friendlyBandLabel, bandLabelMapFromStored } from "@/lib/scheduleGrid";
+import { parseTime, buildSpecialistBands, isSpecialistLunchBlock } from "@/lib/scheduleGrid";
 import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
 import WeekCyclePicker from "@/components/schedule/WeekCyclePicker";
 import { buildWeekCycle, type WeekStrategy } from "@/lib/weekCycle";
@@ -60,63 +60,6 @@ function formatMinutes(min: number): string {
   const h = Math.floor(min / 60);
   const m = min % 60;
   return m ? `${h}h ${m}m` : `${h}h`;
-}
-
-function expandBandGrades(band: string): string[] {
-  // "all" handled by caller. Supports "K-2", "3-5", "K,1,2", "K"
-  const parts = band.split(",").map((p) => p.trim()).filter(Boolean);
-  const out: string[] = [];
-  for (const p of parts) {
-    const m = p.match(/^([Kk]|\d+)\s*-\s*(\d+)$/);
-    if (m) {
-      const startTok = m[1];
-      const endNum = Number(m[2]);
-      const startNum = /k/i.test(startTok) ? 0 : Number(startTok);
-      for (let i = startNum; i <= endNum; i++) {
-        out.push(i === 0 ? "K" : String(i));
-      }
-    } else {
-      out.push(p.toUpperCase() === "K" ? "K" : p);
-    }
-  }
-  return out;
-}
-
-function bandsForSpecialist(
-  gradesServed: string[],
-  rows: RecessRow[],
-  bandDefsRaw?: unknown,
-): RecessBand[] {
-  // schools.recess_grade_bands ({key,label,grades}) is the authority for which
-  // grades a band covers and what it's called — the grade_band KEY is often an
-  // opaque auto id ("band_o3re5m") that parses to nothing and must never print.
-  const defs = Array.isArray(bandDefsRaw) ? (bandDefsRaw as Array<{ key?: string; grades?: unknown }>) : [];
-  const gradesByKey = new Map<string, string[]>();
-  for (const d of defs) {
-    if (d?.key && Array.isArray(d.grades)) gradesByKey.set(d.key, d.grades.map((g) => String(g).trim()));
-  }
-  const bandLabels = bandLabelMapFromStored(bandDefsRaw);
-  const out: RecessBand[] = [];
-  for (const row of rows) {
-    const isAll = (row.grade_band ?? "all").toLowerCase() === "all";
-    if (!isAll) {
-      const bandGrades = gradesByKey.get(row.grade_band) ?? expandBandGrades(row.grade_band);
-      // Only filter when the grades actually resolved — an opaque key with no
-      // stored definition used to make the band VANISH from the grid, which is
-      // worse than showing recess to a specialist it may not apply to.
-      const resolvable = bandGrades.some((g) => /^(K|\d+)$/i.test(g));
-      if (resolvable && !bandGrades.some((g) => gradesServed.includes(g))) continue;
-    }
-    const friendly = isAll ? "" : friendlyBandLabel(row.grade_band, bandLabels);
-    const prefix = friendly ? `${friendly} ` : "";
-    const push = (label: string, s: string | null, e: string | null, suffix: string) => {
-      if (s && e) out.push({ id: `${row.id}-${suffix}`, label: `${prefix}${label}`, start_time: s, end_time: e });
-    };
-    push("AM Recess", row.am_recess_start, row.am_recess_end, "am");
-    push("Lunch", row.lunch_start, row.lunch_end, "lunch");
-    push("PM Recess", row.pm_recess_start, row.pm_recess_end, "pm");
-  }
-  return out.sort((a, b) => a.start_time.localeCompare(b.start_time));
 }
 
 export default function SpecialistPlannerPage() {
@@ -288,11 +231,26 @@ export default function SpecialistPlannerPage() {
   const selectedBlocks = selectedSpec
     ? blocks.filter((b) => b.specialist_name === selectedSpec.name && weekVisible(b.week_label))
     : [];
-  const selectedBands = selectedSpec ? bandsForSpecialist(selectedSpec.gradesServed, recessRows, bandDefs) : [];
+  const selectedBands = selectedSpec ? buildSpecialistBands(selectedSpec.gradesServed, recessRows, bandDefs) : [];
 
   // Per-grid time slots: only THIS specialist's start times. The old global
   // union gave a Tue/Thu-only specialist empty rows for everyone else's slots.
   const slotsFor = (bs: BlockData[]) => [...new Set(bs.map((b) => b.start_time))].sort();
+
+  // Lunch shows as a BAND, not as per-day block cards (Jane's paper-planner
+  // convention) — but only hide a lunch block when a lunch band actually
+  // covers its window; a grade-filtered specialist can hold a lunch outside
+  // their bands' windows and must not lose it from the grid.
+  const withoutBandedLunch = (bs: BlockData[], bands: RecessBand[]): BlockData[] => {
+    const lunchBands = bands.filter((b) => b.kind === "Lunch");
+    if (lunchBands.length === 0) return bs;
+    return bs.filter((b) =>
+      !isSpecialistLunchBlock(b) ||
+      !lunchBands.some((w) =>
+        parseTime(b.start_time) < parseTime(w.end_time) &&
+        parseTime(w.start_time) < parseTime(b.end_time)));
+  };
+  const selectedGridBlocks = withoutBandedLunch(selectedBlocks, selectedBands);
 
   // Per-day teaching load + internal planning gaps for the selected specialist —
   // "their reality": how full each day is and where the open planning time falls.
@@ -453,7 +411,7 @@ export default function SpecialistPlannerPage() {
 
             {/* Grade-colored rails: on a per-specialist grid the subject never
                 varies, so the rail encodes GRADE — "grades together" at a glance. */}
-            <ScheduleGrid blocks={selectedBlocks} timeSlots={slotsFor(selectedBlocks)} recessBands={selectedBands} colorBy="grade" />
+            <ScheduleGrid blocks={selectedGridBlocks} timeSlots={slotsFor(selectedGridBlocks)} recessBands={selectedBands} colorBy="grade" />
           </div>
         </div>
       ) : (
@@ -466,10 +424,20 @@ export default function SpecialistPlannerPage() {
           </div>
           {specialists.map((s) => {
             const sBlocks = blocks.filter((b) => b.specialist_name === s.name && weekVisible(b.week_label));
+            const sBands = buildSpecialistBands(s.gradesServed, recessRows, bandDefs);
+            const sGridBlocks = withoutBandedLunch(sBlocks, sBands);
             return (
-              <div key={s.id} className="rounded-xl border border-border bg-card p-4 space-y-3">
+              // The whole card opens the specialist — the header <button> stays
+              // the single keyboard-accessible control (no nested buttons).
+              // Block tiles stopPropagation, so the grid also gets onBlockClick.
+              <div
+                key={s.id}
+                onClick={() => setSelected(s.id)}
+                className="rounded-xl border border-border bg-card p-4 space-y-3 cursor-pointer hover:ring-2 hover:ring-primary/30 transition-shadow"
+              >
                 <button
                   onClick={() => setSelected(s.id)}
+                  aria-label={`Open ${s.name}'s week`}
                   className="w-full flex items-center justify-between gap-3 flex-wrap hover:opacity-80 transition-opacity text-left"
                 >
                   <div className="flex items-center gap-3 flex-wrap">
@@ -487,10 +455,11 @@ export default function SpecialistPlannerPage() {
                   <span className="text-xs text-primary">Open →</span>
                 </button>
                 <ScheduleGrid
-                  blocks={sBlocks}
-                  timeSlots={slotsFor(sBlocks)}
-                  recessBands={bandsForSpecialist(s.gradesServed, recessRows, bandDefs)}
+                  blocks={sGridBlocks}
+                  timeSlots={slotsFor(sGridBlocks)}
+                  recessBands={sBands}
                   colorBy="grade"
+                  onBlockClick={() => setSelected(s.id)}
                 />
               </div>
             );

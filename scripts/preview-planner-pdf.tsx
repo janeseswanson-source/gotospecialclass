@@ -49,6 +49,9 @@ const art = (day: string, start: string, end: string, grade: string, teacher: st
 });
 const blocks = [
   ...['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map((d) => art(d, '07:45', '08:00', 'Planning', '', { subject: 'Planning' })),
+  // The specialist's own duty-free lunch — must be HIDDEN as a slot row (the
+  // LUNCH & RECESS band covers 11:40-12:10).
+  ...['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map((d) => art(d, '11:40', '12:10', 'Lunch', '', { subject: 'Specialist Lunch' })),
   art('Mon', '08:05', '08:45', '1', 'Ann Scott'),
   art('Mon', '08:50', '09:30', '1', 'Beth Cherry', { notes: 'Bring drying rack for the clay projects today' }),
   art('Mon', '10:00', '10:45', '1', 'Cara Markulis'),
@@ -68,8 +71,14 @@ const blocks = [
 const recessConfig = [
   { grade_band: 'band_a1b2c3', am_recess_start: '09:30', am_recess_end: '09:45', lunch_start: '11:00', lunch_end: '11:30', pm_recess_start: '11:30', pm_recess_end: '11:45' },
   { grade_band: 'band_d4e5f6', am_recess_start: '10:00', am_recess_end: '10:15', lunch_start: '11:40', lunch_end: '12:10', pm_recess_start: '12:10', pm_recess_end: '12:45' },
+  // KK3-style garbage: an 'all' row DUPLICATING band_d4e5f6's windows, plus a
+  // compound-amplified label on that band — must merge to ONE clean phrase.
+  { grade_band: 'all', am_recess_start: '10:00', am_recess_end: '10:15', lunch_start: '11:40', lunch_end: '12:10', pm_recess_start: '12:10', pm_recess_end: '12:45' },
 ];
-const bandLabels = { band_a1b2c3: 'K-2', band_d4e5f6: '3-5' };
+const bandLabels = {
+  band_a1b2c3: 'K-2',
+  band_d4e5f6: 'AM Recess · AM Recess · AM Recess · 3-5 · band_d4e5f6',
+};
 
 const calendarEvents = [
   { event_date: iso(4), end_date: iso(4), title: 'Statehood Day', event_type: 'holiday' },

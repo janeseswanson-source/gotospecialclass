@@ -13,6 +13,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import PeriodCard, { PeriodKey, PeriodRow } from './recessLunch/PeriodCard';
 import { aiErrorToast } from '@/lib/aiError';
+import { sanitizeBandLabel } from '@/lib/scheduleGrid';
 
 const PERIOD_META: Record<PeriodKey, { title: string; Icon: any; accent: string }> = {
   amRecess: { title: 'AM Recess', Icon: Sun, accent: 'text-amber-600 dark:text-amber-300' },
@@ -119,11 +120,13 @@ const StepRecessLunch = () => {
       if (configRows.length === 0) {
         // No existing config — seed empty cards so the user has something to fill in
         const seed = storedBands[0] ?? { key: 'all', label: 'Whole School', grades: [...gradesServed] };
+        const seedLabel = sanitizeBandLabel(seed.label, seed.key)
+          || (seed.key === 'all' ? 'Whole School' : (gradeRangeLabel(seed.grades) || 'Group'));
         PERIOD_ORDER.forEach(p => {
           next[p] = [{
             rowId: genRowId(),
             bandKey: seed.key,
-            label: PERIOD_LABEL[p],
+            label: seedLabel,
             grades: [...seed.grades],
             start: '', end: '',
           }];
@@ -138,6 +141,12 @@ const StepRecessLunch = () => {
             label: r.grade_band === 'all' ? 'Whole School' : (gradeRangeLabel(gradesServed) || 'Group'),
             grades: [...gradesServed],
           };
+          // The card label must ROUND-TRIP the stored band label unchanged.
+          // The old expression prepended the period name ("AM Recess · ") to
+          // the STORED label, and autosave persisted the grown compound back —
+          // one extra segment per wizard visit (the KK3 label monster).
+          const cardLabel = sanitizeBandLabel(band.label, band.key)
+            || (band.key === 'all' ? 'Whole School' : (gradeRangeLabel(band.grades) || 'Group'));
           PERIOD_ORDER.forEach(p => {
             const cols = periodColumns(p);
             const start = (r as any)[cols.start] || '';
@@ -148,7 +157,7 @@ const StepRecessLunch = () => {
               next[p].push({
                 rowId: genRowId(),
                 bandKey: band.key,
-                label: configRows.length > 1 ? `${PERIOD_LABEL[p]} · ${band.label}` : PERIOD_LABEL[p],
+                label: cardLabel,
                 grades: [...band.grades],
                 start, end,
                 erStart: erStart || undefined,
@@ -184,13 +193,13 @@ const StepRecessLunch = () => {
   const buildPayload = useCallback(() => {
     // A stored band label must NAME the group, not echo the period or the raw
     // key — older saves leaked "AM Recess" / "band_xxxxxx" labels into every
-    // schedule view and export. Fall back to a grade-range name ("K–2").
-    const cleanLabel = (key: string, label: string, grades: string[]): string => {
-      const l = (label ?? '').trim();
-      const periodNames = new Set(Object.values(PERIOD_LABEL).map(v => v.toLowerCase()));
-      const isGarbage = !l || l === key || /^band_[a-z0-9]+$/i.test(l) || periodNames.has(l.toLowerCase());
-      return isGarbage ? gradeRangeLabel(grades) : l;
-    };
+    // schedule view and export, and COMPOUND garbage ("AM Recess · band_x")
+    // slipped past the old bare-form checks. sanitizeBandLabel strips all of
+    // it; fall back to a grade-range name ("K–2").
+    const cleanLabel = (key: string, label: string, grades: string[]): string =>
+      sanitizeBandLabel(label, key)
+      || gradeRangeLabel(grades)
+      || (key === 'all' ? 'Whole School' : 'Group');
     // Unique bands across all rows, keyed by bandKey (defaulting empty -> 'all').
     const bandIndex = new Map<string, StoredBand>();
     PERIOD_ORDER.forEach(p => cards[p].forEach(r => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTimeSlots, buildRecessBands, friendlyBandLabel, bandLabelMapFromStored, computeAutoFit, computeConflictIds, swapPlacements, minToHMS } from "./scheduleGrid";
+import { buildTimeSlots, buildRecessBands, buildSpecialistBands, friendlyBandLabel, bandLabelMapFromStored, sanitizeBandLabel, isSpecialistLunchBlock, computeAutoFit, computeConflictIds, swapPlacements, minToHMS } from "./scheduleGrid";
 import type { BlockData } from "@/components/schedule/ScheduleGrid";
 
 const mkBlock = (over: Partial<BlockData>): BlockData => ({
@@ -191,6 +191,127 @@ describe("swapPlacements", () => {
     const after = [{ ...a, ...na }, { ...b, ...nb }, c];
     const ids = computeConflictIds(after);
     expect(ids.has("a") && ids.has("c")).toBe(true);
+  });
+});
+
+describe("sanitizeBandLabel", () => {
+  const MONSTER = "AM Recess · AM Recess · AM Recess · AM Recess · AM Recess · AM Recess · AM Recess · band_o3re5m";
+
+  it("reduces a compound amplified label to nothing", () => {
+    expect(sanitizeBandLabel(MONSTER, "band_o3re5m")).toBe("");
+    expect(sanitizeBandLabel("Lunch · Lunch · Lunch · band_xgvk5p", "band_xgvk5p")).toBe("");
+  });
+
+  it("extracts the meaningful segment buried in a compound", () => {
+    expect(sanitizeBandLabel("AM Recess · K-2", "band_a")).toBe("K-2");
+    expect(sanitizeBandLabel("Lunch · Lunch · Primary · band_b", "band_b")).toBe("Primary");
+  });
+
+  it("splits on middots without surrounding spaces", () => {
+    expect(sanitizeBandLabel("AM Recess·K-2")).toBe("K-2");
+  });
+
+  it("drops only EXACT period-generic names — real names survive", () => {
+    expect(sanitizeBandLabel("Lunch")).toBe("");
+    expect(sanitizeBandLabel("Recess")).toBe("");
+    expect(sanitizeBandLabel("PM Recess (group 2)")).toBe("");
+    expect(sanitizeBandLabel("Lunch Bunch")).toBe("Lunch Bunch");
+    expect(sanitizeBandLabel("Early Lunch")).toBe("Early Lunch");
+    expect(sanitizeBandLabel("Recess Heroes")).toBe("Recess Heroes");
+  });
+
+  it("drops exact key echoes and bare band_ keys, keeps case-variant customs", () => {
+    expect(sanitizeBandLabel("primary", "primary")).toBe("");
+    expect(sanitizeBandLabel("band_abc123")).toBe("");
+    // Long-standing behavior: "Kindergarten" IS a custom label for key "kindergarten".
+    expect(sanitizeBandLabel("Kindergarten", "kindergarten")).toBe("Kindergarten");
+  });
+
+  it("dedupes segments case-insensitively, keeping first casing", () => {
+    expect(sanitizeBandLabel("K-2 · k-2 · K-2")).toBe("K-2");
+  });
+
+  it("handles null/empty", () => {
+    expect(sanitizeBandLabel(null)).toBe("");
+    expect(sanitizeBandLabel(undefined)).toBe("");
+    expect(sanitizeBandLabel("   ")).toBe("");
+  });
+});
+
+describe("compound-garbage integration (KK3 shape)", () => {
+  const MONSTER = "AM Recess · AM Recess · AM Recess · band_o3re5m";
+
+  it("friendlyBandLabel ignores a compound map value", () => {
+    expect(friendlyBandLabel("band_o3re5m", { band_o3re5m: MONSTER })).toBe("");
+    expect(friendlyBandLabel("band_a", { band_a: "AM Recess · K-2" })).toBe("K-2");
+  });
+
+  it("bandLabelMapFromStored sanitizes stored labels and skips hollow ones", () => {
+    const map = bandLabelMapFromStored([
+      { key: "band_o3re5m", label: MONSTER, grades: ["K"] },
+      { key: "band_b", label: "Lunch · 3-5", grades: ["3", "4", "5"] },
+    ]);
+    expect(map.band_o3re5m).toBeUndefined();
+    expect(map.band_b).toBe("3-5");
+  });
+
+  it("buildRecessBands collapses the KK3 all+band_ rows into ONE clean band", () => {
+    const rows = [
+      { id: "r1", grade_band: "all", am_recess_start: "10:00", am_recess_end: "10:15" },
+      { id: "r2", grade_band: "band_o3re5m", am_recess_start: "10:00", am_recess_end: "10:15" },
+    ];
+    const bands = buildRecessBands(rows, { band_o3re5m: MONSTER });
+    expect(bands).toHaveLength(1);
+    expect(bands[0].label).toBe("AM Recess");
+  });
+});
+
+describe("buildSpecialistBands", () => {
+  const row = (over: Record<string, unknown>) => ({
+    id: "r1", grade_band: "all",
+    am_recess_start: null, am_recess_end: null,
+    lunch_start: null, lunch_end: null,
+    pm_recess_start: null, pm_recess_end: null,
+    ...over,
+  }) as never;
+
+  it("merges same-window rows into one clean band (KK3 shape)", () => {
+    const rows = [
+      row({ id: "r1", grade_band: "all", am_recess_start: "10:00", am_recess_end: "10:15" }),
+      row({ id: "r2", grade_band: "band_o3re5m", am_recess_start: "10:00", am_recess_end: "10:15" }),
+    ];
+    const defs = [{ key: "band_o3re5m", label: "AM Recess · AM Recess · band_o3re5m", grades: ["K", "1"] }];
+    const bands = buildSpecialistBands(["K"], rows, defs);
+    expect(bands).toHaveLength(1);
+    expect(bands[0].label).toBe("AM Recess");
+    expect(bands[0].kind).toBe("AM Recess");
+  });
+
+  it("filters out a resolvable band the specialist does not serve", () => {
+    const rows = [row({ id: "r1", grade_band: "band_35", am_recess_start: "10:00", am_recess_end: "10:15" })];
+    const defs = [{ key: "band_35", label: "3-5", grades: ["3", "4", "5"] }];
+    expect(buildSpecialistBands(["K", "1"], rows, defs)).toHaveLength(0);
+    expect(buildSpecialistBands(["3"], rows, defs)).toHaveLength(1);
+  });
+
+  it("keeps an unresolvable opaque band visible (never silently vanish)", () => {
+    const rows = [row({ id: "r1", grade_band: "band_zzz", lunch_start: "11:40", lunch_end: "12:10" })];
+    const bands = buildSpecialistBands(["K"], rows, []);
+    expect(bands).toHaveLength(1);
+    expect(bands[0].kind).toBe("Lunch");
+    expect(bands[0].label).toBe("Lunch");
+  });
+});
+
+describe("isSpecialistLunchBlock", () => {
+  it("matches the generator's duty-free lunch exactly", () => {
+    expect(isSpecialistLunchBlock({ grade: "Lunch", subject: "Specialist Lunch" })).toBe(true);
+    expect(isSpecialistLunchBlock({ grade: "Lunch", subject: null })).toBe(true);
+    expect(isSpecialistLunchBlock({ grade: null, subject: "Specialist Lunch" })).toBe(true);
+  });
+  it("never matches Lunch Club teaching blocks", () => {
+    expect(isSpecialistLunchBlock({ grade: "3", subject: "Doodle Lunch Club" })).toBe(false);
+    expect(isSpecialistLunchBlock({ grade: "All", subject: "Lunch Club" })).toBe(false);
   });
 });
 

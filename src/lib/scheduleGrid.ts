@@ -105,14 +105,47 @@ export function buildCompactTimeSlots(
  *  export so every surface names bands the same way. */
 const OPAQUE_KEY_RE = /^band_[a-z0-9]+$/i;
 
+// A label segment that just names the period ("AM Recess", "Lunch",
+// "PM Recess (group 2)") carries no information — the band KIND already says
+// it. EXACT matches only: "Lunch Bunch" / "Early Lunch" are real names.
+const PERIOD_GENERIC_RE = /^(?:am recess|pm recess|recess|lunch)(?:\s*\(group \d+\))?$/i;
+
+/** Scrub a stored band label. Old wizard versions AMPLIFIED labels on every
+ *  visit — prepending the period name to the stored value — producing compound
+ *  garbage like "AM Recess · AM Recess · … · band_o3re5m" that the bare-form
+ *  checks below never caught. Split on the middots, drop worthless segments
+ *  (period-generic names, raw band_ keys, key echoes), dedupe, and return the
+ *  meaningful remainder ('' when nothing survives). */
+export function sanitizeBandLabel(label: string | null | undefined, key?: string | null): string {
+  const raw = (label ?? "").trim();
+  if (!raw) return "";
+  // Key echo is EXACT (case-sensitive) — "Kindergarten" is a legitimate custom
+  // label for the readable key "kindergarten" (long-standing behavior).
+  const k = (key ?? "").trim();
+  const seen = new Set<string>();
+  const kept: string[] = [];
+  for (const part of raw.split(/\s*·\s*/)) {
+    const seg = part.trim().replace(/\s+/g, " ");
+    if (!seg) continue;
+    const low = seg.toLowerCase();
+    if (k && seg === k) continue;
+    if (OPAQUE_KEY_RE.test(seg)) continue;
+    if (PERIOD_GENERIC_RE.test(seg)) continue;
+    if (seen.has(low)) continue;
+    seen.add(low);
+    kept.push(seg);
+  }
+  return kept.join(" · ");
+}
+
 export function friendlyBandLabel(gradeBand: string | null | undefined, bandLabels?: Record<string, string> | null): string {
   const key = (gradeBand ?? "").trim();
   if (!key || key === "all") return "";
   // The stored label MAP can itself carry garbage (older wizard versions saved
-  // the raw band_ key, or the period name, as the label) — sanitize map values
-  // exactly like raw keys instead of trusting any non-empty string.
-  const custom = (bandLabels?.[key] ?? "").trim();
-  if (custom && !OPAQUE_KEY_RE.test(custom) && custom !== key) return custom;
+  // the raw band_ key, the period name, or a compound of both, as the label) —
+  // sanitize map values instead of trusting any non-empty string.
+  const custom = sanitizeBandLabel(bandLabels?.[key], key);
+  if (custom) return custom;
   if (OPAQUE_KEY_RE.test(key)) return ""; // opaque auto key with no usable label — say nothing
   return key.charAt(0).toUpperCase() + key.slice(1);
 }
@@ -127,9 +160,9 @@ export function bandLabelMapFromStored(raw: unknown): Record<string, string> {
   if (!Array.isArray(raw)) return map;
   for (const b of raw as Array<{ key?: string; label?: string }>) {
     const key = (b?.key ?? "").trim();
-    const label = (b?.label ?? "").trim();
-    if (!key || !label) continue;
-    if (OPAQUE_KEY_RE.test(label) || label === key) continue;
+    if (!key) continue;
+    const label = sanitizeBandLabel(b?.label, key);
+    if (!label) continue;
     map[key] = label;
   }
   return map;
@@ -179,8 +212,72 @@ export function buildRecessBands(rows: any[], bandLabels?: Record<string, string
       label: groupStr ? `${d.kind} · ${groupStr}` : d.kind,
       start_time: d.start,
       end_time: d.end,
+      kind: d.kind,
     };
   });
+}
+
+function expandBandGrades(band: string): string[] {
+  // "all" handled by caller. Supports "K-2", "3-5", "K,1,2", "K"
+  const parts = band.split(",").map((p) => p.trim()).filter(Boolean);
+  const out: string[] = [];
+  for (const p of parts) {
+    const m = p.match(/^([Kk]|\d+)\s*-\s*(\d+)$/);
+    if (m) {
+      const startTok = m[1];
+      const endNum = Number(m[2]);
+      const startNum = /k/i.test(startTok) ? 0 : Number(startTok);
+      for (let i = startNum; i <= endNum; i++) {
+        out.push(i === 0 ? "K" : String(i));
+      }
+    } else {
+      out.push(p.toUpperCase() === "K" ? "K" : p);
+    }
+  }
+  return out;
+}
+
+/** Bands relevant to ONE specialist (filtered by the grades they serve), then
+ *  merged/deduped by buildRecessBands — the planner used to hand-roll one band
+ *  PER CONFIG ROW, stacking duplicate rows for every window. */
+export function buildSpecialistBands(
+  gradesServed: string[],
+  rows: Array<{
+    id: string; grade_band: string;
+    am_recess_start: string | null; am_recess_end: string | null;
+    lunch_start: string | null; lunch_end: string | null;
+    pm_recess_start: string | null; pm_recess_end: string | null;
+  }>,
+  bandDefsRaw?: unknown,
+): RecessBand[] {
+  // schools.recess_grade_bands ({key,label,grades}) is the authority for which
+  // grades a band covers — the grade_band KEY is often an opaque auto id
+  // ("band_o3re5m") that parses to nothing and must never print.
+  const defs = Array.isArray(bandDefsRaw) ? (bandDefsRaw as Array<{ key?: string; grades?: unknown }>) : [];
+  const gradesByKey = new Map<string, string[]>();
+  for (const d of defs) {
+    if (d?.key && Array.isArray(d.grades)) gradesByKey.set(d.key, d.grades.map((g) => String(g).trim()));
+  }
+  const relevant = rows.filter((row) => {
+    const isAll = (row.grade_band ?? "all").toLowerCase() === "all";
+    if (isAll) return true;
+    const bandGrades = gradesByKey.get(row.grade_band) ?? expandBandGrades(row.grade_band);
+    // Only filter when the grades actually resolved — an opaque key with no
+    // stored definition used to make the band VANISH from the grid, which is
+    // worse than showing recess to a specialist it may not apply to.
+    const resolvable = bandGrades.some((g) => /^(K|\d+)$/i.test(g));
+    return !resolvable || bandGrades.some((g) => gradesServed.includes(g));
+  });
+  return buildRecessBands(relevant, bandLabelMapFromStored(bandDefsRaw))
+    .sort((a, b) => a.start_time.localeCompare(b.start_time));
+}
+
+/** The generator's own duty-free lunch block (subject "Specialist Lunch",
+ *  grade "Lunch"). EXACT matches only — `includes('lunch')` would swallow
+ *  Lunch Club teaching blocks. */
+export function isSpecialistLunchBlock(b: { grade?: string | null; subject?: string | null }): boolean {
+  return (b.grade ?? "").trim().toLowerCase() === "lunch"
+    || (b.subject ?? "").trim().toLowerCase() === "specialist lunch";
 }
 
 

@@ -48,6 +48,9 @@ export interface RecessBand {
   label: string;
   start_time: string;
   end_time: string;
+  /** "AM Recess" | "Lunch" | "PM Recess" — set by buildRecessBands; lets
+   *  consumers discriminate lunch bands without sniffing the label text. */
+  kind?: string;
 }
 
 interface ScheduleGridProps {
@@ -256,9 +259,18 @@ export default function ScheduleGrid({
           <tbody>
             {(() => {
               type Row = { kind: "slot"; time: string } | { kind: "band"; band: RecessBand };
+              // Dedupe identical bands (same label + window) — a caller handing
+              // us one band per config row must not stack duplicate rows.
+              const seenBands = new Set<string>();
+              const uniqueBands = (recessBands ?? []).filter((b) => {
+                const k = `${b.label}|${b.start_time}|${b.end_time}`;
+                if (seenBands.has(k)) return false;
+                seenBands.add(k);
+                return true;
+              });
               const rows: Row[] = [
                 ...timeSlots.map((time): Row => ({ kind: "slot", time })),
-                ...(recessBands ?? []).map((band): Row => ({ kind: "band", band })),
+                ...uniqueBands.map((band): Row => ({ kind: "band", band })),
               ].sort((a, b) => {
                 const at = a.kind === "slot" ? parseTime(a.time) : parseTime(a.band.start_time);
                 const bt = b.kind === "slot" ? parseTime(b.time) : parseTime(b.band.start_time);
