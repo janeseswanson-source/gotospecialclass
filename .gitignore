@@ -28,3 +28,6 @@ dist-ssr
 
 # CI auth seed (holds a live Supabase session token)
 .ci-auth/
+
+# Local debug artifacts (simulate dumps, PDF preview renders)
+_debug/
