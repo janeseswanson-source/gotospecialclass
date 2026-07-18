@@ -81,7 +81,12 @@ export interface Headroom {
  *  the generator's own capacity_shortfall logic. */
 export function estimateHeadroom(input: HeadroomInput): Headroom {
   const { specialists, gradeCount, specialistCount, school } = input;
-  const feasStartMin = timeToMinutes(school.start_time ?? "08:00") ?? 8 * 60;
+  // Mirrors index.ts schoolRotationsStartMin (no import — avoids a cycle):
+  // capacity must not count the pre-rotations Grade Set-up window.
+  const baseStartMin = timeToMinutes(school.start_time ?? "08:00") ?? 8 * 60;
+  const rotStartRaw = (school as { rotations_start_time?: string | null }).rotations_start_time ?? null;
+  const rotStartMin = rotStartRaw ? timeToMinutes(rotStartRaw) : null;
+  const feasStartMin = rotStartMin != null && rotStartMin > baseStartMin ? rotStartMin : baseStartMin;
   const schoolPeriodLen = (school.class_duration && school.class_duration > 0) ? school.class_duration : 45;
   const feasPassing = school.passing_time ?? 5;
   let sessionCapacity = 0;

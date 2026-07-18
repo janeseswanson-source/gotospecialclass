@@ -23,6 +23,7 @@ import {
   type Block,
   type Specialist,
   type StrategyResult,
+  schoolRotationsStartMin,
 } from "./index.ts";
 import { scoreSchedule, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
 import { OccupancyTracker } from "./_occupancy.ts";
@@ -312,7 +313,7 @@ export function replanMinimal(
   if (disturbed.length === 0) return empty("no_disturbed_teaching_blocks");
 
   const baseOccupancy = buildBaseOccupancy(baselineBlocks, teachers);
-  const classStartMin = timeToMinutes(school.start_time ?? "08:00");
+  const classStartMin = schoolRotationsStartMin(school);
   const rebuilt = recreate(disturbed, survivors, specialists, baseOccupancy, school, recessConfigs, classStartMin, rng);
   if (!rebuilt) return empty("could_not_replace_disturbed_sessions");
 

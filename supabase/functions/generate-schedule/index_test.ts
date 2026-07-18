@@ -307,7 +307,7 @@ Deno.test("OccupancyTracker: overlapping interval (diff start) is not free", () 
 // ──────────────────────────────────────────────────────────────────────
 // Per-grade transitions + specialist weekly meeting (Jane's KK3 feedback)
 // ──────────────────────────────────────────────────────────────────────
-import { buildTimeSlotsForGrade, reserveSpecialistMeetingBlocks } from "./index.ts";
+import { buildTimeSlotsForGrade, reserveSpecialistMeetingBlocks, schoolRotationsStartMin } from "./index.ts";
 
 Deno.test("buildTimeSlotsForGrade: grade_time_config passingTime overrides the canonical step", () => {
   // 30-min K classes with 5-min switches → slots every 35 min; grade 1 (no
@@ -421,4 +421,40 @@ Deno.test("computeWarnings: A and B week runs are tracked separately", () => {
   ];
   const w = computeWarnings(blocks, [] as never, ["5"], undefined, { maxTeamOutMinutes: 120 });
   assertEquals(w.filter((x) => x.type === "team_out_stretch").length, 0);
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// rotations_start_time — the Grade Set-up window ("Specials rotations
+// begin at"). Previously collected by the wizard but DEAD in the engine.
+// ──────────────────────────────────────────────────────────────────────
+Deno.test("schoolRotationsStartMin: clamps to school start; unset means school start", () => {
+  assertEquals(schoolRotationsStartMin({ start_time: "07:45", rotations_start_time: "08:05" }), 8 * 60 + 5);
+  assertEquals(schoolRotationsStartMin({ start_time: "07:45", rotations_start_time: null }), 7 * 60 + 45);
+  assertEquals(schoolRotationsStartMin({ start_time: "07:45" }), 7 * 60 + 45);
+  // Never earlier than the bell.
+  assertEquals(schoolRotationsStartMin({ start_time: "08:00", rotations_start_time: "07:30" }), 8 * 60);
+});
+
+Deno.test("reserveSpecialistMeetingBlocks: array shape with PD kind emits Specialist PD", () => {
+  const school = {
+    specialist_meeting: [
+      { day: "Tuesday", start_time: "13:15", end_time: "14:00" },
+      { day: "Friday", start_time: "12:25", end_time: "14:00", kind: "pd" },
+    ],
+  };
+  const specs = [{ id: "s1", name: "Art" }, { id: "s2", name: "PE", working_days: ["Mon", "Tue"] }] as never[];
+  const blocks = reserveSpecialistMeetingBlocks("g", specs, school);
+  const meet = blocks.filter((b) => b.subject === "Specialist Meeting");
+  const pd = blocks.filter((b) => b.subject === "Specialist PD");
+  assertEquals(meet.length, 2);         // both work Tuesday
+  assertEquals(pd.length, 1);           // only s1 works Friday
+  assertEquals(pd[0].day_of_week, "Fri");
+  assertEquals(pd[0].grade, "Planning");
+});
+
+Deno.test("reserveSpecialistMeetingBlocks: legacy single-object shape still works", () => {
+  const school = { specialist_meeting: { day: "Tuesday", start_time: "13:15", end_time: "14:00" } };
+  const blocks = reserveSpecialistMeetingBlocks("g", [{ id: "s1", name: "Art" }] as never[], school);
+  assertEquals(blocks.length, 1);
+  assertEquals(blocks[0].subject, "Specialist Meeting");
 });

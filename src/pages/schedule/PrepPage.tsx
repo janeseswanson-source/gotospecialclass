@@ -188,10 +188,15 @@ export default function PrepPage() {
         }
         recessPerDay = Math.round(total / recessRows.length);
       }
-      // Weekly all-specialists meeting eats slots once a week.
-      const meeting = (school as any).specialist_meeting as { day?: string; start_time?: string; end_time?: string } | null;
-      const meetingMin = meeting?.start_time && meeting?.end_time
-        ? Math.max(0, (toMin(meeting.end_time) ?? 0) - (toMin(meeting.start_time) ?? 0)) : 0;
+      // Weekly all-specialists meetings/PD eat slots. specialist_meeting is
+      // either the legacy single object or an array of windows.
+      type MeetingCfg = { day?: string; start_time?: string; end_time?: string; kind?: string };
+      const meetingRaw = (school as { specialist_meeting?: MeetingCfg | MeetingCfg[] | null }).specialist_meeting ?? null;
+      const meetings: MeetingCfg[] = Array.isArray(meetingRaw) ? meetingRaw : meetingRaw ? [meetingRaw] : [];
+      const meetingMin = meetings.reduce((acc, m) => {
+        if (!m?.start_time || !m?.end_time) return acc;
+        return acc + Math.max(0, (toMin(m.end_time) ?? 0) - (toMin(m.start_time) ?? 0));
+      }, 0);
 
       // Total weekly specialist slot supply — mirrors the engine's model:
       // day − lunch − recess − small transition reserve, minus planning +

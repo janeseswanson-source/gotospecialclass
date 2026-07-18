@@ -22,9 +22,12 @@ const StepAdminRotation = () => {
   const loadedRef = useRef(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
 
-  // Weekly all-specialists meeting (schools.specialist_meeting jsonb).
-  interface MeetingCfg { day: string; start_time: string; end_time: string }
-  const [meeting, setMeeting] = useState<MeetingCfg | null>(null);
+  // Weekly all-specialists windows (schools.specialist_meeting jsonb).
+  // Accepts the legacy single object or an array; kind 'pd' reserves a
+  // "Specialist PD" block (the PM's weekly team PD), anything else a
+  // "Specialist Meeting".
+  interface MeetingCfg { day: string; start_time: string; end_time: string; kind?: string }
+  const [meetings, setMeetings] = useState<MeetingCfg[]>([]);
 
   useEffect(() => {
     if (!schoolId || loadedRef.current) return;
@@ -38,18 +41,19 @@ const StepAdminRotation = () => {
         updateData({ adminRotation: school.admin_rotation as any });
       }
       const m = school?.specialist_meeting;
-      if (m?.day && m?.start_time && m?.end_time) setMeeting(m as MeetingCfg);
+      const list: MeetingCfg[] = Array.isArray(m) ? m : m ? [m] : [];
+      setMeetings(list.filter((x) => x?.day && x?.start_time && x?.end_time));
       loadedRef.current = true;
     })();
   }, [schoolId, updateData]);
 
-  const saveMeeting = useCallback(async (next: MeetingCfg | null) => {
-    setMeeting(next);
+  const saveMeetings = useCallback(async (next: MeetingCfg[]) => {
+    setMeetings(next);
     if (!schoolId) return;
     setSaveStatus('saving');
     const { error } = await supabase
       .from('schools')
-      .update({ specialist_meeting: next as any } as any)
+      .update({ specialist_meeting: (next.length ? next : null) as any } as any)
       .eq('id', schoolId);
     if (error) {
       toast.error('Failed to save specialist meeting');
@@ -305,60 +309,78 @@ const StepAdminRotation = () => {
           </Button>
         )}
 
-        {/* Weekly all-specialists meeting — reserved for every specialist, no
-            classes scheduled in this window (e.g. "Specialist Meets Tue 1:15–2:00"). */}
+        {/* Weekly all-specialists windows — reserved for every specialist, no
+            classes scheduled ("Specialist Meets Tue 1:15-2:00", "PD Fri 12:25-2:00"). */}
         <Card className="border-l-4 border-l-accent bg-muted/30">
           <CardContent className="pt-4 space-y-3">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium text-foreground flex items-center gap-2">
-                  <Users className="h-4 w-4 text-accent" /> Specialist Weekly Meeting
-                </p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  A recurring team meeting for ALL specialists — the scheduler keeps this window free of classes.
-                </p>
-              </div>
-              {meeting && (
-                <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-destructive" onClick={() => saveMeeting(null)}>
-                  <Trash2 className="h-3.5 w-3.5 mr-1" /> Remove
-                </Button>
-              )}
+            <div>
+              <p className="text-sm font-medium text-foreground flex items-center gap-2">
+                <Users className="h-4 w-4 text-accent" /> Specialist Team Meetings & PD
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Recurring windows for ALL specialists — the scheduler keeps them free of classes.
+                Use a PD block for weekly professional development (e.g. Friday afternoon).
+              </p>
             </div>
-            {meeting ? (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <FieldLabel className="text-xs mb-1 block">Day</FieldLabel>
-                  <Select value={meeting.day} onValueChange={(v) => saveMeeting({ ...meeting, day: v })}>
-                    <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {WEEKDAYS.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+            {meetings.map((m, i) => (
+              <div key={i} className="rounded-md border border-border/60 bg-background/60 p-3 space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <div>
+                    <FieldLabel className="text-xs mb-1 block">Type</FieldLabel>
+                    <Select
+                      value={(m.kind ?? '').toLowerCase() === 'pd' ? 'pd' : 'meeting'}
+                      onValueChange={(v) => saveMeetings(meetings.map((x, j) => j === i ? { ...x, kind: v } : x))}
+                    >
+                      <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="meeting">Team Meeting</SelectItem>
+                        <SelectItem value="pd">PD Block</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <FieldLabel className="text-xs mb-1 block">Day</FieldLabel>
+                    <Select value={m.day} onValueChange={(v) => saveMeetings(meetings.map((x, j) => j === i ? { ...x, day: v } : x))}>
+                      <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {WEEKDAYS.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <FieldLabel className="text-xs mb-1 block">Start</FieldLabel>
+                    <Input type="time" value={m.start_time} onChange={(e) => saveMeetings(meetings.map((x, j) => j === i ? { ...x, start_time: e.target.value } : x))} className="h-9" />
+                  </div>
+                  <div>
+                    <FieldLabel className="text-xs mb-1 block">End</FieldLabel>
+                    <Input
+                      type="time"
+                      value={m.end_time}
+                      onChange={(e) => saveMeetings(meetings.map((x, j) => j === i ? { ...x, end_time: e.target.value } : x))}
+                      className={cn('h-9', m.start_time >= m.end_time && 'border-destructive')}
+                    />
+                  </div>
                 </div>
-                <div>
-                  <FieldLabel className="text-xs mb-1 block">Start</FieldLabel>
-                  <Input type="time" value={meeting.start_time} onChange={(e) => saveMeeting({ ...meeting, start_time: e.target.value })} className="h-9" />
-                </div>
-                <div>
-                  <FieldLabel className="text-xs mb-1 block">End</FieldLabel>
-                  <Input
-                    type="time"
-                    value={meeting.end_time}
-                    onChange={(e) => saveMeeting({ ...meeting, end_time: e.target.value })}
-                    className={cn('h-9', meeting.start_time >= meeting.end_time && 'border-destructive')}
-                  />
+                <div className="flex items-center justify-between">
+                  {m.start_time >= m.end_time ? (
+                    <p className="text-xs text-destructive flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3" /> End time must be after start time.
+                    </p>
+                  ) : <span />}
+                  <Button variant="ghost" size="sm" className="h-7 px-2 text-xs text-destructive" onClick={() => saveMeetings(meetings.filter((_, j) => j !== i))}>
+                    <Trash2 className="h-3.5 w-3.5 mr-1" /> Remove
+                  </Button>
                 </div>
               </div>
-            ) : (
-              <Button variant="outline" size="sm" onClick={() => saveMeeting({ day: 'Tuesday', start_time: '13:15', end_time: '14:00' })}>
+            ))}
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => saveMeetings([...meetings, { kind: 'meeting', day: 'Tuesday', start_time: '13:15', end_time: '14:00' }])}>
                 <Plus className="h-4 w-4 mr-1" /> Add Weekly Meeting
               </Button>
-            )}
-            {meeting && meeting.start_time >= meeting.end_time && (
-              <p className="text-xs text-destructive flex items-center gap-1">
-                <AlertTriangle className="h-3 w-3" /> End time must be after start time.
-              </p>
-            )}
+              <Button variant="outline" size="sm" onClick={() => saveMeetings([...meetings, { kind: 'pd', day: 'Friday', start_time: '12:25', end_time: '14:00' }])}>
+                <Plus className="h-4 w-4 mr-1" /> Add PD Block
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
@@ -367,7 +389,7 @@ const StepAdminRotation = () => {
           // impossible reservations — block Continue until they're fixed.
           const anyInvalid =
             entries.some(e => e.startTime && e.endTime && e.startTime >= e.endTime) ||
-            (!!meeting && meeting.start_time >= meeting.end_time);
+            meetings.some(m => m.start_time >= m.end_time);
           return (
             <div className="flex justify-between pt-2">
               <Button variant="outline" onClick={() => setStep(SETUP_STEPS.CONTRACTUAL_MINUTES)}>Back</Button>

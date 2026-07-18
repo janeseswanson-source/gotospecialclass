@@ -48,6 +48,7 @@ import {
   type Specialist,
   type StrategyResult,
   type PreferenceViolation,
+  schoolRotationsStartMin,
 } from "./index.ts";
 
 export interface LNSOptions {
@@ -509,7 +510,7 @@ export interface RepairContext {
  *  Deterministic given `rng`. Returns the improved (or unchanged) block list. */
 export function directedRepair(blocks: Block[], ctx: RepairContext, rng: Rng, maxRounds = 60): Block[] {
   const { scoringInput, specialists, grades, school, recessConfigs, baseOccupancy, weightOverrides } = ctx;
-  const classStartMin = timeToMinutes(school.start_time ?? "08:00");
+  const classStartMin = schoolRotationsStartMin(school);
   let current = blocks.slice();
   const scoreOf = (bs: Block[]): number =>
     scoreSchedule({ blocks: bs, warnings: computeWarnings(bs, specialists, grades), preferenceViolations: [] }, scoringInput, weightOverrides).total;
@@ -583,7 +584,7 @@ export function runLNS(
   let bestCombined = currentScore + adjust(currentBlocks);
   let lastImprovementRound = -1;
 
-  const classStartMin = timeToMinutes(school.start_time ?? "08:00");
+  const classStartMin = schoolRotationsStartMin(school);
   let T = T_START;
   let accepted = 0;
   let rounds = 0;

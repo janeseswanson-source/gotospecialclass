@@ -71,7 +71,7 @@ export interface ReorderStats {
 }
 
 const NON_TEACHING_GRADES = new Set(["Lunch", "Planning", "Makeup"]);
-const FIXED_SUBJECTS = ["Specialist Lunch", "Specialist Meeting", "PLC/Admin"];
+const FIXED_SUBJECTS = ["Specialist Lunch", "Specialist Meeting", "Specialist PD", "PLC/Admin"];
 const NOON = 12 * 60;
 const K_LATE_THRESHOLD = 780; // 13:00 — mirrors k_grade_after_780
 

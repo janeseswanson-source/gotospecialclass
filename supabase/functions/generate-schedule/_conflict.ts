@@ -25,6 +25,7 @@ import {
   buildTimeSlotsForGrade,
   type Block,
   type Specialist,
+  schoolRotationsStartMin,
 } from "./index.ts";
 import {
   buildConstraintContext,
@@ -165,7 +166,7 @@ export function resolveConflict(conflict: Conflict, blocks: Block[], ctx: Confli
   const { specialists, teachers, school, recessConfigs } = ctx;
   const all = withIds(blocks);
   const constraintCtx: ConstraintContext = buildConstraintContext(school, recessConfigs, all.map(toConstraint));
-  const classStartMin = timeToMinutes(school.start_time ?? "08:00");
+  const classStartMin = schoolRotationsStartMin(school);
   const baseline = buildPerturbationBaseline(blocks);
 
   const options: ResolveOption[] = [];

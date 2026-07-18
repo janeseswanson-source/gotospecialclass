@@ -38,6 +38,7 @@ import {
   type Specialist,
   type StrategyResult,
   type PreferenceViolation,
+  schoolRotationsStartMin,
 } from "./index.ts";
 
 export function buildOccupancyFromBlocks(
@@ -105,7 +106,7 @@ export function runSimulatedAnnealing(
   let iterations = 0;
   const t0 = performance.now();
 
-  const classStartMin = timeToMinutes(school.start_time ?? "08:00");
+  const classStartMin = schoolRotationsStartMin(school);
 
   // Big-Group sessions (same specialist + grade + exact slot, different
   // teachers, same week) are taught TOGETHER. SA must never move one member

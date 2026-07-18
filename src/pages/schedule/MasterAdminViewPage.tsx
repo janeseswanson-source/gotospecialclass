@@ -287,20 +287,6 @@ export default function MasterAdminViewPage() {
   const teacherName = (id: string | null) =>
     (id && teacherById.get(id)?.name) || '';
 
-  const blocksFor = (day: string, key: string) => {
-    const [start, end] = key.split('|');
-    const dayShort = day.slice(0, 3); // Monday -> Mon
-    return rotationBlocks
-      .filter(
-        (b) =>
-          (b.day_of_week === day || b.day_of_week === dayShort) &&
-          b.start_time === start &&
-          b.end_time === end &&
-          weekVisible(b.week_label)
-      )
-      .sort((a, b) => gradeRank(a.grade) - gradeRank(b.grade));
-  };
-
   // ALL of a day's week-visible blocks (any kind, chrome included) — for the
   // Open computation a specialist at lunch or in PLC is busy, not Open.
   const dayBlocksAllKinds = (day: string) => {
@@ -320,47 +306,60 @@ export default function MasterAdminViewPage() {
     return parts[parts.length - 1];
   };
 
-  // Interleave rotation slots with recess/lunch banners in TIME ORDER —
-  // Jane: "why is this at the bottom of the page?" Dismissal stays last.
-  type StreamItem =
-    | { type: 'slot'; sort: string; tie: number; slotKey: string }
-    | { type: 'chrome'; sort: string; tie: number; row: ChromeRow };
-  const scheduleStream: StreamItem[] = [
-    ...slotKeys.map((slotKey): StreamItem => ({ type: 'slot', sort: slotKey.split('|')[0], tie: 1, slotKey })),
-    ...[...chromeRowsFor('RECESS'), ...chromeRowsFor('LUNCH')].map(
-      (row): StreamItem => ({ type: 'chrome', sort: row.rawStart, tie: 0, row })
-    ),
-  ].sort((a, b) => a.sort.localeCompare(b.sort) || a.tie - b.tie);
-  const dismissalRows = chromeRowsFor('DISMISSAL');
+  // Per-day time rails (her mock's "Time | MON | Time | TUES"): each day
+  // column carries its OWN chronological stream — a day's odd time (K's
+  // 30-minute Monday) no longer creates a mostly-empty full-width row.
+  const isTeamSubject = (subj?: string | null) =>
+    subj === 'Specialist Meeting' || subj === 'Specialist PD';
+  const chromeInline = [...chromeRowsFor('RECESS'), ...chromeRowsFor('LUNCH')];
 
-  const renderChromeRow = (row: ChromeRow) => {
-    const Icon = /lunch/i.test(row.kind) ? Utensils
-      : /pm recess/i.test(row.kind) ? Cloud
-      : /am recess/i.test(row.kind) ? Sun
-      : LogOut;
-    const MAX = 3;
-    const shown = row.groups.slice(0, MAX);
-    const overflow = row.groups.length - shown.length;
-    const groupStr = shown.length
-      ? shown.join(' & ') + (overflow > 0 ? ` +${overflow} more` : '')
-      : '';
-    return (
-      <div
-        key={row.key}
-        className="flex items-center gap-2 border-b border-border bg-amber-50/60 dark:bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-900 dark:text-amber-200"
-      >
-        <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
-        <span className="font-semibold tracking-wide">{row.kind}</span>
-        {groupStr && (
-          <>
-            <span className="opacity-40">·</span>
-            <span className="truncate opacity-80">{groupStr}</span>
-          </>
-        )}
-        <span className="ml-auto font-mono opacity-70 shrink-0">{row.time}</span>
-      </div>
+  type DayItem =
+    | { kind: 'wave'; sort: string; tie: number; start: string; end: string; blocks: Block[] }
+    | { kind: 'team'; sort: string; tie: number; subject: string; start: string; end: string }
+    | { kind: 'chrome'; sort: string; tie: number; row: ChromeRow };
+
+  const dayStream = (day: string): DayItem[] => {
+    const dayShort = day.slice(0, 3);
+    const mine = rotationBlocks.filter(
+      (b) => (b.day_of_week === day || b.day_of_week === dayShort) && weekVisible(b.week_label),
     );
+    const waves = new Map<string, Block[]>();
+    const teams = new Map<string, { subject: string; start: string; end: string }>();
+    for (const b of mine) {
+      if (isTeamSubject(b.subject)) {
+        // All specialists share the window — one banner, not one per person.
+        teams.set(`${b.subject}|${b.start_time}|${b.end_time}`, { subject: b.subject!, start: b.start_time, end: b.end_time });
+      } else {
+        const k = `${b.start_time}|${b.end_time}`;
+        (waves.get(k) ?? waves.set(k, []).get(k)!).push(b);
+      }
+    }
+    const items: DayItem[] = [
+      ...[...waves.entries()].map(([k, bs]): DayItem => {
+        const [start, end] = k.split('|');
+        return { kind: 'wave', sort: start, tie: 1, start, end, blocks: [...bs].sort((a, b) => gradeRank(a.grade) - gradeRank(b.grade)) };
+      }),
+      ...[...teams.values()].map((t): DayItem => ({ kind: 'team', sort: t.start, tie: 1, ...t })),
+      ...chromeInline.map((row): DayItem => ({ kind: 'chrome', sort: row.rawStart, tie: 0, row })),
+    ];
+    return items.sort((a, b) => a.sort.localeCompare(b.sort) || a.tie - b.tie);
   };
+
+  // Per-day dismissal — the early-release day shows ITS time, not a footnote.
+  const dismissalFor = (day: string): string | null => {
+    if (!endTime) return null;
+    const erDay = (school?.early_release_day as string | null | undefined) ?? '';
+    const erEnd = (school?.early_release_end_time as string | null | undefined) ?? null;
+    if (erDay && erEnd && day.slice(0, 3) === erDay.slice(0, 3)) return formatTime(erEnd);
+    return formatTime(endTime);
+  };
+
+  // Grade Set-up window: the bell-to-rotations gap ("Specials rotations
+  // begin at" in School Info) — now wired in the engine too.
+  const rotStartRaw = (school?.rotations_start_time as string | null | undefined) ?? null;
+  const setupWindow = rotStartRaw && startTime && rotStartRaw > startTime
+    ? { start: startTime, end: rotStartRaw }
+    : null;
 
   async function handleXlsx() {
     if (!selectedSchoolId) return;
@@ -531,8 +530,10 @@ export default function MasterAdminViewPage() {
           ))}
         </div>
 
-        {/* Rotation slots + recess/lunch banners, interleaved in TIME ORDER */}
-        {slotKeys.length === 0 && (
+        {/* Per-day time rails: every day column carries its own chronological
+            stream — set-up window, wheel waves, recess/lunch, team PD, and a
+            per-day dismissal (early release shows its real time). */}
+        {slotKeys.length === 0 ? (
           <div className="grid grid-cols-5 min-h-[120px]">
             {DAYS.map((d) => (
               <div key={d} className="border-r last:border-r-0 border-border p-3 text-[11px] text-muted-foreground italic">
@@ -540,34 +541,54 @@ export default function MasterAdminViewPage() {
               </div>
             ))}
           </div>
-        )}
-        {scheduleStream.map((item) => {
-          if (item.type === 'chrome') return renderChromeRow(item.row);
-          const key = item.slotKey;
-          const [start, end] = key.split('|');
-          return (
-            <div key={key}>
-              <div className="bg-muted/50 px-3 py-1 text-[11px] text-primary font-medium border-b border-border">
-                {formatTime(start)} – {formatTime(end)}
-              </div>
-              <div className="grid grid-cols-5 border-b border-border min-h-[88px]">
-                {DAYS.map((d) => {
-                  const cellBlocks = blocksFor(d, key);
+        ) : (
+          <div className="grid grid-cols-5">
+            {DAYS.map((d) => (
+              <div key={d} className="border-r last:border-r-0 border-border min-w-0">
+                {setupWindow && (
+                  <div className="flex items-center gap-1 border-b border-border bg-primary/5 px-2 py-1 text-[10px] font-medium text-primary">
+                    <span className="truncate">Grade Set-up</span>
+                    <span className="ml-auto font-mono text-muted-foreground shrink-0">
+                      {formatTime(setupWindow.start)}–{formatTime(setupWindow.end)}
+                    </span>
+                  </div>
+                )}
+                {dayStream(d).map((item, ii) => {
+                  if (item.kind === 'chrome') {
+                    const Icon = /lunch/i.test(item.row.kind) ? Utensils
+                      : /pm recess/i.test(item.row.kind) ? Cloud
+                      : Sun;
+                    return (
+                      <div
+                        key={`c-${ii}`}
+                        title={item.row.groups.join(' & ')}
+                        className="flex items-center gap-1 border-b border-border bg-amber-50/60 dark:bg-amber-950/20 px-2 py-1 text-[10px] text-amber-900 dark:text-amber-200"
+                      >
+                        <Icon className="h-3 w-3 shrink-0 opacity-80" />
+                        <span className="font-semibold truncate">{item.row.kind}</span>
+                        <span className="ml-auto font-mono opacity-70 shrink-0">{item.row.time}</span>
+                      </div>
+                    );
+                  }
+                  if (item.kind === 'team') {
+                    return (
+                      <div key={`t-${ii}`} className="border-b border-border bg-accent/15 px-2 py-1 text-[10px]">
+                        <span className="font-semibold text-foreground">
+                          {item.subject === 'Specialist PD' ? 'PD — Specialists' : 'Team Meeting'}
+                        </span>
+                        <span className="ml-1 font-mono text-muted-foreground">
+                          {formatTime(item.start)}–{formatTime(item.end)}
+                        </span>
+                      </div>
+                    );
+                  }
                   return (
-                    <div
-                      key={d}
-                      className="border-r last:border-r-0 border-border p-2 space-y-1 text-[11px]"
-                    >
-                      {cellBlocks.length === 0 ? (
-                        <div className="opacity-30">·</div>
-                      ) : (
-                        <>
-                        {/* Group the grade-sorted blocks into grade runs so the
-                            slot reads as a wheel: "1st" once, then everyone
-                            servicing 1st. One low-ink line per entry — the
-                            subject identifies the specialist, the last name
-                            identifies the class ("LOTS TO READ HERE"). */}
-                        {cellBlocks
+                    <div key={`w-${ii}`} className="border-b border-border">
+                      <div className="bg-muted/50 px-2 py-0.5 text-[10px] font-mono font-medium text-primary">
+                        {formatTime(item.start)} – {formatTime(item.end)}
+                      </div>
+                      <div className="p-2 space-y-1 text-[11px]">
+                        {item.blocks
                           .reduce<{ grade: string | null; items: Block[] }[]>((groups, b) => {
                             const g = b.grade ?? null;
                             const last = groups[groups.length - 1];
@@ -591,9 +612,7 @@ export default function MasterAdminViewPage() {
                                     {b.teacher_id && (
                                       <span className="text-muted-foreground"> · {teacherLast(b.teacher_id)}</span>
                                     )}
-                                    {/* Time only when the block DIFFERS from the
-                                        row rail ("time in case it is different"). */}
-                                    {(b.start_time !== start || b.end_time !== end) && (
+                                    {(b.start_time !== item.start || b.end_time !== item.end) && (
                                       <span className="text-[9px] font-mono text-muted-foreground"> {formatTime(b.start_time)}–{formatTime(b.end_time)}</span>
                                     )}
                                   </div>
@@ -606,24 +625,26 @@ export default function MasterAdminViewPage() {
                               ))}
                             </div>
                           ))}
-                        {/* Wheel flex capacity: a wave with fewer classrooms
-                            than specialists leaves someone OPEN — the block
-                            the office can tap for club/make-up minutes. */}
-                        {openSpecialistsForSlot(specialists, dayBlocksAllKinds(d), d.slice(0, 3), start, end).map((sp) => (
+                        {openSpecialistsForSlot(specialists, dayBlocksAllKinds(d), d.slice(0, 3), item.start, item.end).map((sp) => (
                           <div key={`open-${sp.id}`} className="text-[10px] italic text-muted-foreground truncate">
                             Open · {sp.name}{sp.subject ? ` (${sp.subject})` : ''}
                           </div>
                         ))}
-                        </>
-                      )}
+                      </div>
                     </div>
                   );
                 })}
+                {dismissalFor(d) && (
+                  <div className="flex items-center gap-1 border-b border-border bg-amber-50/60 dark:bg-amber-950/20 px-2 py-1 text-[10px] text-amber-900 dark:text-amber-200">
+                    <LogOut className="h-3 w-3 shrink-0 opacity-80" />
+                    <span className="font-semibold truncate">Dismissal</span>
+                    <span className="ml-auto font-mono opacity-70 shrink-0">{dismissalFor(d)}</span>
+                  </div>
+                )}
               </div>
-            </div>
-          );
-        })}
-        {dismissalRows.map(renderChromeRow)}
+            ))}
+          </div>
+        )}
 
 
 

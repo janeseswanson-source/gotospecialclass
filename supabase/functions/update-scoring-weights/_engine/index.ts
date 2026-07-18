@@ -106,6 +106,17 @@ export function schoolCanonicalStep(school: { class_duration?: number | null; pa
   return dur + pass;
 }
 
+// Teaching slots may begin LATER than the school day: schools.rotations_start_time
+// ("Specials rotations begin at") reserves a Grade Set-up window right after the
+// bell (e.g. 7:45-8:05) before the first wheel runs. Clamped to never precede
+// school start; unset/blank means rotations start with the school day.
+export function schoolRotationsStartMin(school: { start_time?: string | null; rotations_start_time?: string | null }): number {
+  const base = timeToMinutes((school?.start_time as string | undefined) ?? "08:00");
+  const rotRaw = school?.rotations_start_time ?? null;
+  const rot = rotRaw ? timeToMinutes(rotRaw) : null;
+  return rot != null && rot > base ? rot : base;
+}
+
 
 // ─── Interfaces ──────────────────────────────────────────────────────
 
@@ -1224,7 +1235,7 @@ function generateStandard(
   existingBlocks: Block[],
   rng?: Rng,
 ): StrategyResult {
-  const startMin = timeToMinutes(school.start_time ?? "08:00");
+  const startMin = schoolRotationsStartMin(school);
   const defaultPassingTime = school.passing_time ?? 5;
   const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
@@ -1312,7 +1323,7 @@ function generateABWeek(
   existingBlocks: Block[],
   rng?: Rng,
 ): StrategyResult {
-  const startMin = timeToMinutes(school.start_time ?? "08:00");
+  const startMin = schoolRotationsStartMin(school);
   const defaultPassingTime = school.passing_time ?? 5;
   const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
@@ -1432,7 +1443,7 @@ function generateAABBWeek(
   existingBlocks: Block[],
   rng?: Rng,
 ): StrategyResult {
-  const startMin = timeToMinutes(school.start_time ?? "08:00");
+  const startMin = schoolRotationsStartMin(school);
   const defaultPassingTime = school.passing_time ?? 5;
   const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
@@ -1541,7 +1552,7 @@ function generateQuick30(
   existingBlocks: Block[],
   rng?: Rng,
 ): StrategyResult {
-  const startMin = timeToMinutes(school.start_time ?? "08:00");
+  const startMin = schoolRotationsStartMin(school);
   const defaultPassingTime = school.passing_time ?? 5;
   const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
@@ -1651,7 +1662,7 @@ function generateExtraRotation(
   existingBlocks: Block[],
   rng?: Rng,
 ): StrategyResult {
-  const startMin = timeToMinutes(school.start_time ?? "08:00");
+  const startMin = schoolRotationsStartMin(school);
   const defaultPassingTime = school.passing_time ?? 5;
   const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
@@ -1694,7 +1705,7 @@ export function addMakeupBlocks(
   classDuration: number,
   grades: string[],
 ): Block[] {
-  const startMin = timeToMinutes(school.start_time ?? "08:00");
+  const startMin = schoolRotationsStartMin(school);
   const defaultPassingTime = school.passing_time ?? 5;
   const canonicalStep = schoolCanonicalStep(school);
   const defaultSetupTime = school.setup_time ?? 15;
@@ -1840,7 +1851,7 @@ export function generateEventPlanningBlocks(
   classDuration: number,
 ): Block[] {
   const blocks: Block[] = [];
-  const startMin = timeToMinutes(school.start_time ?? "08:00");
+  const startMin = schoolRotationsStartMin(school);
 
   const occupiedSlots = new Set(existingBlocks.map(b => `${b.day_of_week}:${b.start_time}:${b.specialist_id}`));
 
@@ -2020,35 +2031,46 @@ export function reserveSpecialistLunchBlocks(
 // validatePlanningTime/contract_min even though a staff meeting arguably
 // isn't planning — acceptable for v1; a dedicated "Meeting" grade would
 // touch every NON_TEACHING set across the engine copies.
+// schools.specialist_meeting accepts TWO shapes:
+//   legacy object  { day, start_time, end_time }                → "Specialist Meeting"
+//   array          [{ day, start_time, end_time, kind? }, ...]  → kind "pd" emits
+//                  "Specialist PD" (the PM's weekly team PD window); anything
+//                  else emits "Specialist Meeting".
 export function reserveSpecialistMeetingBlocks(
   generationId: string,
   specialists: Specialist[],
   school: any,
 ): Block[] {
-  const cfg = school?.specialist_meeting as { day?: string; start_time?: string; end_time?: string } | null;
-  if (!cfg?.day || !cfg.start_time || !cfg.end_time) return [];
-  const day = DAY_FULL_TO_SHORT[cfg.day] ?? cfg.day;
-  if (!DAYS.includes(day)) return [];
-  const start = timeToMinutes(cfg.start_time);
-  const end = timeToMinutes(cfg.end_time);
-  if (!(end > start)) return [];
+  type MeetingCfg = { day?: string; start_time?: string; end_time?: string; kind?: string };
+  const raw = school?.specialist_meeting as MeetingCfg | MeetingCfg[] | null;
+  const entries: MeetingCfg[] = Array.isArray(raw) ? raw : raw ? [raw] : [];
 
   const blocks: Block[] = [];
-  for (const spec of specialists) {
-    const workDays = spec.working_days ?? DAYS;
-    if (!workDays.includes(day)) continue;
-    blocks.push({
-      generation_id: generationId,
-      day_of_week: day,
-      start_time: minutesToTime(start),
-      end_time: minutesToTime(end),
-      subject: "Specialist Meeting",
-      specialist_id: spec.id,
-      teacher_id: null,
-      grade: "Planning",
-      room: null,
-      week_label: null,
-    });
+  for (const cfg of entries) {
+    if (!cfg?.day || !cfg.start_time || !cfg.end_time) continue;
+    const day = DAY_FULL_TO_SHORT[cfg.day] ?? cfg.day;
+    if (!DAYS.includes(day)) continue;
+    const start = timeToMinutes(cfg.start_time);
+    const end = timeToMinutes(cfg.end_time);
+    if (!(end > start)) continue;
+    const subject = (cfg.kind ?? "").toLowerCase() === "pd" ? "Specialist PD" : "Specialist Meeting";
+
+    for (const spec of specialists) {
+      const workDays = spec.working_days ?? DAYS;
+      if (!workDays.includes(day)) continue;
+      blocks.push({
+        generation_id: generationId,
+        day_of_week: day,
+        start_time: minutesToTime(start),
+        end_time: minutesToTime(end),
+        subject,
+        specialist_id: spec.id,
+        teacher_id: null,
+        grade: "Planning",
+        room: null,
+        week_label: null,
+      });
+    }
   }
   return blocks;
 }
@@ -2106,6 +2128,7 @@ export function computePlacementReason(
 
   if (block.grade === "Lunch") return `Specialist lunch break`;
   if (block.subject === "Specialist Meeting") return `Weekly specialist team meeting`;
+  if (block.subject === "Specialist PD") return `Weekly specialist PD block`;
   if (block.grade === "Planning") return `Event planning block for ${specialist?.name ?? "specialist"}`;
   if (block.grade === "Makeup") return `Makeup slot for ${specialist?.subject ?? "specials"}`;
 
@@ -2172,7 +2195,7 @@ export function generateScheduleBlocks(
   // we surface it as an actionable warning rather than throwing, so the user
   // still gets a best-effort schedule (the solver + no_coverage warnings show
   // exactly which classes couldn't be covered).
-  const feasStartMin = timeToMinutes(school.start_time ?? "08:00");
+  const feasStartMin = schoolRotationsStartMin(school);
   const schoolPeriodLen = ((school.class_duration && school.class_duration > 0) ? school.class_duration : 45);
   const feasPassing = school.passing_time ?? 5;
   let sessionCapacity = 0;

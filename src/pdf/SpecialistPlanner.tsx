@@ -295,6 +295,12 @@ function renderCellContent(b: PlannerBlock | undefined, noteNumber?: number, str
   if (striped) return null; // holiday/PD column — the day-note strip carries the label
   if (!b) return <Text style={styles.openText}>Open</Text>;
   const subj = (b.subject || '').toLowerCase();
+  if (subj === 'specialist meeting') {
+    return <Text style={styles.planningText}>Team Meeting</Text>;
+  }
+  if (subj === 'specialist pd') {
+    return <Text style={styles.planningText}>PD</Text>;
+  }
   if (subj.includes('planning') || subj.includes('plc')) {
     return <Text style={styles.planningText}>Planning</Text>;
   }
