@@ -277,7 +277,13 @@ function findOverlapClusters(blocks: Block[]): Block[][] {
   return clusters;
 }
 
-export function computeWarnings(blocks: Block[], specialists: Specialist[], grades: string[], teachers?: Teacher[]): Warning[] {
+export function computeWarnings(
+  blocks: Block[],
+  specialists: Specialist[],
+  grades: string[],
+  teachers?: Teacher[],
+  opts?: { maxTeamOutMinutes?: number | null },
+): Warning[] {
   const warnings: Warning[] = [];
   // no_coverage
   for (const grade of grades) {
@@ -361,6 +367,63 @@ export function computeWarnings(blocks: Block[], specialists: Specialist[], grad
       });
     }
   }
+
+  // team_out_stretch — cap on how long a grade's teacher TEAM is out of
+  // their classrooms back-to-back (classes at consecutive specials/wheel
+  // blocks). Planning happens before/after school at these schools, so an
+  // all-day pull-out ("5th grade, no classroom teacher all day") is a
+  // principal-level problem. ADVISORY only: never gates strategyFailed.
+  const teamOutCap = opts?.maxTeamOutMinutes ?? null;
+  if (teamOutCap != null && teamOutCap > 0) {
+    const RESERVED = new Set(["lunch", "planning", "makeup", "all", ""]);
+    const RUN_GAP_MAX = 15; // passing time between wheel blocks (min)
+    const byTeacherDayWeek = new Map<string, Block[]>();
+    for (const b of blocks) {
+      if (!b.specialist_id || !b.teacher_id) continue;
+      if (RESERVED.has(String(b.grade ?? "").trim().toLowerCase())) continue;
+      const k = `${b.teacher_id}|${b.day_of_week}|${b.week_label ?? ""}`;
+      (byTeacherDayWeek.get(k) ?? byTeacherDayWeek.set(k, []).get(k)!).push(b);
+    }
+    // Worst back-to-back stretch per (grade, day, week) — one warning each.
+    const worstByGradeDay = new Map<string, { grade: string; day: string; label: string; minutes: number }>();
+    for (const [k, group] of byTeacherDayWeek) {
+      const [, day, label] = k.split("|");
+      const sorted = [...group].sort((a, b) => timeToMinutes(a.start_time) - timeToMinutes(b.start_time));
+      let runStart = timeToMinutes(sorted[0].start_time);
+      let runEnd = timeToMinutes(sorted[0].end_time);
+      let runGrade = String(sorted[0].grade ?? "?");
+      const closeRun = () => {
+        const minutes = runEnd - runStart;
+        if (minutes > teamOutCap) {
+          const gk = `${runGrade}|${day}|${label}`;
+          const cur = worstByGradeDay.get(gk);
+          if (!cur || minutes > cur.minutes) worstByGradeDay.set(gk, { grade: runGrade, day, label, minutes });
+        }
+      };
+      for (let i = 1; i < sorted.length; i++) {
+        const s = timeToMinutes(sorted[i].start_time);
+        const e = timeToMinutes(sorted[i].end_time);
+        if (s - runEnd <= RUN_GAP_MAX) {
+          runEnd = Math.max(runEnd, e);
+        } else {
+          closeRun();
+          runStart = s;
+          runEnd = e;
+          runGrade = String(sorted[i].grade ?? "?");
+        }
+      }
+      closeRun();
+    }
+    for (const v of worstByGradeDay.values()) {
+      warnings.push({
+        type: "team_out_stretch",
+        severity: "warning",
+        message: `Grade ${v.grade} teachers are out of class ~${v.minutes} min back-to-back on ${v.day}${v.label ? ` (Week ${v.label})` : ""} — cap is ${teamOutCap} min.`,
+        suggestion: "Split the grade's wheel across AM/PM or another day, or adjust the out-of-class cap in School Info.",
+      });
+    }
+  }
+
   return warnings;
 }
 
@@ -2477,7 +2540,7 @@ export function generateScheduleBlocks(
   // in baseBlocks but immovable by the pass's own predicate.
   baseBlocks = reorderGradeRuns(baseBlocks as never, { school, recessConfigs, teachers, fixedContext: adjFixedOf() as never }).blocks as unknown as Block[];
 
-  const finalWarnings = computeWarnings(baseBlocks, specialists, grades, teachers);
+  const finalWarnings = computeWarnings(baseBlocks, specialists, grades, teachers, { maxTeamOutMinutes: (school as any).max_team_out_minutes ?? null });
   const breakdown = scoreSchedule(
     { blocks: baseBlocks, warnings: finalWarnings, preferenceViolations },
     scoringInput,
@@ -2857,7 +2920,7 @@ const __serveHandler = async (req: Request): Promise<Response> => {
     // back before the CPU budget can be exceeded by validation passes.
     const finalize = async () => {
       try {
-        const baseWarnings = computeWarnings(blocks, specialists, grades, teachers);
+        const baseWarnings = computeWarnings(blocks, specialists, grades, teachers, { maxTeamOutMinutes: (school as any).max_team_out_minutes ?? null });
         const extraKeys = new Set<string>();
         for (const w of schedulerResult!.extraWarnings) {
           if (w.type === "extra_rotation_failed") {

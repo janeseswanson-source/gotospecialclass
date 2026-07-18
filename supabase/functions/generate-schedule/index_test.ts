@@ -348,3 +348,77 @@ Deno.test("reserveSpecialistMeetingBlocks: malformed / missing config is a no-op
   assertEquals(reserveSpecialistMeetingBlocks("g", specialists, { specialist_meeting: { day: "Tuesday", start_time: "14:00", end_time: "13:00" } }).length, 0);
   assertEquals(reserveSpecialistMeetingBlocks("g", specialists, { specialist_meeting: { day: "Funday", start_time: "13:00", end_time: "14:00" } }).length, 0);
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// team_out_stretch — cap on a grade team's back-to-back out-of-class time
+// (advisory only; planning happens before/after school at these schools).
+// ──────────────────────────────────────────────────────────────────────
+const stretchBlock = (start: string, end: string, over: Record<string, unknown> = {}) => ({
+  generation_id: "g", day_of_week: "Thu", start_time: start, end_time: end,
+  subject: "Art", specialist_id: "s1", teacher_id: "t5a", grade: "5", room: null, week_label: null,
+  ...over,
+});
+
+Deno.test("computeWarnings: team_out_stretch fires once per grade-day when back-to-back run exceeds the cap", () => {
+  // t5a's class: 08:05-08:45, 08:50-09:30, 09:35-10:15 back-to-back (5-min
+  // gaps) = 130 min wall-clock > 120 cap. A second 5th-grade teacher with the
+  // same shape must NOT duplicate the warning (one per grade-day).
+  const blocks = [
+    stretchBlock("08:05", "08:45", { specialist_id: "s1" }),
+    stretchBlock("08:50", "09:30", { specialist_id: "s2" }),
+    stretchBlock("09:35", "10:15", { specialist_id: "s3" }),
+    stretchBlock("08:05", "08:45", { teacher_id: "t5b", specialist_id: "s2" }),
+    stretchBlock("08:50", "09:30", { teacher_id: "t5b", specialist_id: "s3" }),
+    stretchBlock("09:35", "10:15", { teacher_id: "t5b", specialist_id: "s1" }),
+  ];
+  const w = computeWarnings(blocks, [{ id: "s1", name: "Art" }] as never, ["5"], undefined, { maxTeamOutMinutes: 120 });
+  const hits = w.filter((x) => x.type === "team_out_stretch");
+  assertEquals(hits.length, 1);
+  assertEquals(hits[0].severity, "warning");
+  assert(hits[0].message.includes("130 min"));
+  assert(!strategyFailed(hits), "advisory — must never gate strategy fallback");
+});
+
+Deno.test("computeWarnings: a real gap (>15 min) splits the run — no warning", () => {
+  // 40 + 40 min blocks separated by a 30-min gap: each run is under the cap.
+  const blocks = [
+    stretchBlock("08:05", "08:45"),
+    stretchBlock("08:50", "09:30"),
+    stretchBlock("10:00", "10:40"),
+  ];
+  const w = computeWarnings(blocks, [] as never, ["5"], undefined, { maxTeamOutMinutes: 120 });
+  assertEquals(w.filter((x) => x.type === "team_out_stretch").length, 0);
+});
+
+Deno.test("computeWarnings: cap off (null/omitted) or reserved grades → no team_out_stretch", () => {
+  const blocks = [
+    stretchBlock("08:05", "08:45"),
+    stretchBlock("08:50", "09:30"),
+    stretchBlock("09:35", "10:15"),
+    stretchBlock("10:20", "11:00"),
+  ];
+  assertEquals(computeWarnings(blocks, [] as never, ["5"]).filter((x) => x.type === "team_out_stretch").length, 0);
+  assertEquals(
+    computeWarnings(blocks, [] as never, ["5"], undefined, { maxTeamOutMinutes: null })
+      .filter((x) => x.type === "team_out_stretch").length,
+    0,
+  );
+  const lunchOnly = blocks.map((b) => ({ ...b, grade: "Lunch", subject: "Specialist Lunch" }));
+  assertEquals(
+    computeWarnings(lunchOnly, [] as never, ["5"], undefined, { maxTeamOutMinutes: 120 })
+      .filter((x) => x.type === "team_out_stretch").length,
+    0,
+  );
+});
+
+Deno.test("computeWarnings: A and B week runs are tracked separately", () => {
+  // Same wall-clock shape but split across week labels — neither week's run
+  // exceeds the cap on its own.
+  const blocks = [
+    stretchBlock("08:05", "08:45", { week_label: "A" }),
+    stretchBlock("08:50", "09:30", { week_label: "B" }),
+    stretchBlock("09:35", "10:15", { week_label: "A" }),
+  ];
+  const w = computeWarnings(blocks, [] as never, ["5"], undefined, { maxTeamOutMinutes: 120 });
+  assertEquals(w.filter((x) => x.type === "team_out_stretch").length, 0);
+});

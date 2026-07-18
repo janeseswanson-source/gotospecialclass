@@ -237,7 +237,9 @@ export default function MasterAdminViewPage() {
   // recess_grade_bands is stored as an ARRAY of {key,label,grades} — it must be
   // converted (casting it as a map silently dropped every real label).
   const bandLabels = bandLabelMapFromStored(school?.recess_grade_bands);
-  type ChromeRow = { key: string; kind: string; groups: string[]; time: string };
+  // rawStart (HH:MM) lets chrome rows interleave chronologically with the
+  // rotation slots — Jane: "why is this at the bottom of the page?"
+  type ChromeRow = { key: string; kind: string; groups: string[]; time: string; rawStart: string };
   const chromeRowsFor = (kind: 'RECESS' | 'LUNCH' | 'DISMISSAL'): ChromeRow[] => {
     if (kind === 'DISMISSAL') {
       if (!endTime) return [];
@@ -248,7 +250,7 @@ export default function MasterAdminViewPage() {
       const time = erDay && erEnd
         ? `${formatTime(endTime)} (${formatTime(erEnd)} ${erDay.slice(0, 3)})`
         : formatTime(endTime);
-      return [{ key: 'dismissal', kind: 'Dismissal', groups: [], time }];
+      return [{ key: 'dismissal', kind: 'Dismissal', groups: [], time, rawStart: endTime }];
     }
     const drafts = new Map<string, ChromeRow & { seen: Set<string> }>();
     const normalize = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase();
@@ -256,7 +258,7 @@ export default function MasterAdminViewPage() {
       const time = `${formatTime(start)}–${formatTime(end)}`;
       const k = `${subKind}|${time}`;
       let d = drafts.get(k);
-      if (!d) { d = { key: k, kind: subKind, groups: [], time, seen: new Set() }; drafts.set(k, d); }
+      if (!d) { d = { key: k, kind: subKind, groups: [], time, rawStart: start, seen: new Set() }; drafts.set(k, d); }
       const clean = band.trim().replace(/\s+/g, ' ');
       if (!clean) return;
       const norm = normalize(clean);
@@ -274,7 +276,7 @@ export default function MasterAdminViewPage() {
         if (r.lunch_start && r.lunch_end) push('Lunch', r.lunch_start, r.lunch_end, band);
       }
     }
-    return Array.from(drafts.values()).map(({ key, kind, groups, time }) => ({ key, kind, groups, time }));
+    return Array.from(drafts.values()).map(({ key, kind, groups, time, rawStart }) => ({ key, kind, groups, time, rawStart }));
   };
 
 
@@ -305,6 +307,58 @@ export default function MasterAdminViewPage() {
     const dayShort = day.slice(0, 3);
     return blocks.filter(
       (b) => (b.day_of_week === day || b.day_of_week === dayShort) && weekVisible(b.week_label)
+    );
+  };
+
+  // "Simplify view": the cell names the teacher by LAST name only — the
+  // subject already identifies the specialist (full detail lives on the
+  // Specialist Planner).
+  const teacherLast = (id: string | null) => {
+    const n = teacherName(id).trim();
+    if (!n) return '';
+    const parts = n.split(/\s+/);
+    return parts[parts.length - 1];
+  };
+
+  // Interleave rotation slots with recess/lunch banners in TIME ORDER —
+  // Jane: "why is this at the bottom of the page?" Dismissal stays last.
+  type StreamItem =
+    | { type: 'slot'; sort: string; tie: number; slotKey: string }
+    | { type: 'chrome'; sort: string; tie: number; row: ChromeRow };
+  const scheduleStream: StreamItem[] = [
+    ...slotKeys.map((slotKey): StreamItem => ({ type: 'slot', sort: slotKey.split('|')[0], tie: 1, slotKey })),
+    ...[...chromeRowsFor('RECESS'), ...chromeRowsFor('LUNCH')].map(
+      (row): StreamItem => ({ type: 'chrome', sort: row.rawStart, tie: 0, row })
+    ),
+  ].sort((a, b) => a.sort.localeCompare(b.sort) || a.tie - b.tie);
+  const dismissalRows = chromeRowsFor('DISMISSAL');
+
+  const renderChromeRow = (row: ChromeRow) => {
+    const Icon = /lunch/i.test(row.kind) ? Utensils
+      : /pm recess/i.test(row.kind) ? Cloud
+      : /am recess/i.test(row.kind) ? Sun
+      : LogOut;
+    const MAX = 3;
+    const shown = row.groups.slice(0, MAX);
+    const overflow = row.groups.length - shown.length;
+    const groupStr = shown.length
+      ? shown.join(' & ') + (overflow > 0 ? ` +${overflow} more` : '')
+      : '';
+    return (
+      <div
+        key={row.key}
+        className="flex items-center gap-2 border-b border-border bg-amber-50/60 dark:bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-900 dark:text-amber-200"
+      >
+        <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
+        <span className="font-semibold tracking-wide">{row.kind}</span>
+        {groupStr && (
+          <>
+            <span className="opacity-40">·</span>
+            <span className="truncate opacity-80">{groupStr}</span>
+          </>
+        )}
+        <span className="ml-auto font-mono opacity-70 shrink-0">{row.time}</span>
+      </div>
     );
   };
 
@@ -477,8 +531,8 @@ export default function MasterAdminViewPage() {
           ))}
         </div>
 
-        {/* Rotation slot rows */}
-        {slotKeys.length === 0 ? (
+        {/* Rotation slots + recess/lunch banners, interleaved in TIME ORDER */}
+        {slotKeys.length === 0 && (
           <div className="grid grid-cols-5 min-h-[120px]">
             {DAYS.map((d) => (
               <div key={d} className="border-r last:border-r-0 border-border p-3 text-[11px] text-muted-foreground italic">
@@ -486,130 +540,90 @@ export default function MasterAdminViewPage() {
               </div>
             ))}
           </div>
-        ) : (
-          slotKeys.map((key) => {
-            const [start, end] = key.split('|');
-            return (
-              <div key={key}>
-                <div className="bg-muted/50 px-3 py-1 text-[11px] text-primary font-medium border-b border-border">
-                  {formatTime(start)} – {formatTime(end)}
-                </div>
-                <div className="grid grid-cols-5 border-b border-border min-h-[88px]">
-                  {DAYS.map((d) => {
-                    const cellBlocks = blocksFor(d, key);
-                    return (
-                      <div
-                        key={d}
-                        className="border-r last:border-r-0 border-border p-2 space-y-1 text-[11px]"
-                      >
-                        {cellBlocks.length === 0 ? (
-                          <div className="opacity-30">·</div>
-                        ) : (
-                          <>
-                          {/* Group the grade-sorted blocks into grade runs so the
-                              slot reads as a wheel: "1st" once, then everyone
-                              servicing 1st. The office scans the heading to know
-                              which grade is at specials right now. */}
-                          {cellBlocks
-                            .reduce<{ grade: string | null; items: Block[] }[]>((groups, b) => {
-                              const g = b.grade ?? null;
-                              const last = groups[groups.length - 1];
-                              if (last && last.grade === g) last.items.push(b);
-                              else groups.push({ grade: g, items: [b] });
-                              return groups;
-                            }, [])
-                            .map((grp, gi) => (
-                              <div key={gi} className="space-y-0.5">
-                                {grp.grade && (
-                                  <div className={`text-[12px] font-bold leading-tight ${getGradeAccentTextClass(grp.grade)}`}>
-                                    {formatGradeOrdinal(grp.grade)}
-                                  </div>
-                                )}
-                                {grp.items.map((b) => (
-                                  <div key={b.id} className={`flex items-baseline gap-1.5 ${grp.grade ? 'pl-1.5' : ''}`}>
-                                    <div className="flex-1 min-w-0">
-                                      <div className="text-foreground font-medium truncate">
-                                        {b.subject || specialistSubject(b.specialist_id)}
-                                      </div>
-                                      <div className="text-muted-foreground truncate">
-                                        {specialistName(b.specialist_id)}
-                                        {b.teacher_id ? ` · ${teacherName(b.teacher_id)}` : ''}
-                                      </div>
-                                      {/* Every cell prints its own time — a print-out
-                                          must be self-evident even cut off from the
-                                          row label ("time in case it is different"). */}
-                                      <div className="text-[9px] font-mono text-muted-foreground">
-                                        {formatTime(b.start_time)}–{formatTime(b.end_time)}
-                                      </div>
-                                    </div>
-                                    {b.week_label && (
-                                      <span className="text-[9px] font-bold uppercase rounded bg-accent/20 text-accent px-1 py-0.5">
-                                        {b.week_label}
-                                      </span>
+        )}
+        {scheduleStream.map((item) => {
+          if (item.type === 'chrome') return renderChromeRow(item.row);
+          const key = item.slotKey;
+          const [start, end] = key.split('|');
+          return (
+            <div key={key}>
+              <div className="bg-muted/50 px-3 py-1 text-[11px] text-primary font-medium border-b border-border">
+                {formatTime(start)} – {formatTime(end)}
+              </div>
+              <div className="grid grid-cols-5 border-b border-border min-h-[88px]">
+                {DAYS.map((d) => {
+                  const cellBlocks = blocksFor(d, key);
+                  return (
+                    <div
+                      key={d}
+                      className="border-r last:border-r-0 border-border p-2 space-y-1 text-[11px]"
+                    >
+                      {cellBlocks.length === 0 ? (
+                        <div className="opacity-30">·</div>
+                      ) : (
+                        <>
+                        {/* Group the grade-sorted blocks into grade runs so the
+                            slot reads as a wheel: "1st" once, then everyone
+                            servicing 1st. One low-ink line per entry — the
+                            subject identifies the specialist, the last name
+                            identifies the class ("LOTS TO READ HERE"). */}
+                        {cellBlocks
+                          .reduce<{ grade: string | null; items: Block[] }[]>((groups, b) => {
+                            const g = b.grade ?? null;
+                            const last = groups[groups.length - 1];
+                            if (last && last.grade === g) last.items.push(b);
+                            else groups.push({ grade: g, items: [b] });
+                            return groups;
+                          }, [])
+                          .map((grp, gi) => (
+                            <div key={gi} className="space-y-0.5">
+                              {grp.grade && (
+                                <div className={`text-[12px] font-bold leading-tight ${getGradeAccentTextClass(grp.grade)}`}>
+                                  {formatGradeOrdinal(grp.grade)}
+                                </div>
+                              )}
+                              {grp.items.map((b) => (
+                                <div key={b.id} className={`flex items-baseline gap-1.5 ${grp.grade ? 'pl-1.5' : ''}`}>
+                                  <div className="flex-1 min-w-0 truncate">
+                                    <span className="text-foreground font-medium">
+                                      {b.subject || specialistSubject(b.specialist_id)}
+                                    </span>
+                                    {b.teacher_id && (
+                                      <span className="text-muted-foreground"> · {teacherLast(b.teacher_id)}</span>
+                                    )}
+                                    {/* Time only when the block DIFFERS from the
+                                        row rail ("time in case it is different"). */}
+                                    {(b.start_time !== start || b.end_time !== end) && (
+                                      <span className="text-[9px] font-mono text-muted-foreground"> {formatTime(b.start_time)}–{formatTime(b.end_time)}</span>
                                     )}
                                   </div>
-                                ))}
-                              </div>
-                            ))}
-                          {/* Wheel flex capacity: a wave with fewer classrooms
-                              than specialists leaves someone OPEN — the block
-                              the office can tap for club/make-up minutes. */}
-                          {openSpecialistsForSlot(specialists, dayBlocksAllKinds(d), d.slice(0, 3), start, end).map((sp) => (
-                            <div key={`open-${sp.id}`} className="text-[10px] italic text-muted-foreground truncate">
-                              Open · {sp.name}{sp.subject ? ` (${sp.subject})` : ''}
+                                  {b.week_label && (
+                                    <span className="text-[9px] font-bold uppercase rounded bg-accent/20 text-accent px-1 py-0.5">
+                                      {b.week_label}
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
                             </div>
                           ))}
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                        {/* Wheel flex capacity: a wave with fewer classrooms
+                            than specialists leaves someone OPEN — the block
+                            the office can tap for club/make-up minutes. */}
+                        {openSpecialistsForSlot(specialists, dayBlocksAllKinds(d), d.slice(0, 3), start, end).map((sp) => (
+                          <div key={`open-${sp.id}`} className="text-[10px] italic text-muted-foreground truncate">
+                            Open · {sp.name}{sp.subject ? ` (${sp.subject})` : ''}
+                          </div>
+                        ))}
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })
-        )}
-
-        {/* Chrome rows: Recess / Lunch / Dismissal — one merged banner per window */}
-        {(['RECESS', 'LUNCH', 'DISMISSAL'] as const).map((kind) => {
-          const rows = chromeRowsFor(kind);
-          if (rows.length === 0) return null;
-          return (
-            <div key={kind}>
-              <div className="bg-muted/70 px-3 py-1 text-[11px] font-semibold text-primary border-b border-border">
-                {kind}
-              </div>
-              {rows.map((row) => {
-                const Icon = /lunch/i.test(row.kind) ? Utensils
-                  : /pm recess/i.test(row.kind) ? Cloud
-                  : /am recess/i.test(row.kind) ? Sun
-                  : LogOut;
-                const MAX = 3;
-                const shown = row.groups.slice(0, MAX);
-                const overflow = row.groups.length - shown.length;
-                const groupStr = shown.length
-                  ? shown.join(' & ') + (overflow > 0 ? ` +${overflow} more` : '')
-                  : '';
-                return (
-                  <div
-                    key={row.key}
-                    className="flex items-center gap-2 border-b border-border bg-amber-50/60 dark:bg-amber-950/20 px-3 py-1.5 text-[11px] text-amber-900 dark:text-amber-200"
-                  >
-                    <Icon className="h-3.5 w-3.5 shrink-0 opacity-80" />
-                    <span className="font-semibold tracking-wide">{row.kind}</span>
-                    {groupStr && (
-                      <>
-                        <span className="opacity-40">·</span>
-                        <span className="truncate opacity-80">{groupStr}</span>
-                      </>
-                    )}
-                    <span className="ml-auto font-mono opacity-70 shrink-0">{row.time}</span>
-                  </div>
-                );
-              })}
             </div>
           );
         })}
+        {dismissalRows.map(renderChromeRow)}
 
 
 

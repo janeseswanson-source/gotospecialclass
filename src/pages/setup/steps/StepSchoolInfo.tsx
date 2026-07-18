@@ -12,7 +12,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Loader2, ChevronDown, Check, Sparkles, Users2, Coffee, ListOrdered } from 'lucide-react';
+import { Loader2, ChevronDown, Check, Sparkles, Users2, Coffee, ListOrdered, Timer } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { useBlurValidation } from '@/components/setup/useBlurValidation';
@@ -36,6 +36,8 @@ const StepSchoolInfo = () => {
   const [keepGradesTogether, setKeepGradesTogether] = useState<boolean>(true);
   const [suggestExtraPlt, setSuggestExtraPlt] = useState<boolean>(false);
   const [extraPltTargetMinutes, setExtraPltTargetMinutes] = useState<number | ''>('');
+  // '' = no cap. DB default is 120 (migration 20260718000000).
+  const [maxTeamOutMinutes, setMaxTeamOutMinutes] = useState<number | ''>(120);
 
   // Inline blur validation for the required / constrained fields.
   const v = useBlurValidation();
@@ -92,18 +94,20 @@ const StepSchoolInfo = () => {
           setKeepGradesTogether(existingSchool.keep_grades_together ?? true);
           setSuggestExtraPlt(existingSchool.suggest_extra_plt ?? false);
           setExtraPltTargetMinutes(existingSchool.extra_plt_target_minutes ?? '');
+          setMaxTeamOutMinutes((existingSchool as { max_team_out_minutes?: number | null }).max_team_out_minutes ?? '');
         }
       } else {
         // Already have a school id — load just the new params
         const { data: extras } = await supabase
           .from('schools')
-          .select('keep_grades_together, suggest_extra_plt, extra_plt_target_minutes')
+          .select('keep_grades_together, suggest_extra_plt, extra_plt_target_minutes, max_team_out_minutes' as '*')
           .eq('id', schoolId)
           .maybeSingle();
         if (extras) {
           setKeepGradesTogether(extras.keep_grades_together ?? true);
           setSuggestExtraPlt(extras.suggest_extra_plt ?? false);
           setExtraPltTargetMinutes(extras.extra_plt_target_minutes ?? '');
+          setMaxTeamOutMinutes((extras as { max_team_out_minutes?: number | null }).max_team_out_minutes ?? '');
         }
       }
       isLoaded.current = true;
@@ -141,6 +145,7 @@ const StepSchoolInfo = () => {
         keep_grades_together: keepGradesTogether,
         suggest_extra_plt: suggestExtraPlt,
         extra_plt_target_minutes: extraPltTargetMinutes === '' ? null : Number(extraPltTargetMinutes),
+        max_team_out_minutes: maxTeamOutMinutes === '' ? null : Number(maxTeamOutMinutes),
         workspace_id: workspaceIdRef.current,
       };
 
@@ -182,7 +187,7 @@ const StepSchoolInfo = () => {
       toast.error(`Couldn't save school info${err?.message ? ` — ${err.message}` : ''}. Check your connection and try again.`);
       setSaveStatus('idle');
     }
-  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.schoolYearStart, data.schoolYearEnd, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, data.gradePreference, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, schoolId]);
+  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.schoolYearStart, data.schoolYearEnd, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, data.gradePreference, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, maxTeamOutMinutes, schoolId]);
 
   useFlushOnUnmount(saveTimer, () => { if (isLoaded.current) autoSave(); });
 
@@ -474,6 +479,42 @@ const StepSchoolInfo = () => {
             />
           </div>
         )}
+
+        {/* Row 2.6 — Teacher team out-of-class cap (PM: "no more than 90
+            minutes together, or 120" — planning is before/after school, so a
+            grade's teachers must not be pulled out all day). */}
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Timer className="h-4 w-4 text-muted-foreground" />
+              <FieldLabel className="text-sm font-medium" tooltip="Longest stretch a grade's teachers may be out of their classrooms back-to-back (their classes at consecutive specials). Longer stretches get an advisory warning on the generated schedule.">
+                Teacher out-of-class cap
+              </FieldLabel>
+            </div>
+            <p className="text-xs text-muted-foreground">Warn when a grade's wheel keeps its teachers out longer than this, back-to-back.</p>
+          </div>
+          <div className="flex items-center gap-1.5">
+            {[
+              { v: '' as const, label: 'Off' },
+              { v: 90, label: '90 min' },
+              { v: 120, label: '120 min' },
+            ].map((opt) => (
+              <button
+                key={opt.label}
+                type="button"
+                onClick={() => setMaxTeamOutMinutes(opt.v)}
+                className={cn(
+                  'rounded-md border px-2.5 py-1.5 text-xs transition-colors',
+                  maxTeamOutMinutes === opt.v
+                    ? 'border-accent bg-accent/10 font-medium text-foreground'
+                    : 'border-border text-muted-foreground hover:border-primary/40',
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* Row 3 — Daily sequence */}
         <div className="space-y-2">
