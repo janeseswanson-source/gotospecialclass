@@ -9,3 +9,10 @@
 -- generation/verification — they never block a schedule.
 ALTER TABLE public.schools
   ADD COLUMN IF NOT EXISTS max_team_out_minutes integer DEFAULT 120;
+
+-- PostgREST caches the schema. Without this, the column exists but the API
+-- still answers PGRST204 ("Could not find the '...' column ... in the schema
+-- cache") and every write carrying it fails. This migration shipped without
+-- the NOTIFY and was never applied, which broke the Setup wizard in
+-- production. Every column-adding migration must end with this line.
+NOTIFY pgrst, 'reload schema';

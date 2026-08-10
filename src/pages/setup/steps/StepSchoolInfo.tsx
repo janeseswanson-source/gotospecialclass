@@ -16,6 +16,7 @@ import { Loader2, ChevronDown, Check, Sparkles, Users2, Coffee, ListOrdered, Tim
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { useBlurValidation } from '@/components/setup/useBlurValidation';
+import { saveSchoolRow } from '@/lib/schoolSave';
 import { FieldError } from '@/components/setup/FieldError';
 
 const allGrades = ['K', '1', '2', '3', '4', '5', '6'];
@@ -28,6 +29,7 @@ const StepSchoolInfo = () => {
   const { data, updateData, setStep, schoolId, setSchoolId } = useSetup();
   const { user } = useAuth();
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const [saveError, setSaveError] = useState<string | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const isLoaded = useRef(false);
   const workspaceIdRef = useRef<string | null>(null);
@@ -97,10 +99,13 @@ const StepSchoolInfo = () => {
           setMaxTeamOutMinutes((existingSchool as { max_team_out_minutes?: number | null }).max_team_out_minutes ?? '');
         }
       } else {
-        // Already have a school id — load just the new params
+        // Already have a school id — load just the new params.
+        // `select('*')`: naming a column the live DB doesn't have yet 400s the
+        // WHOLE row (and this call discards its error), so the step would load
+        // blank defaults and then quietly overwrite good data on the next save.
         const { data: extras } = await supabase
           .from('schools')
-          .select('keep_grades_together, suggest_extra_plt, extra_plt_target_minutes, max_team_out_minutes' as '*')
+          .select('*')
           .eq('id', schoolId)
           .maybeSingle();
         if (extras) {
@@ -149,18 +154,18 @@ const StepSchoolInfo = () => {
         workspace_id: workspaceIdRef.current,
       };
 
-      if (schoolId) {
-        const { error } = await supabase.from('schools').update(schoolData as any).eq('id', schoolId);
-        if (error) throw error;
-      } else {
-        const { data: newSchool, error } = await supabase
-          .from('schools')
-          .insert({ ...schoolData, setup_step: 1 } as any)
-          .select('id')
-          .single();
-        if (error) throw error;
-        if (newSchool) setSchoolId(newSchool.id);
-      }
+      // Routed through saveSchoolRow so an unapplied migration (a column the
+      // live DB doesn't have yet) costs that ONE setting instead of the whole
+      // session — and so a brand-new school always ends up with a row, which
+      // every later wizard step depends on.
+      const outcome = await saveSchoolRow(supabase, schoolId, schoolData, (col) => {
+        toast.warning(
+          `Your database is missing the "${col}" setting — everything else was saved. Ask your admin to apply the pending migration.`,
+          { id: `schema-drift-${col}`, duration: 8000 },
+        );
+      });
+      if (outcome.schoolId && outcome.schoolId !== schoolId) setSchoolId(outcome.schoolId);
+      if (!outcome.ok) throw new Error(outcome.error?.message ?? 'Save failed');
 
       // Mirror Daily sequence selection into coordinator_prep so the prep sheet stays in sync.
       if (data.gradePreference && workspaceIdRef.current) {
@@ -179,13 +184,17 @@ const StepSchoolInfo = () => {
         }
       }
 
+      setSaveError(null);
       setSaveStatus('saved');
-      setTimeout(() => setSaveStatus('idle'), 2000);
+      setTimeout(() => setSaveStatus((cur) => (cur === 'saved' ? 'idle' : cur)), 2000);
     } catch (err: any) {
-      // A failed save must never look like a successful one.
+      // A failed save must never look like a successful one — and must leave a
+      // PERSISTENT trace. 'idle' rendered nothing, so a coordinator kept typing
+      // into a wizard that was saving nothing.
       console.error('School info save failed:', err);
       toast.error(`Couldn't save school info${err?.message ? ` — ${err.message}` : ''}. Check your connection and try again.`);
-      setSaveStatus('idle');
+      setSaveError(err?.message ?? 'Save failed');
+      setSaveStatus('error');
     }
   }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.schoolYearStart, data.schoolYearEnd, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, data.gradePreference, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, maxTeamOutMinutes, schoolId]);
 
@@ -223,7 +232,7 @@ const StepSchoolInfo = () => {
     <div className="rounded-xl border border-border bg-card p-6">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-bold text-card-foreground">School Information</h2>
-        <SaveStatusIndicator status={saveStatus} />
+        <SaveStatusIndicator status={saveStatus} errorMessage={saveError} onRetry={() => autoSave()} />
       </div>
       {/* Grades Served — top of card */}
       <div className="mb-6 space-y-3">

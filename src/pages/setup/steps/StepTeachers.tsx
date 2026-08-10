@@ -19,6 +19,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { saveRowsWithSchemaFallback } from '@/lib/supabaseSchemaFallback';
 import { downloadTemplate } from '@/lib/templateDownload';
 import { parseTeacherPaste, inferTeamFromGrade, type ParseResult, type ParsedTeacherRow } from '@/lib/parseTeacherPaste';
 import { mapParsedTeachers } from '@/lib/setupImport';
@@ -100,6 +101,7 @@ const StepTeachers = () => {
   const [warningsOpen, setWarningsOpen] = useState(false);
   const [pendingLargeImport, setPendingLargeImport] = useState<Teacher[] | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [view, setView] = useState<'by_grade' | 'flat'>(() => {
     if (typeof window === 'undefined') return 'by_grade';
     return (localStorage.getItem('teachers.view') as 'by_grade' | 'flat') || 'by_grade';
@@ -216,16 +218,31 @@ const StepTeachers = () => {
         combo_partner_id: t.comboPartnerId || null,
       } as any));
       if (rows.length > 0) {
-        const { error } = await supabase.from('classroom_teachers').upsert(rows, { onConflict: 'id' });
-        if (error) throw error;
+        // Schema-tolerant: an un-migrated column costs that one field, not the
+        // whole roster.
+        const res = await saveRowsWithSchemaFallback<unknown>(
+          'classroom_teachers',
+          rows as Array<Record<string, unknown>>,
+          (r) => supabase.from('classroom_teachers').upsert(r as never, { onConflict: 'id' }) as never,
+          {
+            onDrop: (col) => toast.warning(
+              `Your database is missing the "${col}" teacher field — everything else was saved.`,
+              { id: `schema-drift-teachers-${col}`, duration: 8000 },
+            ),
+          },
+        );
+        if (res.error) throw res.error;
       }
+      setSaveError(null);
       setSaveStatus('saved');
-      setTimeout(() => setSaveStatus('idle'), 2000);
+      setTimeout(() => setSaveStatus((cur) => (cur === 'saved' ? 'idle' : cur)), 2000);
     } catch (err: any) {
-      // A failed save must never look like a successful one.
+      // A failed save must never look like a successful one — and must leave a
+      // PERSISTENT trace ('idle' rendered nothing at all).
       console.error('Save teachers error:', err);
       toast.error(`Couldn't save teachers${err?.message ? ` — ${err.message}` : ''}. Check your connection and try again.`);
-      setSaveStatus('idle');
+      setSaveError(err?.message ?? 'Save failed');
+      setSaveStatus('error');
     }
   }, [schoolId]);
 
@@ -615,7 +632,7 @@ const StepTeachers = () => {
               >Flat List</button>
             </div>
           )}
-          <SaveStatusIndicator status={saveStatus} />
+          <SaveStatusIndicator status={saveStatus} errorMessage={saveError} onRetry={() => autoSave(teachers)} />
 
           <Button
             size="sm"

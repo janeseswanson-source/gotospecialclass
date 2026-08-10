@@ -1,87 +1,68 @@
 # Lovable deploy prompt
 
-## Latest update — schedule quality (no new migrations)
+## ⚠️ PENDING MIGRATIONS — apply these before (or with) the next frontend deploy
 
-The newest commits make schedules reach the true achievable ceiling (AB/AA-BB Week
-now hit **100%**; see `SCHEDULE_QUALITY_NOTES.md`). They change ENGINE CODE and the
-client only — **no new database migrations, no new secrets**.
+Migrations in this repo are applied **manually**. A migration that sits here
+unapplied is not inert: the frontend ships code that writes the new column, and
+every one of those writes fails with PostgREST **PGRST204**
+(`Could not find the 'x' column of 'schools' in the schema cache`). That is
+exactly how a coordinator lost a full setup session — the School Info step sends
+all its settings in one payload, so one unknown column rejected **everything**.
 
-> Please redeploy the `generate-schedule`, `refine-schedule`, `resolve-conflicts-ai`
-> and `update-scoring-weights` edge functions (each carries the shared engine under
-> its own `_engine/` folder — deploy those folders too) and the frontend, from
-> `main`. No migrations to run this time; the columns from the previous deploy are
-> already in place.
-
-Note: the engine is duplicated into each function's `_engine/` copy (Lovable can't
-import across function dirs). Those copies are kept in sync by
-`scripts/sync-engine.sh` and are already committed — just deploy what's in `main`.
-
----
-
-
-
-The `scheduler-upgrade` + `frontend-revamp` work adds **3 database migrations** (new
-columns only — no destructive changes), updates/adds **4 edge functions**, and
-needs the **Supabase TypeScript types regenerated** so the frontend sees the new
-columns. Everything is additive and backward-compatible.
-
----
-
-## Paste this to Lovable
-
-> Please deploy the latest changes from the `frontend-revamp` branch. Specifically:
->
-> **1. Apply these 3 new migrations (additive columns, safe to run; all use
-> `IF NOT EXISTS`):**
-> - `supabase/migrations/20260628000000_refined_from_generation.sql` — adds
->   `schedule_generations.refined_from_generation_id uuid` (FK → schedule_generations).
-> - `supabase/migrations/20260628010000_weight_proposals.sql` — adds
->   `scoring_weight_profiles.proposed_weights jsonb` and `proposed_at timestamptz`.
-> - `supabase/migrations/20260628020000_quality_confidence.sql` — adds
->   `schedule_generations.quality_confidence jsonb`.
->
-> **2. Deploy these edge functions** (they import shared modules from
-> `supabase/functions/generate-schedule/`, so deploy that whole folder too):
-> - `generate-schedule` (updated — now persists `quality_confidence`)
-> - `refine-schedule` (**new** — background SA+LNS refinement → improved version)
-> - `resolve-conflicts-ai` (updated — deterministic engine resolves; `preview`/`apply` modes)
-> - `update-scoring-weights` (updated — `propose`/`confirm` actions)
->
-> **3. Regenerate the Supabase TypeScript types** (`src/integrations/supabase/types.ts`)
-> from the updated schema, so the new columns above are typed on the client.
->
-> After deploying, the Master Schedule page reads `quality_confidence`,
-> `refined_from_generation_id`, and `scoring_weight_profiles.proposed_weights`.
-
----
-
-## Reference (what changed and why)
-
-### Migrations → new columns
-| Migration | Table | New column(s) | Used by |
-|---|---|---|---|
-| `20260628000000_refined_from_generation.sql` | `schedule_generations` | `refined_from_generation_id uuid` | background refinement: links a refined version to its parent (power 6) |
-| `20260628010000_weight_proposals.sql` | `scoring_weight_profiles` | `proposed_weights jsonb`, `proposed_at timestamptz` | learnable-weights propose/confirm (power 7) |
-| `20260628020000_quality_confidence.sql` | `schedule_generations` | `quality_confidence jsonb` | confidence signal shown in `QualityPanel` (power 1) |
-
-### Edge functions
-| Function | Status | Notes |
+| Migration | Adds | Status |
 |---|---|---|
-| `generate-schedule` | updated | background `finalize()` now computes + persists `quality_confidence`; engine refactored into focused modules (`_annealing`, `_occupancy`, `_lns`, `_confidence`, `_refine`, `_perturbation`, `_conflict`, `_weightlearning`) — all in the function folder, deploy together |
-| `refine-schedule` | **new** | heavy SA+LNS pass that writes a strictly-better version (`refined_from_generation_id`), re-validated against the SSOT; client polls it after generation |
-| `resolve-conflicts-ai` | updated | deterministic engine resolves (smallest blast radius) + LLM narrates; new `mode: "preview" \| "apply"` for pick-one-of-N |
-| `update-scoring-weights` | updated | now `action: "propose"` (stage a clamped proposal) and `"confirm"` (apply) — human-gated, never auto-applies |
+| `20260718000000_add_max_team_out_minutes.sql` | `schools.max_team_out_minutes` (int, default 120) | **NOT APPLIED — apply first** |
+| `20260808000000_schema_cache_reload.sql` | no DDL; forces a PostgREST schema reload | **NOT APPLIED** |
 
-### Why type regen is needed
-The frontend currently casts around the three new columns (`quality_confidence`,
-`refined_from_generation_id`, `proposed_weights`/`proposed_at`) because the locally
-generated `src/integrations/supabase/types.ts` predates them. After Lovable
-regenerates types from the live schema, those casts are still harmless but no
-longer strictly necessary.
+After applying: **regenerate `src/integrations/supabase/types.ts`** in the same
+deploy, then confirm the Setup Wizard's School Info step saves with no red toast.
 
-### Safety
-- All migrations are additive (`ADD COLUMN IF NOT EXISTS`) — no data loss, safe to
-  re-run, and old code keeps working (the columns are nullable).
-- No solver / SSOT validator / scoring-rubric behavior changed by the deploy.
-- Secrets: no new secrets required. `resolve-conflicts-ai` uses the existing
-  `ANTHROPIC_API_KEY` (only for optional narration; it degrades gracefully without it).
+> Please apply the two migrations above, regenerate the Supabase TypeScript
+> types, and deploy the frontend from `main`. No new secrets. No edge-function
+> changes are required for this deploy.
+
+---
+
+## Standing rule for every schema change
+
+Four things, every time — the outage above happened because of #3 and #4:
+
+1. **Additive only.** New columns, never a rename or a drop. The running
+   frontend must keep working against the old schema.
+2. **`ADD COLUMN IF NOT EXISTS`,** so re-applying is a no-op.
+3. **End the file with `NOTIFY pgrst, 'reload schema';`** — PostgREST caches the
+   schema. Without it the column exists but the API still answers PGRST204 and
+   every write carrying it fails.
+4. **Regenerate `types.ts` in the same deploy** and add the migration to the
+   table above until it is applied.
+
+`src/lib/schemaDrift.test.ts` enforces #2, #3 and #4 in CI: it parses every
+migration, and fails if a column added by a migration is missing from
+`types.ts`, or if a migration is missing the `NOTIFY` line.
+
+The client also defends itself at runtime (`src/lib/supabaseSchemaFallback.ts`):
+a write that hits PGRST204 retries without the unknown column and shows one
+amber toast, so an unapplied migration costs a single setting instead of the
+whole session. That is a safety net, **not** a substitute for applying the
+migration.
+
+---
+
+## Previous update — schedule quality (no new migrations)
+
+Earlier commits make schedules reach the true achievable ceiling (AB/AA-BB Week
+hit **100%**; see `SCHEDULE_QUALITY_NOTES.md`). They changed ENGINE CODE and the
+client only.
+
+> Redeploy the `generate-schedule`, `refine-schedule`, `resolve-conflicts-ai`
+> and `update-scoring-weights` edge functions (each carries the shared engine
+> under its own `_engine/` folder — deploy those folders too) and the frontend,
+> from `main`.
+
+**Engine copies:** the canonical engine lives in
+`supabase/functions/generate-schedule/`; `bash scripts/sync-engine.sh` copies it
+into all seven consumers' `_engine/` folders. Run `--check` before merging.
+
+**Still pending on the product side:** the school must click **Regenerate** on
+the Master Schedule page for wheel-aligned scheduling, the Grade Set-up window
+and PD blocks to appear in an existing school's schedule.

@@ -27,7 +27,7 @@ const BUILD_MESSAGES = [
 ];
 
 const StepReview = () => {
-  const { data, setStep, schoolId } = useSetup();
+  const { data, setStep, schoolId, clearDraft } = useSetup();
   const { user } = useAuth();
   const navigate = useNavigate();
   const [building, setBuilding] = useState(false);
@@ -158,6 +158,8 @@ const StepReview = () => {
       }
       logActivity('setup_completed', { school_name: data.schoolName });
       track('setup_completed');
+      // Setup is committed to the database — stop offering the local draft.
+      clearDraft();
       navigate('/app/schedule-success');
     } catch (err: any) {
       console.error('Build error:', err);

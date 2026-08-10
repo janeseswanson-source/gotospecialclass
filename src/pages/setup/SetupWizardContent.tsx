@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useSetup } from '@/contexts/SetupContext';
+import DraftRestoreBanner from '@/components/setup/DraftRestoreBanner';
 import { CheckCircle2, ChevronDown, Circle, Lock, PlusCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -170,6 +171,8 @@ const SetupWizardContent = () => {
           <span className="text-xs text-muted-foreground">{progressPct}%</span>
         </div>
       </div>
+
+      <DraftRestoreBanner />
 
       {isMobile ? (
         <div className="space-y-4">

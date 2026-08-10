@@ -12,6 +12,7 @@ import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import { aiErrorToast } from '@/lib/aiError';
 import { supabase } from '@/integrations/supabase/client';
+import { saveRowsWithSchemaFallback } from '@/lib/supabaseSchemaFallback';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -206,6 +207,7 @@ const StepSpecialists = () => {
   const { setStep, schoolId, data, prefilledSpecialists, setPrefilledSpecialists } = useSetup();
   const [specialists, setSpecialists] = useState<Specialist[]>([]);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [expandedRotation, setExpandedRotation] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>(); // legacy — retained to minimize diff; not referenced by new per-card save path.
@@ -346,14 +348,30 @@ const StepSpecialists = () => {
     setSaveStatus('saving');
     const promise = (async () => {
       try {
-        const { error } = await supabase.from('specialists').upsert(rows, { onConflict: 'id' });
-        if (error) throw error;
+        // Schema-tolerant: a column the live DB hasn't been migrated to yet
+        // costs that one setting, not the whole roster.
+        const res = await saveRowsWithSchemaFallback<unknown>(
+          'specialists',
+          rows as Array<Record<string, unknown>>,
+          (r) => supabase.from('specialists').upsert(r as never, { onConflict: 'id' }) as never,
+          {
+            onDrop: (col) => toast.warning(
+              `Your database is missing the "${col}" specialist setting — everything else was saved.`,
+              { id: `schema-drift-specialists-${col}`, duration: 8000 },
+            ),
+          },
+        );
+        if (res.error) throw res.error;
+        setSaveError(null);
         setSaveStatus('saved');
-        setTimeout(() => setSaveStatus('idle'), 2000);
+        setTimeout(() => setSaveStatus((cur) => (cur === 'saved' ? 'idle' : cur)), 2000);
       } catch (err: any) {
+        // Must leave a persistent trace — 'idle' renders nothing, which is how
+        // a whole session was once typed into a wizard that saved nothing.
         console.error('Save specialists error:', err);
         toast.error(`Couldn't save specialists${err?.message ? ` — ${err.message}` : ''}. Check your connection and try again.`);
-        setSaveStatus('idle');
+        setSaveError(err?.message ?? 'Save failed');
+        setSaveStatus('error');
       }
     })();
     inFlightSaves.current.add(promise);
@@ -782,7 +800,7 @@ const StepSpecialists = () => {
       {/* Save status */}
       <div className="flex items-center justify-between">
         <div />
-        <SaveStatusIndicator status={saveStatus} />
+        <SaveStatusIndicator status={saveStatus} errorMessage={saveError} onRetry={() => persistRows(latestRef.current.map(buildRow))} />
       </div>
 
       {/* CSV Import */}

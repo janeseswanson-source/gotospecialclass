@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
+import { useSetupDraft, type SetupDraft } from '@/hooks/useSetupDraft';
 import { useSchool } from '@/contexts/SchoolContext';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -133,6 +134,11 @@ interface SetupContextType {
   setCalendarParsed: (p: boolean) => void;
   calendarFileName: string | null;
   setCalendarFileName: (name: string | null) => void;
+  /** An unfinished local draft found on mount (offered, never auto-applied). */
+  draftAvailable: SetupDraft<SchoolSetupData> | null;
+  restoreDraft: () => void;
+  discardDraft: () => void;
+  clearDraft: () => void;
 }
 
 const SetupContext = createContext<SetupContextType | undefined>(undefined);
@@ -287,6 +293,18 @@ export const SetupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setData(prev => ({ ...prev, ...partial }));
   }, []);
 
+  // Local safety net: a failed save or a closed tab must not erase the
+  // session. Offered back on mount; never applied silently.
+  const draft = useSetupDraft<SchoolSetupData>(workspaceId, schoolId, data, step);
+
+  const restoreDraft = useCallback(() => {
+    const d = draft.restore();
+    if (!d) return;
+    setData(d.data);
+    setStepRaw(d.step);
+    setVisitedSteps(prev => new Set([...prev, d.step]));
+  }, [draft]);
+
   return (
     <SetupContext.Provider value={{
       step, setStep, data, updateData, schoolId, setSchoolId,
@@ -297,6 +315,10 @@ export const SetupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       calendarUploadId, setCalendarUploadId,
       calendarParsed, setCalendarParsed,
       calendarFileName, setCalendarFileName,
+      draftAvailable: draft.available,
+      restoreDraft,
+      discardDraft: draft.discard,
+      clearDraft: draft.clear,
     }}>
       {children}
     </SetupContext.Provider>
