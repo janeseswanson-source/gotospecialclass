@@ -576,6 +576,30 @@ export function validatePlanningTime(blocks: Block[], specialists: Specialist[],
   }
 
   warnings.push(...validateTeacherDay(school));
+  warnings.push(...validateAccompaniedSpecialists(blocks, specialists));
+  return warnings;
+}
+
+/**
+ * Flag specialists whose classes are attended BY the classroom teacher. Those
+ * blocks give the teacher no planning time, which is easy to miss when reading
+ * a schedule ("so it is not a prep minutes unequal use of time"). Advisory.
+ */
+export function validateAccompaniedSpecialists(blocks: Block[], specialists: Specialist[]): Warning[] {
+  const warnings: Warning[] = [];
+  for (const spec of specialists) {
+    if (!(spec as { teacher_accompanies?: boolean | null }).teacher_accompanies) continue;
+    const minutes = blocks
+      .filter((b) => b.specialist_id === spec.id && b.teacher_id && b.grade !== "Lunch" && b.grade !== "Planning" && b.grade !== "Makeup")
+      .reduce((acc, b) => acc + (timeToMinutes(b.end_time) - timeToMinutes(b.start_time)), 0);
+    if (minutes <= 0) continue;
+    warnings.push({
+      type: "accompanied_planning_gap",
+      severity: "info",
+      message: `Classroom teachers stay with their class for ${spec.name} — those ${minutes} min/wk are not planning time.`,
+      suggestion: "That's expected for Library/Garden-style blocks. If teachers should be released, turn off \"teacher goes with the class\" on that specialist.",
+    });
+  }
   return warnings;
 }
 
@@ -2439,7 +2463,7 @@ export function generateScheduleBlocks(
       rotation_wheel_grades: (school as any).rotation_wheel_grades ?? null,
       contractual_minutes_extracted: (school as any).contractual_minutes_extracted ?? null,
     },
-    specialists: specialists.map((s) => ({ id: s.id, subject: s.subject, working_days: s.working_days })),
+    specialists: specialists.map((s) => ({ id: s.id, subject: s.subject, working_days: s.working_days, teacher_accompanies: (s as { teacher_accompanies?: boolean | null }).teacher_accompanies ?? false })),
     teachers: teachers.map((t) => ({
       id: t.id,
       am_pm_preference: t.am_pm_preference,

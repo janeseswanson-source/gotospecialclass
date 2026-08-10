@@ -37,7 +37,7 @@ export interface SolverClass {
 }
 export interface SolverSpecialist {
   id: string; subject: string; working_days: string[]; grades: string[] | null; duration: number;
-  grade_rotation?: Record<string, string[]>; uses_cart: boolean;
+  grade_rotation?: Record<string, string[]>; uses_cart: boolean; teacher_accompanies?: boolean;
   planning_free_budget: number; required_planning_minutes: number;
 }
 export interface SolverFixed {
@@ -282,6 +282,7 @@ export function buildCpsatSpec(args: BuildSpecArgs): BuildSpecResult {
     const out: SolverSpecialist = {
       id: s.id, subject: s.subject, working_days: workDays.length > 0 ? workDays : DAYS, grades: null, duration: dur,
       uses_cart: s.uses_cart ?? false,
+      teacher_accompanies: s.teacher_accompanies ?? false,
       planning_free_budget: budget, required_planning_minutes: Math.max(0, requiredPlanning ?? 0),
     };
     if (s.grade_rotation && typeof s.grade_rotation === "object") {

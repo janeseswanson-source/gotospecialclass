@@ -71,7 +71,7 @@ export interface ScoreableInput {
     rotation_wheel_grades?: string[] | null;
     contractual_minutes_extracted?: ContractExtract | null;
   };
-  specialists: Array<{ id: string; subject?: string | null; working_days?: string[] | null }>;
+  specialists: Array<{ id: string; subject?: string | null; working_days?: string[] | null; teacher_accompanies?: boolean | null }>;
   teachers: Array<{ id: string; am_pm_preference?: string | null; day_preference?: string | null; weekly_planning_minutes?: number | null }>;
   grades: string[];
 }
@@ -413,9 +413,16 @@ export function scoreSchedule(
   //     reach weekly_planning_minutes. Penalise the shortfall in minutes.
   let teacherPlanningShortfall = 0;
   const teacherSpecialsMin = new Map<string, number>();
+  // A specialist the classroom teacher ATTENDS WITH their class buys no
+  // planning time — counting it would overstate prep and hide a real
+  // shortfall ("so it is not a prep minutes unequal use of time").
+  const accompaniedSpecIds = new Set(
+    input.specialists.filter((sp) => sp.teacher_accompanies).map((sp) => sp.id),
+  );
   for (const b of blocks) {
     if (!b.specialist_id || !b.teacher_id) continue;
     if (b.grade === "Lunch" || b.grade === "Planning" || b.grade === "Makeup") continue;
+    if (accompaniedSpecIds.has(b.specialist_id)) continue;
     teacherSpecialsMin.set(b.teacher_id, (teacherSpecialsMin.get(b.teacher_id) ?? 0) + (timeToMinutes(b.end_time) - timeToMinutes(b.start_time)));
   }
   for (const t of input.teachers) {

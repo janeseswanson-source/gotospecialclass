@@ -44,6 +44,8 @@ const KNOWN_PENDING = new Set<string>([
   // 20260808020000 — rotation start date; same write path
   "schools.rotations_start_date",
   "schools.rotations_week_anchor",
+  // 20260808030000 — written by StepSpecialists via saveRowsWithSchemaFallback
+  "specialists.teacher_accompanies",
 ]);
 
 const ADD_COLUMN_RE =

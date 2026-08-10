@@ -2,13 +2,14 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { SaveStatusIndicator, type SaveStatus } from '@/components/setup/SaveStatusIndicator';
 import { SETUP_STEPS } from '../stepIndex';
 // useFlushOnUnmount no longer used — per-card save flush is inline.
-import { useSetup } from '@/contexts/SetupContext';
+import { useSetup, type SchoolSetupData } from '@/contexts/SetupContext';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { FieldLabel } from '@/components/ui/field-label';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, Upload, Download, Palette, Monitor, Dumbbell, FlaskConical, BookOpen, Sprout, Cog, Music, MoreHorizontal, Loader2, Check, ChevronDown, ChevronUp, HelpCircle, Sparkles, ClipboardPaste } from 'lucide-react';
+import { Plus, Trash2, Upload, Download, Palette, Monitor, Dumbbell, FlaskConical, BookOpen, Sprout, Cog, Music, MoreHorizontal, Loader2, Check, ChevronDown, ChevronUp, HelpCircle, Sparkles, ClipboardPaste, Users } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import { aiErrorToast } from '@/lib/aiError';
@@ -106,6 +107,8 @@ interface Specialist {
   twoSchools: boolean;
   secondSchoolName: string;
   usesCart: boolean;
+  /** Classroom teacher stays with their class for this specialist. */
+  teacherAccompanies: boolean;
   isPartTime: boolean;
   partTimePlanningMinutes: number;
   partTimeLunchMinutes: number;
@@ -191,11 +194,18 @@ function parseCSV(text: string): string[][] {
   return rows;
 }
 
+const PLANNING_WHEN_LABEL: Record<string, string> = {
+  before_school: 'Before school',
+  during_rotations: 'During rotations',
+  after_school: 'After school',
+  mixed: 'Mixed',
+};
+
 const defaultSpecialist = (subject = 'Art'): Specialist => ({
   id: crypto.randomUUID(), name: '', phone: '', email: '', subject,
   workingDays: [...days], planningMinutes: 45, weeklyPlanningMinutes: 225, planningType: 'during_rotations',
   lunchMinutes: 30, extraMinutes: 0, notes: '',
-  twoSchools: false, secondSchoolName: '', usesCart: false,
+  twoSchools: false, secondSchoolName: '', usesCart: false, teacherAccompanies: false,
   isPartTime: false, partTimePlanningMinutes: 30, partTimeLunchMinutes: 20,
   location: '', secondLocation: '',
   gradeRotation: {},
@@ -205,6 +215,38 @@ const defaultSpecialist = (subject = 'Art'): Specialist => ({
   classDuration: null,
   additionalMinutes: [],
 });
+
+/** School Info is the source of truth for the shared numbers — a new card
+ *  should never contradict it. ("AUTOFILL From SCHOOL INFO PAGE.")
+ *  `defaultSpecialist` keeps hard-coded fallbacks so it stays pure/testable;
+ *  this layers the school's own answers on top, and every creation path
+ *  (Quick Add, CSV, XLSX, AI, prep prefill) runs through it. */
+type SchoolDefaultsSource = Pick<
+  SchoolSetupData,
+  'planningMinutes' | 'lunchMinutes' | 'planningTimeWhen' | 'classDuration' | 'setupTime'
+>;
+
+function applySchoolDefaults(spec: Specialist, school: SchoolDefaultsSource): Specialist {
+  const perDay = Number(school.planningMinutes);
+  const lunch = Number(school.lunchMinutes);
+  const setup = Number(school.setupTime);
+  return {
+    ...spec,
+    ...(Number.isFinite(perDay) && perDay > 0
+      ? { planningMinutes: perDay, weeklyPlanningMinutes: perDay * 5 }
+      : {}),
+    ...(Number.isFinite(lunch) && lunch > 0 ? { lunchMinutes: lunch } : {}),
+    ...(school.planningTimeWhen ? { planningType: school.planningTimeWhen } : {}),
+    // A per-specialist class length only matters when it DIFFERS from the
+    // school default, so it deliberately stays null here.
+    additionalMinutes:
+      spec.additionalMinutes && spec.additionalMinutes.length > 0
+        ? spec.additionalMinutes
+        : (Number.isFinite(setup) && setup > 0
+            ? [{ label: 'Setup', minutes: setup, kind: 'setup' as const }]
+            : []),
+  };
+}
 
 const StepSpecialists = () => {
   const { setStep, schoolId, data, prefilledSpecialists, setPrefilledSpecialists } = useSetup();
@@ -267,6 +309,7 @@ const StepSpecialists = () => {
           twoSchools: s.two_schools || false,
           secondSchoolName: s.second_school_name || '',
           usesCart: s.uses_cart || false,
+          teacherAccompanies: (s as { teacher_accompanies?: boolean | null }).teacher_accompanies || false,
           isPartTime: s.is_part_time || false,
           partTimePlanningMinutes: s.part_time_planning_minutes ?? 30,
           partTimeLunchMinutes: s.part_time_lunch_minutes ?? 20,
@@ -286,7 +329,7 @@ const StepSpecialists = () => {
         })));
       } else if (prefilledSpecialists.length > 0) {
         setSpecialists(prefilledSpecialists.map(s => ({
-          ...defaultSpecialist(s.subject),
+          ...applySchoolDefaults(defaultSpecialist(s.subject), data),
           name: s.name,
           workingDays: s.days,
           ...(s.planningMinutes != null ? { planningMinutes: s.planningMinutes } : {}),
@@ -331,6 +374,7 @@ const StepSpecialists = () => {
     two_schools: s.twoSchools,
     second_school_name: s.secondSchoolName || null,
     uses_cart: s.usesCart,
+    teacher_accompanies: s.teacherAccompanies,
     is_part_time: s.isPartTime,
     part_time_planning_minutes: s.partTimePlanningMinutes,
     part_time_lunch_minutes: s.partTimeLunchMinutes,
@@ -455,11 +499,7 @@ const StepSpecialists = () => {
   }, []);
 
   const addSpecialist = (subject = 'Art') => {
-    const base = defaultSpecialist(subject);
-    const seedSetup = Number(data.setupTime) > 0;
-    if (seedSetup) {
-      base.additionalMinutes = [{ label: 'Setup', minutes: Number(data.setupTime) || 5, kind: 'setup' }];
-    }
+    const base = applySchoolDefaults(defaultSpecialist(subject), data);
     // Persist the new card to the DB immediately — do NOT rely on the
     // debounced autosave to insert it. This is what makes rapid Quick-Add
     // clicks reliable.
@@ -687,14 +727,17 @@ const StepSpecialists = () => {
       })();
 
       imported.push({
-        ...defaultSpecialist(),
+        ...applySchoolDefaults(defaultSpecialist(), data),
         name,
         phone: cell(phoneIdx),
         email: cell(emailIdx),
         subject: normalizedSubject,
         workingDays: parsed.days,
-        planningMinutes: planIdx >= 0 ? Number(cell(planIdx)) || 45 : 45,
-        lunchMinutes: lunchIdx >= 0 ? Number(cell(lunchIdx)) || 30 : 30,
+        // A blank cell means "use the school default", not a hard-coded 45/30.
+        ...(planIdx >= 0 && Number(cell(planIdx)) > 0
+          ? { planningMinutes: Number(cell(planIdx)), weeklyPlanningMinutes: Number(cell(planIdx)) * 5 }
+          : {}),
+        ...(lunchIdx >= 0 && Number(cell(lunchIdx)) > 0 ? { lunchMinutes: Number(cell(lunchIdx)) } : {}),
         location,
         usesCart: cartIdx >= 0 ? yesValues.includes(cell(cartIdx).toLowerCase()) : false,
         twoSchools: twoSchoolsIdx >= 0 ? yesValues.includes(cell(twoSchoolsIdx).toLowerCase()) : false,
@@ -720,7 +763,7 @@ const StepSpecialists = () => {
         return;
       }
       const imported: Specialist[] = aiSpecs.map(s => ({
-        ...defaultSpecialist(),
+        ...applySchoolDefaults(defaultSpecialist(), data),
         name: s.name || '',
         phone: s.phone || '',
         email: s.email || '',
@@ -745,6 +788,56 @@ const StepSpecialists = () => {
     }
   };
 
+  // Apply-to-all: "After you fill it out can it be added to all Specialists
+  // Teachers cards?" Push the School Info answers onto every existing card,
+  // one setting at a time so a deliberately-different card can be spared.
+  const [applyAllOpen, setApplyAllOpen] = useState(false);
+  const [applyFields, setApplyFields] = useState({
+    planning: true, lunch: true, planningType: true, setup: true,
+  });
+
+  const applyDefaultsToAll = () => {
+    const perDay = Number(data.planningMinutes);
+    const lunch = Number(data.lunchMinutes);
+    const setup = Number(data.setupTime);
+    const updated = latestRef.current.map((spec) => {
+      const next: Specialist = { ...spec };
+      if (applyFields.planning && Number.isFinite(perDay) && perDay > 0) {
+        next.planningMinutes = perDay;
+        next.weeklyPlanningMinutes = perDay * 5;
+      }
+      if (applyFields.lunch && Number.isFinite(lunch) && lunch > 0) next.lunchMinutes = lunch;
+      if (applyFields.planningType && data.planningTimeWhen) next.planningType = data.planningTimeWhen;
+      if (applyFields.setup && Number.isFinite(setup) && setup > 0) {
+        const others = (next.additionalMinutes ?? []).filter((m) => m.kind !== 'setup');
+        next.additionalMinutes = [{ label: 'Setup', minutes: setup, kind: 'setup' }, ...others];
+      }
+      return next;
+    });
+    if (updated.length === 0) {
+      toast.info('No specialist cards to update yet.');
+      return;
+    }
+    setSpecialists(updated);
+    const rows = updated.map(buildRow);
+    rows.forEach((r, i) => lastSerialized.current.set(updated[i].id, JSON.stringify(r)));
+    persistRows(rows);
+    setApplyAllOpen(false);
+    toast.success(`Updated ${updated.length} specialist card${updated.length === 1 ? '' : 's'} from School Info.`);
+  };
+
+  /** Reset ONE card back to the School Info answers. */
+  const resetToSchoolDefaults = (id: string) => {
+    const spec = latestRef.current.find((x) => x.id === id);
+    if (!spec) return;
+    const next = applySchoolDefaults({ ...spec, additionalMinutes: [] }, data);
+    setSpecialists((prev) => prev.map((x) => (x.id === id ? next : x)));
+    const row = buildRow(next);
+    lastSerialized.current.set(id, JSON.stringify(row));
+    persistRows([row]);
+    toast.success('Reset to the School Info defaults.');
+  };
+
   // Paste import: a coordinator with a two-column list in an email shouldn't
   // have to build a spreadsheet first ("should we just be able to copy and
   // paste a list?").
@@ -760,7 +853,7 @@ const StepSpecialists = () => {
       return;
     }
     const imported: Specialist[] = result.rows.map((r) => ({
-      ...defaultSpecialist(r.subject || 'Other'),
+      ...applySchoolDefaults(defaultSpecialist(r.subject || 'Other'), data),
       name: r.name,
       email: r.email || '',
       phone: r.phone || '',
@@ -906,6 +999,60 @@ const StepSpecialists = () => {
       </div>
 
 
+      {/* Apply School Info answers to every card at once. */}
+      {specialists.length > 0 && (
+        <div className="rounded-lg border border-border bg-background p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-card-foreground">Shared settings</h3>
+              <p className="text-xs text-muted-foreground">
+                New cards already inherit School Info. Use this to push a change onto the
+                {' '}{specialists.length} card{specialists.length === 1 ? '' : 's'} you already have.
+              </p>
+            </div>
+            <Popover open={applyAllOpen} onOpenChange={setApplyAllOpen}>
+              <PopoverTrigger asChild>
+                <Button size="sm" variant="outline" className="gap-1.5">
+                  <Users className="h-3.5 w-3.5" /> Apply to all specialists…
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-80 space-y-3" align="end">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Copy from School Info</p>
+                  <p className="text-xs text-muted-foreground">Overwrites these on every card.</p>
+                </div>
+                <div className="space-y-2">
+                  {([
+                    ['planning', `Planning — ${data.planningMinutes} min/day`],
+                    ['lunch', `Lunch — ${data.lunchMinutes} min`],
+                    ['planningType', `Planning occurs — ${PLANNING_WHEN_LABEL[data.planningTimeWhen] ?? data.planningTimeWhen}`],
+                    ['setup', `Setup / reset — ${data.setupTime} min`],
+                  ] as const).map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-2 text-xs">
+                      <Checkbox
+                        checked={applyFields[key]}
+                        onCheckedChange={(c) => setApplyFields((f) => ({ ...f, [key]: c === true }))}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button size="sm" variant="ghost" onClick={() => setApplyAllOpen(false)}>Cancel</Button>
+                  <Button
+                    size="sm"
+                    onClick={applyDefaultsToAll}
+                    disabled={!Object.values(applyFields).some(Boolean)}
+                  >
+                    Apply to {specialists.length}
+                  </Button>
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+        </div>
+      )}
+
       {/* Quick Add */}
       <div className="rounded-lg border border-border bg-background p-5 space-y-3">
         <div>
@@ -966,6 +1113,15 @@ const StepSpecialists = () => {
 
           {/* Body */}
           <div className="px-4 pb-4 space-y-3">
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => resetToSchoolDefaults(s.id)}
+                className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-primary"
+              >
+                Use school defaults
+              </button>
+            </div>
             {/* Planning, Lunch, Class Duration row */}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-5 items-end">
               <div className="space-y-1">
@@ -1025,6 +1181,10 @@ const StepSpecialists = () => {
                 <div className="flex items-center gap-1.5">
                   <Switch checked={s.usesCart} onCheckedChange={(v) => update(s.id, 'usesCart', v)} id={`cart-${s.id}`} />
                   <FieldLabel htmlFor={`cart-${s.id}`} className="text-xs cursor-pointer" tooltip="Enable if this specialist moves between rooms with a cart (also called a Floating or Cart Teacher).">Traveling Teacher</FieldLabel>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Switch checked={s.teacherAccompanies} onCheckedChange={(v) => update(s.id, 'teacherAccompanies', v)} id={`accompany-${s.id}`} />
+                  <FieldLabel htmlFor={`accompany-${s.id}`} className="text-xs cursor-pointer" tooltip="Turn on for specials the classroom teacher attends WITH their class (often Tech, Library or Garden). These blocks are not counted as that teacher's planning time, and they don't free the grade team for PD.">Teacher goes with class</FieldLabel>
                 </div>
                 <div className="flex items-center gap-1.5">
                   <Switch checked={s.twoSchools} onCheckedChange={(v) => update(s.id, 'twoSchools', v)} id={`two-${s.id}`} />

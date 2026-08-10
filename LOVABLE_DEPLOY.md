@@ -15,6 +15,7 @@ all its settings in one payload, so one unknown column rejected **everything**.
 | `20260808000000_schema_cache_reload.sql` | no DDL; forces a PostgREST schema reload | **NOT APPLIED** |
 | `20260808010000_add_teacher_work_day.sql` | `schools.teacher_day_start_time`, `teacher_day_end_time`, `teacher_planning_block_minutes`, `teacher_planning_block_when` (all nullable — NULL = same as the student day) | **NOT APPLIED** |
 | `20260808020000_add_rotations_start_date.sql` | `schools.rotations_start_date` (nullable), `rotations_week_anchor` (default `'school_year'` — existing A/B lettering unchanged) | **NOT APPLIED** |
+| `20260808030000_add_teacher_accompanies.sql` | `specialists.teacher_accompanies` (bool, default false) | **NOT APPLIED** |
 
 After applying: **regenerate `src/integrations/supabase/types.ts`** in the same
 deploy, then confirm the Setup Wizard's School Info step saves with no red toast.

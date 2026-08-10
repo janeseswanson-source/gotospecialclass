@@ -144,7 +144,7 @@ function buildScoringInput(ctx: RefineContext): ScoreableInput {
       rotation_wheel_grades: ctx.school.rotation_wheel_grades ?? null,
       contractual_minutes_extracted: ctx.school.contractual_minutes_extracted ?? null,
     },
-    specialists: ctx.specialists.map((s) => ({ id: s.id, subject: s.subject, working_days: s.working_days })),
+    specialists: ctx.specialists.map((s) => ({ id: s.id, subject: s.subject, working_days: s.working_days, teacher_accompanies: (s as { teacher_accompanies?: boolean | null }).teacher_accompanies ?? false })),
     teachers: ctx.teachers.map((t) => ({ id: t.id, am_pm_preference: t.am_pm_preference ?? null, day_preference: t.day_preference ?? null, weekly_planning_minutes: t.weekly_planning_minutes ?? null })),
     grades: ctx.grades,
   };

@@ -307,7 +307,8 @@ Deno.test("OccupancyTracker: overlapping interval (diff start) is not free", () 
 // ──────────────────────────────────────────────────────────────────────
 // Per-grade transitions + specialist weekly meeting (Jane's KK3 feedback)
 // ──────────────────────────────────────────────────────────────────────
-import { buildTimeSlotsForGrade, reserveSpecialistMeetingBlocks, schoolRotationsStartMin, teacherDayStartMin, teacherDayEndMin, validateTeacherDay } from "./index.ts";
+import { scoreSchedule } from "./_scoring.ts";
+import { buildTimeSlotsForGrade, reserveSpecialistMeetingBlocks, schoolRotationsStartMin, teacherDayStartMin, teacherDayEndMin, validateTeacherDay, validateAccompaniedSpecialists } from "./index.ts";
 
 Deno.test("buildTimeSlotsForGrade: grade_time_config passingTime overrides the canonical step", () => {
   // 30-min K classes with 5-min switches → slots every 35 min; grade 1 (no
@@ -511,4 +512,51 @@ Deno.test("validateTeacherDay: flags a planning block that doesn't fit after dis
     teacher_planning_block_minutes: 45, teacher_planning_block_when: "end_of_day",
   });
   assertEquals(ok.length, 0);
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// teacher_accompanies — Library/Garden blocks the teacher attends WITH
+// their class buy no planning time.
+// ──────────────────────────────────────────────────────────────────────
+Deno.test("validateAccompaniedSpecialists: advisory note only for accompanied specialists", () => {
+  const blocks = [
+    { generation_id: "g", day_of_week: "Mon", start_time: "09:00", end_time: "09:45", subject: "Library", specialist_id: "lib", teacher_id: "t1", grade: "3", room: null, week_label: null },
+    { generation_id: "g", day_of_week: "Tue", start_time: "09:00", end_time: "09:45", subject: "Art", specialist_id: "art", teacher_id: "t1", grade: "3", room: null, week_label: null },
+  ];
+  const specs = [
+    { id: "lib", name: "Lee", teacher_accompanies: true },
+    { id: "art", name: "Swanson", teacher_accompanies: false },
+  ] as never;
+
+  const w = validateAccompaniedSpecialists(blocks as never, specs);
+  assertEquals(w.length, 1);
+  assertEquals(w[0].type, "accompanied_planning_gap");
+  assertEquals(w[0].severity, "info");
+  assert(w[0].message.includes("Lee"));
+  assert(w[0].message.includes("45 min"));
+  assert(!strategyFailed(w), "advisory — must never gate strategy fallback");
+});
+
+Deno.test("scoreSchedule: an accompanied specialist does not count toward teacher planning", () => {
+  const blocks = [
+    { generation_id: "g", day_of_week: "Mon", start_time: "09:00", end_time: "10:00", subject: "Library", specialist_id: "lib", teacher_id: "t1", grade: "3", room: null, week_label: null },
+  ];
+  const base = {
+    school: { start_time: "08:00", end_time: "15:00" },
+    teachers: [{ id: "t1", weekly_planning_minutes: 60 }],
+    grades: ["3"],
+  };
+  const result = { blocks, warnings: [], preferenceViolations: [] } as never;
+
+  // Teacher released -> requirement met, no shortfall.
+  const released = scoreSchedule(result, {
+    ...base, specialists: [{ id: "lib", teacher_accompanies: false }],
+  } as never);
+  assertEquals(released.breakdown.teacher_planning, 0);
+
+  // Teacher stays with the class -> the full 60 min is still owed.
+  const accompanied = scoreSchedule(result, {
+    ...base, specialists: [{ id: "lib", teacher_accompanies: true }],
+  } as never);
+  assertEquals(Math.round(accompanied.breakdown.teacher_planning * 100) / 100, -3);
 });
