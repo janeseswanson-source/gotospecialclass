@@ -4,15 +4,18 @@ import { SETUP_STEPS } from '../stepIndex';
 // useFlushOnUnmount no longer used — per-card save flush is inline.
 import { useSetup } from '@/contexts/SetupContext';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { FieldLabel } from '@/components/ui/field-label';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, Upload, Download, Palette, Monitor, Dumbbell, FlaskConical, BookOpen, Sprout, Cog, Music, MoreHorizontal, Loader2, Check, ChevronDown, ChevronUp, HelpCircle, Sparkles } from 'lucide-react';
+import { Plus, Trash2, Upload, Download, Palette, Monitor, Dumbbell, FlaskConical, BookOpen, Sprout, Cog, Music, MoreHorizontal, Loader2, Check, ChevronDown, ChevronUp, HelpCircle, Sparkles, ClipboardPaste } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { toast } from 'sonner';
 import { aiErrorToast } from '@/lib/aiError';
 import { supabase } from '@/integrations/supabase/client';
 import { saveRowsWithSchemaFallback } from '@/lib/supabaseSchemaFallback';
+import { parseSpecialistPaste, type SpecialistParseResult } from '@/lib/parseSpecialistPaste';
+import { appleFormatHint, isSupportedRosterFile, ROSTER_ACCEPT } from '@/lib/rosterFiles';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -210,6 +213,9 @@ const StepSpecialists = () => {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [expandedRotation, setExpandedRotation] = useState<Set<string>>(new Set());
   const fileRef = useRef<HTMLInputElement>(null);
+  const [showPaste, setShowPaste] = useState(false);
+  const [pasteText, setPasteText] = useState('');
+  const [pastePreview, setPastePreview] = useState<SpecialistParseResult | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>(); // legacy — retained to minimize diff; not referenced by new per-card save path.
   const [parseErrorOpen, setParseErrorOpen] = useState(false);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
@@ -739,14 +745,53 @@ const StepSpecialists = () => {
     }
   };
 
+  // Paste import: a coordinator with a two-column list in an email shouldn't
+  // have to build a spreadsheet first ("should we just be able to copy and
+  // paste a list?").
+  const previewPaste = (text: string) => {
+    setPasteText(text);
+    setPastePreview(text.trim() ? parseSpecialistPaste(text) : null);
+  };
+
+  const importPastedSpecialists = () => {
+    const result = pastePreview ?? parseSpecialistPaste(pasteText);
+    if (result.rows.length === 0) {
+      toast.error("Couldn't find any specialists in that text. One per line: name, subject.");
+      return;
+    }
+    const imported: Specialist[] = result.rows.map((r) => ({
+      ...defaultSpecialist(r.subject || 'Other'),
+      name: r.name,
+      email: r.email || '',
+      phone: r.phone || '',
+      location: r.room || '',
+    }));
+    setSpecialists(prev => [...prev, ...imported]);
+    if (isLoaded.current && schoolId) {
+      const rows = imported.map(buildRow);
+      rows.forEach((r, i) => lastSerialized.current.set(imported[i].id, JSON.stringify(r)));
+      persistRows(rows);
+    }
+    toast.success(`Added ${imported.length} specialist${imported.length === 1 ? '' : 's'}.`);
+    result.warnings.forEach(w => toast.warning(w));
+    setPasteText('');
+    setPastePreview(null);
+    setShowPaste(false);
+  };
+
   const handleTemplateUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (fileRef.current) fileRef.current.value = '';
     if (!f) return;
 
-    const ext = f.name.toLowerCase().split('.').pop();
-    if (!['csv', 'xlsx', 'xls'].includes(ext || '')) {
-      toast.error('Upload a .xlsx, .xls, or .csv file.');
+    const appleHint = appleFormatHint(f.name);
+    if (appleHint) {
+      toast.error(appleHint, { duration: 10000 });
+      setShowPaste(true);
+      return;
+    }
+    if (!isSupportedRosterFile(f.name)) {
+      toast.error('Upload a .xlsx, .xls, or .csv file — or paste the list instead.');
       return;
     }
     if (f.size > 5_242_880) {
@@ -755,8 +800,10 @@ const StepSpecialists = () => {
     }
 
     try {
+      const ext = f.name.toLowerCase().split('.').pop() ?? '';
       let rows: string[][];
-      if (ext === 'csv') {
+      // Plain-text formats parse directly; xlsx/xls go through SheetJS.
+      if (ext === 'csv' || ext === 'tsv' || ext === 'txt') {
         const text = await f.text();
         rows = parseCSV(text);
       } else {
@@ -817,11 +864,45 @@ const StepSpecialists = () => {
             {aiParsing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
             {aiParsing ? 'AI is reading…' : 'Upload Filled Template'}
           </Button>
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowPaste(v => !v)}>
+            <ClipboardPaste className="h-3.5 w-3.5" /> Paste a list
+          </Button>
           <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1">
             <Sparkles className="h-3 w-3 text-accent" /> Accepts .xlsx or .csv — AI auto-fills the rest.
           </span>
-          <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleTemplateUpload} />
+          <input ref={fileRef} type="file" accept={ROSTER_ACCEPT} className="hidden" onChange={handleTemplateUpload} />
         </div>
+
+        {showPaste && (
+          <div className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
+            <p className="text-xs text-muted-foreground">
+              One specialist per line — <strong>name and subject is enough</strong>. You don't need to
+              create any categories. Numbers or Excel: just select the cells and copy.
+            </p>
+            <Textarea
+              rows={5}
+              className="font-mono text-xs"
+              placeholder={`Swanson, Art\nGrace, Technology\nNunez, PE`}
+              value={pasteText}
+              onChange={(e) => previewPaste(e.target.value)}
+            />
+            {pastePreview && (
+              <p className="text-xs text-muted-foreground">
+                Found <strong className="text-foreground">{pastePreview.rows.length}</strong> specialist
+                {pastePreview.rows.length === 1 ? '' : 's'}
+                {pastePreview.rows.length > 0 && <>: {pastePreview.rows.slice(0, 4).map(r => `${r.name}${r.subject ? ` (${r.subject})` : ''}`).join(', ')}{pastePreview.rows.length > 4 ? '…' : ''}</>}
+              </p>
+            )}
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={importPastedSpecialists} disabled={!pastePreview?.rows.length}>
+                <Check className="mr-1 h-3.5 w-3.5" /> Add {pastePreview?.rows.length || ''} specialist{pastePreview?.rows.length === 1 ? '' : 's'}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => { setShowPaste(false); setPasteText(''); setPastePreview(null); }}>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
 

@@ -17,14 +17,28 @@ const HEADER_TOKENS: Record<string, keyof ParsedTeacherRow> = {
   name: 'name',
   'full name': 'name',
   teacher: 'name',
+  'teacher name': 'name',
+  'classroom teacher': 'name',
+  'classroom teacher name': 'name',
+  'homeroom teacher': 'name',
+  'last name': 'name',
   grade: 'grade',
+  'grade level': 'grade',
   level: 'grade',
   room: 'room',
+  'room number': 'room',
+  'room no': 'room',
+  'room #': 'room',
   team: 'team',
+  'team name': 'team',
   group: 'team',
   phone: 'phone',
+  'phone number': 'phone',
   mobile: 'phone',
+  ext: 'phone',
   email: 'email',
+  'email address': 'email',
+  'e mail': 'email',
 };
 
 const POSITIONAL_ORDER: (keyof ParsedTeacherRow)[] = ['name', 'grade', 'room', 'team', 'phone', 'email'];
@@ -38,12 +52,25 @@ function splitLine(line: string): string[] {
 }
 
 function cleanToken(s: string): string {
+  // `trim()` also removes the U+FEFF byte-order mark that spreadsheet exports
+  // put on the first cell (it counts as whitespace in ECMA-262), so a BOM'd
+  // "name" header still matches. Covered by a test.
   let t = s.trim();
   // strip matched surrounding quotes
   if ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'"))) {
     t = t.slice(1, -1).trim();
   }
   return t;
+}
+
+/** Header cells arrive as `teacher_name`, `Room #`, `E-Mail`… — compare on a
+ *  single normalised form instead of listing every spelling. */
+function normalizeHeaderToken(s: string): string {
+  return cleanToken(s)
+    .toLowerCase()
+    .replace(/[_\-.]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function normalizeGrade(raw: string): string {
@@ -59,15 +86,24 @@ function normalizeGrade(raw: string): string {
 
 function detectHeader(tokens: string[]): { isHeader: boolean; map: Record<number, keyof ParsedTeacherRow> } {
   const map: Record<number, keyof ParsedTeacherRow> = {};
+  const claimed = new Set<keyof ParsedTeacherRow>();
   let matches = 0;
   tokens.forEach((tok, i) => {
-    const k = cleanToken(tok).toLowerCase();
-    if (HEADER_TOKENS[k]) {
-      map[i] = HEADER_TOKENS[k];
-      matches++;
-    }
+    const field = HEADER_TOKENS[normalizeHeaderToken(tok)];
+    if (!field) return;
+    matches++;
+    // First column to claim a field keeps it; a later synonym ("Teacher" after
+    // "Teacher Name") would otherwise overwrite real data. Losers are filled
+    // in positionally below.
+    if (claimed.has(field)) return;
+    claimed.add(field);
+    map[i] = field;
   });
-  return { isHeader: tokens.length > 0 && matches / tokens.length >= 0.6, map };
+  // Two unambiguous header words are enough ("Name, Grade" is a real roster);
+  // requiring 60% of cells to match rejected perfectly good headers that carry
+  // one extra column we don't know about.
+  const isHeader = tokens.length > 0 && (matches >= 2 || matches / tokens.length >= 0.5);
+  return { isHeader, map };
 }
 
 export function inferTeamFromGrade(grade: string): string {
@@ -112,6 +148,26 @@ export function parseTeacherPaste(text: string): ParseResult {
   const firstTokens = splitLine(lines[0]).map(cleanToken);
   const { isHeader, map } = detectHeader(firstTokens);
   const dataLines = isHeader ? lines.slice(1) : lines;
+
+  // A header we recognise but that binds no NAME column would drop every row
+  // ("Row 2 skipped: no name" — which is exactly what the app's own shipped
+  // template used to do). Treat the unmapped columns as positional instead,
+  // so the name still lands.
+  if (isHeader) {
+    const mappedFields = new Set(Object.values(map));
+    const hadName = mappedFields.has('name');
+    const freeFields = POSITIONAL_ORDER.filter((f) => !mappedFields.has(f));
+    firstTokens.forEach((_tok, i) => {
+      if (map[i]) return;
+      const next = freeFields.shift();
+      if (next) map[i] = next;
+    });
+    if (!hadName) {
+      warnings.push(
+        "Couldn't tell which column holds the teacher's name — used the first unlabelled column. Check the names below.",
+      );
+    }
+  }
 
   dataLines.forEach((line, idx) => {
     const rowNum = (isHeader ? idx + 2 : idx + 1);

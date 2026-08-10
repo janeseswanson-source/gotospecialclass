@@ -20,6 +20,7 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/comp
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { saveRowsWithSchemaFallback } from '@/lib/supabaseSchemaFallback';
+import { appleFormatHint, ROSTER_ACCEPT } from '@/lib/rosterFiles';
 import { downloadTemplate } from '@/lib/templateDownload';
 import { parseTeacherPaste, inferTeamFromGrade, type ParseResult, type ParsedTeacherRow } from '@/lib/parseTeacherPaste';
 import { mapParsedTeachers } from '@/lib/setupImport';
@@ -379,6 +380,13 @@ const StepTeachers = () => {
   const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    const appleHint = appleFormatHint(f.name);
+    if (appleHint) {
+      if (fileRef.current) fileRef.current.value = '';
+      toast.error(appleHint, { duration: 10000 });
+      setShowPaste(true);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target?.result as string;
@@ -645,7 +653,7 @@ const StepTeachers = () => {
           <Button size="sm" variant="outline" className="gap-1.5" onClick={() => fileRef.current?.click()}>
             <Upload className="h-3 w-3" /> CSV
           </Button>
-          <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleCSVUpload} />
+          <input ref={fileRef} type="file" accept={ROSTER_ACCEPT} className="hidden" onChange={handleCSVUpload} />
           <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowPaste(!showPaste)}>
             <ClipboardPaste className="h-3 w-3" /> Paste
           </Button>
@@ -655,7 +663,11 @@ const StepTeachers = () => {
 
       {showPaste && (
         <div className="rounded-lg border border-border bg-background p-4 space-y-3">
-          <p className="text-xs text-muted-foreground">Paste teachers from any spreadsheet, list, or just type them naturally. Examples: 'Smith, K, 101' or 'Mrs. Smith teaches Kindergarten in room 101'.</p>
+          <p className="text-xs text-muted-foreground">
+            One teacher per line — <strong className="text-foreground">name and grade is enough</strong>. You don't
+            need to create any categories or headers; two columns works. Numbers or Excel: select the
+            cells and copy. Free-form also works: 'Smith, K, 101' or 'Mrs. Smith teaches Kindergarten in room 101'.
+          </p>
           <Textarea
             className="min-h-[100px] text-xs font-mono"
             placeholder={"Name\tGrade\tRoom\tTeam\nJane Doe\tK\t101\tKinder Team"}
