@@ -30,8 +30,17 @@ const NOTIFY_RULE_FROM = "20260718000000";
  * types — the test below fails if a listed column turns out to be typed, so
  * this list cannot rot.
  */
+// Columns whose migration is written but not yet applied to the live database.
+// Everything listed here MUST be written through saveWithSchemaFallback(), so
+// an un-migrated column costs that one setting instead of the whole save.
+// Delete the entry once Lovable applies the migration and types are regenerated.
 const KNOWN_PENDING = new Set<string>([
   "schools.max_team_out_minutes", // 20260718000000 — pending as of 2026-08-09
+  // 20260808010000 — teacher duty day; written by StepSchoolInfo via saveSchoolRow
+  "schools.teacher_day_start_time",
+  "schools.teacher_day_end_time",
+  "schools.teacher_planning_block_minutes",
+  "schools.teacher_planning_block_when",
 ]);
 
 const ADD_COLUMN_RE =

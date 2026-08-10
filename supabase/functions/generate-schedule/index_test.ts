@@ -307,7 +307,7 @@ Deno.test("OccupancyTracker: overlapping interval (diff start) is not free", () 
 // ──────────────────────────────────────────────────────────────────────
 // Per-grade transitions + specialist weekly meeting (Jane's KK3 feedback)
 // ──────────────────────────────────────────────────────────────────────
-import { buildTimeSlotsForGrade, reserveSpecialistMeetingBlocks, schoolRotationsStartMin } from "./index.ts";
+import { buildTimeSlotsForGrade, reserveSpecialistMeetingBlocks, schoolRotationsStartMin, teacherDayStartMin, teacherDayEndMin, validateTeacherDay } from "./index.ts";
 
 Deno.test("buildTimeSlotsForGrade: grade_time_config passingTime overrides the canonical step", () => {
   // 30-min K classes with 5-min switches → slots every 35 min; grade 1 (no
@@ -457,4 +457,58 @@ Deno.test("reserveSpecialistMeetingBlocks: legacy single-object shape still work
   const blocks = reserveSpecialistMeetingBlocks("g", [{ id: "s1", name: "Art" }] as never[], school);
   assertEquals(blocks.length, 1);
   assertEquals(blocks[0].subject, "Specialist Meeting");
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// Teacher duty day (HSTA: 7:45-2:45 while students leave at 2:00)
+// ──────────────────────────────────────────────────────────────────────
+Deno.test("teacherDayStartMin/EndMin: unset means the student day", () => {
+  const school = { start_time: "07:45", end_time: "14:00" };
+  assertEquals(teacherDayStartMin(school), 7 * 60 + 45);
+  assertEquals(teacherDayEndMin("Mon", school), 14 * 60);
+});
+
+Deno.test("teacherDayEndMin: an explicit teacher end beats early release", () => {
+  const school = {
+    start_time: "07:45", end_time: "14:00",
+    teacher_day_start_time: "07:45", teacher_day_end_time: "14:45",
+    early_release_day: "Wed", early_release_end_time: "13:15",
+  };
+  // Students go home early on Wednesday; the specialist is still on the clock.
+  assertEquals(teacherDayEndMin("Wed", school), 14 * 60 + 45);
+  assertEquals(teacherDayEndMin("Mon", school), 14 * 60 + 45);
+  // Without teacher hours the student day (and its early release) still rules.
+  const noTeacherHours = { start_time: "07:45", end_time: "14:00", early_release_day: "Wed", early_release_end_time: "13:15" };
+  assertEquals(teacherDayEndMin("Wed", noTeacherHours), 13 * 60 + 15);
+});
+
+Deno.test("validateTeacherDay: silent unless configured, then advisory only", () => {
+  assertEquals(validateTeacherDay({ start_time: "07:45", end_time: "14:00" }).length, 0);
+
+  const tooShort = validateTeacherDay({
+    start_time: "07:45", end_time: "14:00",
+    teacher_day_start_time: "08:00", teacher_day_end_time: "13:30",
+  });
+  assertEquals(tooShort.length, 1);
+  assertEquals(tooShort[0].type, "teacher_day_misconfigured");
+  assertEquals(tooShort[0].severity, "info");
+  assert(!strategyFailed(tooShort), "advisory — must never gate strategy fallback");
+});
+
+Deno.test("validateTeacherDay: flags a planning block that doesn't fit after dismissal", () => {
+  const w = validateTeacherDay({
+    start_time: "07:45", end_time: "14:00",
+    teacher_day_start_time: "07:45", teacher_day_end_time: "14:15",
+    teacher_planning_block_minutes: 45, teacher_planning_block_when: "end_of_day",
+  });
+  assertEquals(w.length, 1);
+  assert(w[0].message.includes("45 min"));
+
+  // Jane's real numbers: 7:45-2:45 with a 2:00 dismissal leaves exactly 45.
+  const ok = validateTeacherDay({
+    start_time: "07:45", end_time: "14:00",
+    teacher_day_start_time: "07:45", teacher_day_end_time: "14:45",
+    teacher_planning_block_minutes: 45, teacher_planning_block_when: "end_of_day",
+  });
+  assertEquals(ok.length, 0);
 });

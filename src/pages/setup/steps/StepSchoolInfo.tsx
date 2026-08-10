@@ -70,6 +70,14 @@ const StepSchoolInfo = () => {
           .maybeSingle();
         if (existingSchool) {
           setSchoolId(existingSchool.id);
+          // Columns from migrations that may not be applied yet aren't in the
+          // generated types; read them through a narrow structural view.
+          const teacherDay = existingSchool as {
+            teacher_day_start_time?: string | null;
+            teacher_day_end_time?: string | null;
+            teacher_planning_block_minutes?: number | null;
+            teacher_planning_block_when?: string | null;
+          };
           updateData({
             schoolName: existingSchool.name || '',
             website: existingSchool.website || '',
@@ -88,6 +96,10 @@ const StepSchoolInfo = () => {
             schoolYearEnd: (existingSchool as any).school_year_end ? String((existingSchool as any).school_year_end).slice(0, 10) : '',
             gradesServed: existingSchool.grades_served || [],
             notes: existingSchool.notes || '',
+            teacherDayStartTime: teacherDay.teacher_day_start_time || '',
+            teacherDayEndTime: teacherDay.teacher_day_end_time || '',
+            teacherPlanningBlockMinutes: teacherDay.teacher_planning_block_minutes ?? '',
+            teacherPlanningBlockWhen: teacherDay.teacher_planning_block_when || 'end_of_day',
             earlyReleaseDay: (existingSchool as any).early_release_day || '',
             earlyReleaseEndTime: (existingSchool as any).early_release_end_time || '',
             defaultAmPmPreference: (existingSchool as any).default_am_pm_preference || '',
@@ -143,6 +155,10 @@ const StepSchoolInfo = () => {
         school_year_end: data.schoolYearEnd || null,
         grades_served: data.gradesServed,
         notes: data.notes || null,
+        teacher_day_start_time: data.teacherDayStartTime || null,
+        teacher_day_end_time: data.teacherDayEndTime || null,
+        teacher_planning_block_minutes: data.teacherPlanningBlockMinutes === '' ? null : Number(data.teacherPlanningBlockMinutes),
+        teacher_planning_block_when: data.teacherPlanningBlockWhen || null,
         early_release_day: data.earlyReleaseDay || null,
         early_release_end_time: data.earlyReleaseEndTime || null,
         default_am_pm_preference: null,
@@ -196,7 +212,7 @@ const StepSchoolInfo = () => {
       setSaveError(err?.message ?? 'Save failed');
       setSaveStatus('error');
     }
-  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.schoolYearStart, data.schoolYearEnd, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, data.gradePreference, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, maxTeamOutMinutes, schoolId]);
+  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.schoolYearStart, data.schoolYearEnd, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, data.teacherDayStartTime, data.teacherDayEndTime, data.teacherPlanningBlockMinutes, data.teacherPlanningBlockWhen, data.gradePreference, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, maxTeamOutMinutes, schoolId]);
 
   useFlushOnUnmount(saveTimer, () => { if (isLoaded.current) autoSave(); });
 
@@ -320,8 +336,11 @@ const StepSchoolInfo = () => {
           <FieldError error={v.errorFor('classDuration', durationError)} />
         </div>
         <div className="space-y-2">
-          <FieldLabel tooltip="Time classroom teachers are released while students are with a specialist, per week.">Planning Minutes/Week</FieldLabel>
+          <FieldLabel tooltip="Per DAY. Time a classroom teacher is released while their class is with a specialist. The scheduler multiplies this by each specialist's working days.">Planning Minutes / Day</FieldLabel>
           <Input type="number" min={0} value={data.planningMinutes} onChange={(e) => updateData({ planningMinutes: Math.max(0, Number(e.target.value)) })} />
+          <p className="text-xs text-muted-foreground">
+            = {Math.max(0, Number(data.planningMinutes) || 0) * 5} min/week over a 5-day week.
+          </p>
         </div>
         <div className="space-y-2">
           <FieldLabel tooltip="This sets the default. You can override it per specialist in the Specialists step.">When does planning time occur?</FieldLabel>
@@ -385,6 +404,60 @@ const StepSchoolInfo = () => {
         )}
       </div>
 
+
+      {/* Teacher work day — the contracted day is not the student day. */}
+      <Collapsible className="mt-4">
+        <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-card-foreground hover:text-primary transition-colors">
+          <ChevronDown className="h-4 w-4" />
+          Teacher work day (optional)
+          {(data.teacherDayStartTime || data.teacherDayEndTime) && (
+            <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[10px] font-medium text-accent">Set</span>
+          )}
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-3">
+          <p className="text-xs text-muted-foreground mb-3">
+            Teachers are usually on duty before and after the students. Filling this in lets us
+            measure planning time against the contracted day instead of the bell schedule.
+            <br />
+            <span className="italic">
+              Example (Hawaii/HSTA): a 7-hour day of 7:45–2:45 with students leaving at 2:00 —
+              the last 45 minutes are a continuous planning block.
+            </span>
+            {' '}Leave blank to use the student day.
+          </p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <FieldLabel tooltip="When teachers are contractually on duty. Usually before the first bell.">Teacher day starts</FieldLabel>
+              <Input type="time" value={data.teacherDayStartTime} onChange={(e) => updateData({ teacherDayStartTime: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <FieldLabel tooltip="When teachers may leave. Usually after student dismissal — and it does NOT move on an early-release day.">Teacher day ends</FieldLabel>
+              <Input type="time" value={data.teacherDayEndTime} onChange={(e) => updateData({ teacherDayEndTime: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <FieldLabel tooltip="Length of the guaranteed CONTINUOUS planning block from the contract (e.g. 45).">Continuous planning block (min)</FieldLabel>
+              <Input
+                type="number"
+                min={0}
+                placeholder="e.g. 45"
+                value={data.teacherPlanningBlockMinutes}
+                onChange={(e) => updateData({ teacherPlanningBlockMinutes: e.target.value === '' ? '' : Math.max(0, Number(e.target.value)) })}
+              />
+            </div>
+            <div className="space-y-2">
+              <FieldLabel tooltip="Where that continuous block sits in the day.">That block sits</FieldLabel>
+              <Select value={data.teacherPlanningBlockWhen || 'end_of_day'} onValueChange={(v) => updateData({ teacherPlanningBlockWhen: v })}>
+                <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="start_of_day">Before school</SelectItem>
+                  <SelectItem value="end_of_day">After school</SelectItem>
+                  <SelectItem value="during_rotations">During the rotation day</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
 
       {data.gradesServed.length > 0 && (
         <Collapsible className="mt-4">

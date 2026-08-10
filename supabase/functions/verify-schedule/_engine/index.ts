@@ -117,6 +117,31 @@ export function schoolRotationsStartMin(school: { start_time?: string | null; ro
   return rot != null && rot > base ? rot : base;
 }
 
+// ─── Teacher duty day ────────────────────────────────────────────────
+// The teacher day is not the student day. Under HSTA it is 7 hours (e.g.
+// 7:45–2:45) while students leave at 2:00, and the trailing 45 minutes are a
+// CONTINUOUS contractual planning block. Measuring planning availability
+// against the student day therefore understates it by exactly that block.
+//
+// Both columns are nullable and mean "same as the student day" when unset, so
+// schools that never fill them in behave exactly as before.
+export function teacherDayStartMin(school: { start_time?: string | null; teacher_day_start_time?: string | null }): number {
+  const raw = school?.teacher_day_start_time ?? null;
+  return raw ? timeToMinutes(raw) : timeToMinutes((school?.start_time as string | undefined) ?? "08:00");
+}
+
+/** End of the teacher's duty day. Early release shortens the STUDENT day; the
+ *  teacher's contracted end doesn't move with it, so an explicit teacher end
+ *  time wins on every day of the week. */
+export function teacherDayEndMin(
+  day: string,
+  school: { end_time?: string | null; teacher_day_end_time?: string | null; early_release_day?: string | null; early_release_end_time?: string | null },
+): number {
+  const raw = school?.teacher_day_end_time ?? null;
+  if (raw) return timeToMinutes(raw);
+  return getEndMinForDay(day, school);
+}
+
 
 // ─── Interfaces ──────────────────────────────────────────────────────
 
@@ -502,13 +527,20 @@ export function validateCalendar(calendarEvents: any[]): Warning[] {
 // so a viable schedule isn't tossed because of a tight planning gap.
 export function validatePlanningTime(blocks: Block[], specialists: Specialist[], school: any): Warning[] {
   const warnings: Warning[] = [];
-  const startMin = timeToMinutes(school.start_time ?? "08:00");
-  // Compute weekly available minutes across working days (respect early release).
+  // Measured against the TEACHER duty day, not the student day: a specialist
+  // contracted 7:45–2:45 keeps working after a 2:00 student dismissal, and
+  // that trailing stretch is exactly where their planning block lives. Falls
+  // back to the student day when the school hasn't set teacher hours.
+  //
+  // Deliberately NOT schoolRotationsStartMin: the pre-rotation set-up window
+  // is real on-duty time (the contract calls it "Other"), so excluding it
+  // would under-report availability.
+  const startMin = teacherDayStartMin(school);
   const weeklyMinutesForSpec = (spec: Specialist): number => {
     const workDays = (spec.working_days ?? DAYS).filter((d: string) => DAYS.includes(d));
     let total = 0;
     for (const day of workDays) {
-      total += Math.max(0, getEndMinForDay(day, school) - startMin);
+      total += Math.max(0, teacherDayEndMin(day, school) - startMin);
     }
     return total;
   };
@@ -542,6 +574,53 @@ export function validatePlanningTime(blocks: Block[], specialists: Specialist[],
       });
     }
   }
+
+  warnings.push(...validateTeacherDay(school));
+  return warnings;
+}
+
+/**
+ * Sanity-check the teacher duty day against the student day. Advisory only —
+ * a mistyped teacher end time should surface as a note, never block a
+ * schedule.
+ */
+export function validateTeacherDay(school: any): Warning[] {
+  const tStart = school?.teacher_day_start_time ?? null;
+  const tEnd = school?.teacher_day_end_time ?? null;
+  if (!tStart && !tEnd) return []; // not configured — nothing to check
+
+  const warnings: Warning[] = [];
+  const studentStart = timeToMinutes(school.start_time ?? "08:00");
+  const studentEnd = timeToMinutes(school.end_time ?? "15:00");
+  const dutyStart = teacherDayStartMin(school);
+  const dutyEnd = tEnd ? timeToMinutes(tEnd) : studentEnd;
+
+  // The duty day must contain the student day, or students are on campus with
+  // their specialists off the clock.
+  if (dutyStart > studentStart || dutyEnd < studentEnd) {
+    warnings.push({
+      type: "teacher_day_misconfigured",
+      severity: "info",
+      message: `The teacher day (${minutesToTime(dutyStart)}–${minutesToTime(dutyEnd)}) doesn't cover the student day (${minutesToTime(studentStart)}–${minutesToTime(studentEnd)}).`,
+      suggestion: "Check the teacher work day in School Info — it should start no later, and end no earlier, than the student day.",
+    });
+  }
+
+  // A planning block promised at the end of the day needs room after dismissal.
+  const blockMin = Number(school?.teacher_planning_block_minutes ?? 0);
+  const when = String(school?.teacher_planning_block_when ?? "");
+  if (blockMin > 0 && when === "end_of_day") {
+    const tail = dutyEnd - studentEnd;
+    if (tail < blockMin) {
+      warnings.push({
+        type: "teacher_day_misconfigured",
+        severity: "info",
+        message: `Only ${Math.max(0, tail)} min sit between student dismissal and the end of the teacher day, but the planning block is ${blockMin} min.`,
+        suggestion: "Extend the teacher day, shorten the planning block, or move planning into the rotation day.",
+      });
+    }
+  }
+
   return warnings;
 }
 

@@ -13,6 +13,7 @@ all its settings in one payload, so one unknown column rejected **everything**.
 |---|---|---|
 | `20260718000000_add_max_team_out_minutes.sql` | `schools.max_team_out_minutes` (int, default 120) | **NOT APPLIED — apply first** |
 | `20260808000000_schema_cache_reload.sql` | no DDL; forces a PostgREST schema reload | **NOT APPLIED** |
+| `20260808010000_add_teacher_work_day.sql` | `schools.teacher_day_start_time`, `teacher_day_end_time`, `teacher_planning_block_minutes`, `teacher_planning_block_when` (all nullable — NULL = same as the student day) | **NOT APPLIED** |
 
 After applying: **regenerate `src/integrations/supabase/types.ts`** in the same
 deploy, then confirm the Setup Wizard's School Info step saves with no red toast.

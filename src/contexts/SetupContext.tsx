@@ -19,6 +19,11 @@ export interface SchoolSetupData {
   endTime: string;
   rotationsStartTime: string;
   planningTimeWhen: string;
+  /** Contractual teacher duty day — blank means "same as the student day". */
+  teacherDayStartTime: string;
+  teacherDayEndTime: string;
+  teacherPlanningBlockMinutes: number | '';
+  teacherPlanningBlockWhen: string;
   classDuration: number;
   planningMinutes: number;
   lunchMinutes: number;
@@ -84,6 +89,10 @@ const defaultData: SchoolSetupData = {
   endTime: '15:00',
   rotationsStartTime: '',
   planningTimeWhen: 'during_rotations',
+  teacherDayStartTime: '',
+  teacherDayEndTime: '',
+  teacherPlanningBlockMinutes: '',
+  teacherPlanningBlockWhen: 'end_of_day',
   classDuration: 45,
   planningMinutes: 45,
   lunchMinutes: 30,
@@ -235,6 +244,26 @@ export const SetupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (!prev.earlyReleaseDay && school.early_release_day) seed.earlyReleaseDay = school.early_release_day;
           if (!prev.earlyReleaseEndTime && school.early_release_end_time) {
             seed.earlyReleaseEndTime = String(school.early_release_end_time).slice(0, 5);
+          }
+          // Teacher duty day (migration 20260808010000 — may be unapplied, so
+          // read through a narrow structural view rather than the generated types).
+          const td = school as {
+            teacher_day_start_time?: string | null;
+            teacher_day_end_time?: string | null;
+            teacher_planning_block_minutes?: number | null;
+            teacher_planning_block_when?: string | null;
+          };
+          if (!prev.teacherDayStartTime && td.teacher_day_start_time) {
+            seed.teacherDayStartTime = String(td.teacher_day_start_time).slice(0, 5);
+          }
+          if (!prev.teacherDayEndTime && td.teacher_day_end_time) {
+            seed.teacherDayEndTime = String(td.teacher_day_end_time).slice(0, 5);
+          }
+          if (prev.teacherPlanningBlockMinutes === '' && typeof td.teacher_planning_block_minutes === 'number') {
+            seed.teacherPlanningBlockMinutes = td.teacher_planning_block_minutes;
+          }
+          if (td.teacher_planning_block_when) {
+            seed.teacherPlanningBlockWhen = td.teacher_planning_block_when;
           }
           if (!prev.defaultAmPmPreference && school.default_am_pm_preference) {
             seed.defaultAmPmPreference = school.default_am_pm_preference;

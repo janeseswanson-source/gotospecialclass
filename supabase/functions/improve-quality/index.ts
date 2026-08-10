@@ -42,7 +42,11 @@ Deno.serve(async (req) => {
       supabase.from("specialists").select("*").eq("school_id", gen.school_id),
       supabase.from("classroom_teachers").select("id, name, grade, room, am_pm_preference, day_preference, weekly_planning_minutes").eq("school_id", gen.school_id),
       supabase.from("recess_lunch_config").select("*").eq("school_id", gen.school_id),
-      supabase.from("schools").select("name, start_time, end_time, grades_served, class_duration, passing_time, setup_time, grade_time_config, keep_grades_together, rotation_wheel_grades, contractual_minutes_extracted, early_release_day, early_release_end_time, recess_grade_bands").eq("id", gen.school_id).maybeSingle(),
+      // select("*") on purpose: an explicit column list silently 400s the WHOLE
+    // row the moment a migration adds a column the live DB lacks, and it also
+    // quietly starved the engine of newer settings (rotations_start_time, the
+    // teacher duty day). A single school row is cheap to fetch whole.
+    supabase.from("schools").select("*").eq("id", gen.school_id).maybeSingle(),
     ]);
 
     const blocks = (blocksRes.data ?? []) as EditBlock[];
