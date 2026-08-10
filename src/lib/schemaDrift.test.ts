@@ -41,6 +41,9 @@ const KNOWN_PENDING = new Set<string>([
   "schools.teacher_day_end_time",
   "schools.teacher_planning_block_minutes",
   "schools.teacher_planning_block_when",
+  // 20260808020000 — rotation start date; same write path
+  "schools.rotations_start_date",
+  "schools.rotations_week_anchor",
 ]);
 
 const ADD_COLUMN_RE =

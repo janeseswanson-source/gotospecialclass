@@ -140,3 +140,55 @@ describe("explanation", () => {
     expect(std.explanation).toContain("Every week");
   });
 });
+
+describe("rotations start date", () => {
+  // Her case: students start Jan 6, the specials wheel starts Jan 13 (week 2).
+  const ROT = "2025-01-13";
+
+  it("is inert when no rotation date is given (nothing shifts for existing schools)", () => {
+    const before = buildWeekCycle({ strategy: "ab_week", startDate: START, endDate: END });
+    const after = buildWeekCycle({ strategy: "ab_week", startDate: START, endDate: END, rotationsStartDate: null });
+    expect(labels(after.weeks)).toEqual(labels(before.weeks));
+    expect(after.weeks.every((w) => !w.isPreRotation)).toBe(true);
+    expect(after.rotationsStartMonday).toBeNull();
+  });
+
+  it("flags the weeks before the wheel starts and keeps them out of the ranges", () => {
+    const c = buildWeekCycle({ strategy: "ab_week", startDate: START, endDate: END, rotationsStartDate: ROT });
+    expect(c.weeks[0].isPreRotation).toBe(true);
+    expect(c.weeks[0].labelText).toBe("Before rotations");
+    expect(c.weeks[1].isPreRotation).toBe(false);
+    expect(c.rotationsStartMonday?.toDateString()).toBe(new Date(2025, 0, 13).toDateString());
+    // A pre-rotation week must never be handed to the PDFs as a real week.
+    expect(c.instructionalWeeks.some((w) => w.isPreRotation)).toBe(false);
+    expect(c.explanation).toContain("Rotations start the week of Jan 13");
+  });
+
+  it("default anchor leaves the A/B lettering exactly where it was", () => {
+    const plain = buildWeekCycle({ strategy: "ab_week", startDate: START, endDate: END });
+    const withDate = buildWeekCycle({ strategy: "ab_week", startDate: START, endDate: END, rotationsStartDate: ROT });
+    // Only the flag is new — letters are untouched, so no school desyncs.
+    expect(labels(withDate.weeks)).toEqual(labels(plain.weeks));
+  });
+
+  it("'rotations_start' anchor opens the wheel on Week A", () => {
+    const c = buildWeekCycle({
+      strategy: "ab_week", startDate: START, endDate: END,
+      rotationsStartDate: ROT, weekAnchor: "rotations_start",
+    });
+    // No events here, so every week from Jan 13 on is a plain rotation week.
+    expect(c.weeks[0].label).toBeNull(); // before rotations — no letter at all
+    expect(labels(c.weeks)).toEqual([null, "A", "B", "A", "B", "A", "B", "A"]);
+  });
+
+  it("'rotations_start' anchor still skips full-week holidays without drifting", () => {
+    const c = buildWeekCycle({
+      strategy: "ab_week", startDate: START, endDate: END, events: HOLIDAY_WEEK,
+      rotationsStartDate: ROT, weekAnchor: "rotations_start",
+    });
+    expect(c.weeks[1].label).toBe("A");   // Jan 13 — first rotation week
+    expect(c.weeks[2].isHolidayWeek).toBe(true);
+    expect(c.weeks[3].label).toBe("B");   // rhythm continues past the holiday
+    expect(c.weeks[4].label).toBe("A");
+  });
+});

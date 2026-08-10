@@ -16,7 +16,7 @@ import { getSubjectBadgeClass } from "@/lib/subjectColors";
 import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
 import WeekCyclePicker from "@/components/schedule/WeekCyclePicker";
 import { SaveStatusIndicator, type SaveStatus } from "@/components/setup/SaveStatusIndicator";
-import { buildWeekCycle, type WeekStrategy } from "@/lib/weekCycle";
+import { buildWeekCycle, type WeekStrategy, type RotationCycleFields } from '@/lib/weekCycle';
 import { parseTime } from "@/lib/scheduleGrid";
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
@@ -120,6 +120,8 @@ export default function LessonPlannerPage() {
       startDate: (activeSchool as { school_year_start?: string | null })?.school_year_start ?? null,
       endDate: (activeSchool as { school_year_end?: string | null })?.school_year_end ?? null,
       schoolYear: (activeSchool as { school_year?: string | null })?.school_year ?? null,
+      rotationsStartDate: (activeSchool as RotationCycleFields)?.rotations_start_date ?? null,
+      weekAnchor: (activeSchool as RotationCycleFields)?.rotations_week_anchor ?? undefined,
     }),
     [strategy, activeSchool],
   );

@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import { parseTime, buildSpecialistBands, isSpecialistLunchBlock } from "@/lib/scheduleGrid";
 import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
 import WeekCyclePicker from "@/components/schedule/WeekCyclePicker";
-import { buildWeekCycle, type WeekStrategy } from "@/lib/weekCycle";
+import { buildWeekCycle, type WeekStrategy, type RotationCycleFields } from '@/lib/weekCycle';
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
@@ -224,6 +224,8 @@ export default function SpecialistPlannerPage() {
     startDate: (activeSchool as { school_year_start?: string | null })?.school_year_start ?? null,
     endDate: (activeSchool as { school_year_end?: string | null })?.school_year_end ?? null,
     schoolYear: (activeSchool as { school_year?: string | null })?.school_year ?? null,
+    rotationsStartDate: (activeSchool as RotationCycleFields)?.rotations_start_date ?? null,
+    weekAnchor: (activeSchool as RotationCycleFields)?.rotations_week_anchor ?? undefined,
   });
   const weekVisible = (label?: string | null) => weekFilter === "all" || !label || label === weekFilter;
 

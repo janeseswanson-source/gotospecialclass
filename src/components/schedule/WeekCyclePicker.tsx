@@ -16,6 +16,11 @@ interface Props {
   className?: string;
 }
 
+/** "Mon Aug 18" — enough for a coordinator to place the week at a glance. */
+function fmtMonday(d: Date): string {
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
 export default function WeekCyclePicker({ cycle, value, onChange, className }: Props) {
   const today = useMemo(() => new Date(), []);
   const currentWeek = cycle.currentWeekFor(today);
@@ -79,6 +84,13 @@ export default function WeekCyclePicker({ cycle, value, onChange, className }: P
             This week: <span className="font-medium text-foreground">{currentWeek.labelText}</span>
             {" · "}{currentWeek.rangeText}
             {currentWeek.isHolidayWeek && <span className="italic"> (no school)</span>}
+            {/* School is in session but the wheel hasn't started — otherwise the
+                picker would imply today's schedule is already running. */}
+            {currentWeek.isPreRotation && cycle.rotationsStartMonday && (
+              <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-px text-[10px] font-medium text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                Rotations start {fmtMonday(cycle.rotationsStartMonday)}
+              </span>
+            )}
           </span>
         ) : (
           <span>{cycle.explanation}</span>

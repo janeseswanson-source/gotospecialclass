@@ -12,7 +12,7 @@ import { formatTime } from '@/lib/utils';
 import { BRAND } from '@/brand/brand';
 import PageHeader from '@/components/layout/PageHeader';
 import WeekCyclePicker from '@/components/schedule/WeekCyclePicker';
-import { buildWeekCycle, type WeekStrategy } from '@/lib/weekCycle';
+import { buildWeekCycle, type WeekStrategy, type RotationCycleFields } from '@/lib/weekCycle';
 import { friendlyBandLabel, bandLabelMapFromStored, openSpecialistsForSlot } from '@/lib/scheduleGrid';
 import { gradeRank, formatGradeOrdinal } from '@/lib/gradeOrdinal';
 import { getGradeAccentTextClass } from '@/lib/gradeColors';
@@ -161,6 +161,8 @@ export default function MasterAdminViewPage() {
     startDate: (school as { school_year_start?: string | null })?.school_year_start ?? null,
     endDate: (school as { school_year_end?: string | null })?.school_year_end ?? null,
     schoolYear: school?.school_year ?? null,
+    rotationsStartDate: (school as RotationCycleFields)?.rotations_start_date ?? null,
+    weekAnchor: (school as RotationCycleFields)?.rotations_week_anchor ?? undefined,
   });
   // Visible under the current week filter: no label (every week) or the chosen one.
   const weekVisible = (label?: string | null) => weekFilter === 'all' || !label || label === weekFilter;

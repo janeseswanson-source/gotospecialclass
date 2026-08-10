@@ -19,7 +19,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { buildTimeSlots, buildCompactTimeSlots, buildRecessBands, bandLabelMapFromStored, computeConflictIds, computeAutoFit, minToHMS, parseTime } from "@/lib/scheduleGrid";
 import { evaluateDrop, placementProblem } from "@/lib/gridTargets";
 import AddBlockDialog, { type AddBlockPayload } from "@/components/schedule/AddBlockDialog";
-import { buildWeekCycle } from "@/lib/weekCycle";
+import { buildWeekCycle, type RotationCycleFields } from '@/lib/weekCycle';
 import BrandedScheduleHeader from "@/components/schedule/BrandedScheduleHeader";
 import { breakdownToPercent } from "@/lib/optimizerScore";
 import QualityPanel from "@/components/schedule/QualityPanel";
@@ -943,6 +943,8 @@ export default function MasterSchedulePage() {
       endDate: (selectedSchool as any)?.school_year_end ?? null,
       schoolYear: selectedSchool?.school_year ?? null,
       events: calendarEvents,
+      rotationsStartDate: (selectedSchool as RotationCycleFields)?.rotations_start_date ?? null,
+      weekAnchor: (selectedSchool as RotationCycleFields)?.rotations_week_anchor ?? undefined,
     });
   }, [isAbStrategy, isAaBbStrategy, selectedSchool, calendarEvents]);
   const weekFiltered = weekFilter === "all"

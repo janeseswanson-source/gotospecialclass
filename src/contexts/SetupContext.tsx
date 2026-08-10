@@ -24,6 +24,10 @@ export interface SchoolSetupData {
   teacherDayEndTime: string;
   teacherPlanningBlockMinutes: number | '';
   teacherPlanningBlockWhen: string;
+  /** First day the specials wheel runs (blank = same as the first student day). */
+  rotationsStartDate: string;
+  /** 'school_year' | 'rotations_start' — which week counts as Week A. */
+  rotationsWeekAnchor: string;
   classDuration: number;
   planningMinutes: number;
   lunchMinutes: number;
@@ -93,6 +97,8 @@ const defaultData: SchoolSetupData = {
   teacherDayEndTime: '',
   teacherPlanningBlockMinutes: '',
   teacherPlanningBlockWhen: 'end_of_day',
+  rotationsStartDate: '',
+  rotationsWeekAnchor: 'school_year',
   classDuration: 45,
   planningMinutes: 45,
   lunchMinutes: 30,
@@ -265,6 +271,11 @@ export const SetupProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           if (td.teacher_planning_block_when) {
             seed.teacherPlanningBlockWhen = td.teacher_planning_block_when;
           }
+          const rc = school as { rotations_start_date?: string | null; rotations_week_anchor?: string | null };
+          if (!prev.rotationsStartDate && rc.rotations_start_date) {
+            seed.rotationsStartDate = String(rc.rotations_start_date).slice(0, 10);
+          }
+          if (rc.rotations_week_anchor) seed.rotationsWeekAnchor = rc.rotations_week_anchor;
           if (!prev.defaultAmPmPreference && school.default_am_pm_preference) {
             seed.defaultAmPmPreference = school.default_am_pm_preference;
           }

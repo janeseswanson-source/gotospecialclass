@@ -44,6 +44,9 @@ export interface CycleWeek {
   label: WeekLabel;
   /** True when every Mon–Fri day is a non-instructional (holiday/no-school) day. */
   isHolidayWeek: boolean;
+  /** School is in session but the specials wheel hasn't started yet — the
+   *  first week or two of the year, when teachers are settling classes. */
+  isPreRotation: boolean;
   /** "Week A", "AA · Weeks 1–2", or "Week" — a display-ready label. */
   labelText: string;
   /** "Mar 2 – Mar 6". */
@@ -60,6 +63,31 @@ export interface WeekCycleInput {
   events?: CalendarEventLike[] | null;
   /** Defaults to "continue". */
   holidayPolicy?: HolidayPolicy;
+  /** First day the specials wheel runs. Usually a week or two after the first
+   *  student day. Weeks before it are marked `isPreRotation`. */
+  rotationsStartDate?: string | Date | null;
+  /** Which week counts as Week A. Defaults to "school_year", which keeps the
+   *  historical lettering exactly as it was. */
+  weekAnchor?: WeekAnchor;
+}
+
+/**
+ * What "Week A" is anchored to.
+ *  - "school_year": the first instructional week of the year (historical
+ *    behaviour — labels are unchanged for every existing school).
+ *  - "rotations_start": the first week the rotation actually runs, so a
+ *    wheel that starts in week 3 still opens on Week A.
+ */
+export type WeekAnchor = "school_year" | "rotations_start";
+
+/**
+ * The rotation-cycle columns as seen by pages that read a `schools` row.
+ * Migration 20260808020000 may not be applied yet, so these aren't in the
+ * generated Supabase types — cast the row to this instead of `any`.
+ */
+export interface RotationCycleFields {
+  rotations_start_date?: string | null;
+  rotations_week_anchor?: WeekAnchor | null;
 }
 
 export interface WeekCycle {
@@ -71,6 +99,9 @@ export interface WeekCycle {
   /** Instructional (non-holiday) weeks only. */
   instructionalWeeks: CycleWeek[];
   holidayWeekCount: number;
+  /** Monday of the first week the rotation runs, or null when rotations start
+   *  with the school year. Drives the "Rotations start Mon Aug 18" pill. */
+  rotationsStartMonday: Date | null;
   /** The label in effect for a given date (null if outside the year / standard). */
   currentLabelFor(date: Date): WeekLabel;
   /** The CycleWeek containing a date, or null if outside the year. */
@@ -208,6 +239,12 @@ export function buildWeekCycle(input: WeekCycleInput): WeekCycle {
 
   const nonInstructional = buildNonInstructionalDays(input.events);
 
+  // Rotations often begin a week or two after the students do. Weeks before
+  // that Monday are real school weeks with no wheel running.
+  const rotationsStart = toDate(input.rotationsStartDate);
+  const rotationsStartMonday = rotationsStart ? getMondayOf(rotationsStart) : null;
+  const weekAnchor: WeekAnchor = input.weekAnchor ?? "school_year";
+
   const weeks: CycleWeek[] = [];
   const firstMonday = getMondayOf(start);
   const lastMonday = getMondayOf(end);
@@ -215,6 +252,8 @@ export function buildWeekCycle(input: WeekCycleInput): WeekCycle {
   // `continueCounter` advances only on instructional weeks (the "continue" policy).
   let continueCounter = 0;
   let weekIndex = 0;
+  // Counts weeks from the ROTATION start for the "rotations_start" anchor.
+  let rotationCounter = 0;
 
   for (
     let monday = new Date(firstMonday);
@@ -223,36 +262,53 @@ export function buildWeekCycle(input: WeekCycleInput): WeekCycle {
   ) {
     const friday = addDays(monday, 4);
     const holiday = isHolidayWeek(monday, nonInstructional);
+    const preRotation = rotationsStartMonday !== null && monday < rotationsStartMonday;
 
     // Position drives the label. Under "skip_and_hold" the calendar week index is
     // the position (labels are anchored to the calendar). Under "continue" the
     // position is the running count of instructional weeks (holidays are invisible).
+    // Under the "rotations_start" anchor the count instead begins at the first
+    // rotation week, so the wheel always opens on Week A.
+    const anchored = weekAnchor === "rotations_start" && rotationsStartMonday !== null;
     let label: WeekLabel = null;
-    if (holidayPolicy === "skip_and_hold") {
+    let position: number;
+    if (anchored) {
+      position = rotationCounter;
+      // A pre-rotation week has no wheel, so it carries no label at all.
+      label = preRotation ? null : labelForPosition(strategy, rotationCounter);
+    } else if (holidayPolicy === "skip_and_hold") {
       // Labels anchored to the calendar week index — a holiday week keeps its
       // letter (isHolidayWeek still marks it as non-teaching), so weeks never drift.
+      position = weekIndex;
       label = labelForPosition(strategy, weekIndex);
-    } else if (!holiday) {
+    } else {
+      position = continueCounter;
       // continue: label advances only on taught weeks; skipped weeks carry none.
-      label = labelForPosition(strategy, continueCounter);
+      if (!holiday) label = labelForPosition(strategy, continueCounter);
     }
 
-    const position = holidayPolicy === "skip_and_hold" ? weekIndex : continueCounter;
     weeks.push({
       weekIndex,
       monday: new Date(monday),
       friday,
       label,
       isHolidayWeek: holiday,
-      labelText: labelText(label, position),
+      isPreRotation: preRotation,
+      labelText: preRotation ? "Before rotations" : labelText(label, position),
       rangeText: `${fmt(monday)} – ${fmt(friday)}`,
     });
 
     if (!holiday) continueCounter++;
+    // The rotation clock starts at the rotation week and, like `continue`,
+    // ignores full-week holidays so the A/B rhythm doesn't drift.
+    if (anchored && !preRotation && !holiday) rotationCounter++;
   }
 
-  const instructionalWeeks = weeks.filter((w) => !w.isHolidayWeek);
-  const holidayWeekCount = weeks.length - instructionalWeeks.length;
+  // "Instructional" here means "a week the schedule applies to", so weeks
+  // before the wheel starts are excluded — otherwise rangesFor() would hand
+  // the PDFs date ranges in which no rotation runs.
+  const instructionalWeeks = weeks.filter((w) => !w.isHolidayWeek && !w.isPreRotation);
+  const holidayWeekCount = weeks.filter((w) => w.isHolidayWeek).length;
 
   const currentWeekFor = (date: Date): CycleWeek | null => {
     const monday = getMondayOf(date);
@@ -275,10 +331,17 @@ export function buildWeekCycle(input: WeekCycleInput): WeekCycle {
     weeks,
     instructionalWeeks,
     holidayWeekCount,
+    rotationsStartMonday,
     currentLabelFor,
     currentWeekFor,
     rangesFor,
-    explanation: buildExplanation(strategy, holidayPolicy, instructionalWeeks.length, holidayWeekCount),
+    explanation: buildExplanation(
+      strategy,
+      holidayPolicy,
+      instructionalWeeks.length,
+      holidayWeekCount,
+      rotationsStartMonday,
+    ),
   };
 }
 
@@ -287,7 +350,11 @@ function buildExplanation(
   policy: HolidayPolicy,
   instructional: number,
   holidays: number,
+  rotationsStartMonday?: Date | null,
 ): string {
+  const rotationNote = rotationsStartMonday
+    ? ` Rotations start the week of ${fmt(rotationsStartMonday)}; earlier weeks are school weeks with no wheel.`
+    : "";
   const holidayNote =
     holidays === 0
       ? ""
@@ -296,10 +363,10 @@ function buildExplanation(
         : ` ${holidays} full-week holiday${holidays === 1 ? "" : "s"} ${holidays === 1 ? "keeps" : "keep"} its calendar label so weeks never drift.`;
 
   if (strategy === "standard") {
-    return `Every week runs the same schedule across ${instructional} instructional week${instructional === 1 ? "" : "s"}.${holidayNote}`;
+    return `Every week runs the same schedule across ${instructional} instructional week${instructional === 1 ? "" : "s"}.${holidayNote}${rotationNote}`;
   }
   if (strategy === "ab_week") {
-    return `Alternating A / B weeks across ${instructional} instructional week${instructional === 1 ? "" : "s"}.${holidayNote}`;
+    return `Alternating A / B weeks across ${instructional} instructional week${instructional === 1 ? "" : "s"}.${holidayNote}${rotationNote}`;
   }
-  return `Two-week blocks — AA (weeks 1–2), then BB (weeks 3–4), repeating across ${instructional} instructional week${instructional === 1 ? "" : "s"}.${holidayNote}`;
+  return `Two-week blocks — AA (weeks 1–2), then BB (weeks 3–4), repeating across ${instructional} instructional week${instructional === 1 ? "" : "s"}.${holidayNote}${rotationNote}`;
 }

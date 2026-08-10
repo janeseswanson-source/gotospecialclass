@@ -78,6 +78,10 @@ const StepSchoolInfo = () => {
             teacher_planning_block_minutes?: number | null;
             teacher_planning_block_when?: string | null;
           };
+          const rotationCycle = existingSchool as {
+            rotations_start_date?: string | null;
+            rotations_week_anchor?: string | null;
+          };
           updateData({
             schoolName: existingSchool.name || '',
             website: existingSchool.website || '',
@@ -100,6 +104,8 @@ const StepSchoolInfo = () => {
             teacherDayEndTime: teacherDay.teacher_day_end_time || '',
             teacherPlanningBlockMinutes: teacherDay.teacher_planning_block_minutes ?? '',
             teacherPlanningBlockWhen: teacherDay.teacher_planning_block_when || 'end_of_day',
+            rotationsStartDate: rotationCycle.rotations_start_date ? String(rotationCycle.rotations_start_date).slice(0, 10) : '',
+            rotationsWeekAnchor: rotationCycle.rotations_week_anchor || 'school_year',
             earlyReleaseDay: (existingSchool as any).early_release_day || '',
             earlyReleaseEndTime: (existingSchool as any).early_release_end_time || '',
             defaultAmPmPreference: (existingSchool as any).default_am_pm_preference || '',
@@ -159,6 +165,8 @@ const StepSchoolInfo = () => {
         teacher_day_end_time: data.teacherDayEndTime || null,
         teacher_planning_block_minutes: data.teacherPlanningBlockMinutes === '' ? null : Number(data.teacherPlanningBlockMinutes),
         teacher_planning_block_when: data.teacherPlanningBlockWhen || null,
+        rotations_start_date: data.rotationsStartDate || null,
+        rotations_week_anchor: data.rotationsWeekAnchor || 'school_year',
         early_release_day: data.earlyReleaseDay || null,
         early_release_end_time: data.earlyReleaseEndTime || null,
         default_am_pm_preference: null,
@@ -212,7 +220,7 @@ const StepSchoolInfo = () => {
       setSaveError(err?.message ?? 'Save failed');
       setSaveStatus('error');
     }
-  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.schoolYearStart, data.schoolYearEnd, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, data.teacherDayStartTime, data.teacherDayEndTime, data.teacherPlanningBlockMinutes, data.teacherPlanningBlockWhen, data.gradePreference, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, maxTeamOutMinutes, schoolId]);
+  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.schoolYearStart, data.schoolYearEnd, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, data.teacherDayStartTime, data.teacherDayEndTime, data.teacherPlanningBlockMinutes, data.teacherPlanningBlockWhen, data.rotationsStartDate, data.rotationsWeekAnchor, data.gradePreference, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, maxTeamOutMinutes, schoolId]);
 
   useFlushOnUnmount(saveTimer, () => { if (isLoaded.current) autoSave(); });
 
@@ -234,6 +242,9 @@ const StepSchoolInfo = () => {
   };
 
   const rotationsBeforeSchool = Boolean(data.rotationsStartTime && data.startTime && data.rotationsStartTime < data.startTime);
+  const rotationsDateBeforeSchoolYear = Boolean(
+    data.rotationsStartDate && data.schoolYearStart && data.rotationsStartDate < data.schoolYearStart,
+  );
 
   const handleContinue = () => {
     v.touchAll(['schoolName', 'endTime', 'classDuration']);
@@ -306,7 +317,7 @@ const StepSchoolInfo = () => {
           <Input type="time" value={data.startTime} onChange={(e) => updateData({ startTime: e.target.value })} />
         </div>
         <div className="space-y-2">
-          <FieldLabel tooltip="Optional. Leave blank if rotations begin at the school start time.">Specials rotations begin at (optional)</FieldLabel>
+          <FieldLabel tooltip="TIME OF DAY the first rotation starts. The gap after the first bell is your Grade Set-up window.">Specials rotations begin at (time of day)</FieldLabel>
           <Input type="time" value={data.rotationsStartTime} onChange={(e) => updateData({ rotationsStartTime: e.target.value })} />
           <p className="text-xs text-muted-foreground">Leave blank if rotations start at the school start time.</p>
           {rotationsBeforeSchool && (
@@ -380,6 +391,30 @@ const StepSchoolInfo = () => {
           <FieldLabel tooltip="Last instructional day. Bounds the week cycle. Optional — we estimate from the school year if left blank.">Last Day of School (optional)</FieldLabel>
           <Input type="date" value={data.schoolYearEnd} onChange={(e) => updateData({ schoolYearEnd: e.target.value })} />
         </div>
+        {/* Rotations usually start a week or two after the students do. */}
+        <div className="space-y-2">
+          <FieldLabel tooltip="The DATE the specials wheel first runs — usually the second week of school, after classes settle. Leave blank if it starts with the first student day.">Specials rotations begin (date)</FieldLabel>
+          <Input type="date" value={data.rotationsStartDate} onChange={(e) => updateData({ rotationsStartDate: e.target.value })} />
+          <p className="text-xs text-muted-foreground">
+            The first day of school is the students' first day. Weeks before this date show as
+            "Before rotations" and are left out of A/B ranges.
+          </p>
+          {rotationsDateBeforeSchoolYear && (
+            <p className="text-xs text-destructive">Rotations can't begin before the first day of school.</p>
+          )}
+        </div>
+        {data.rotationsStartDate && (
+          <div className="space-y-2">
+            <FieldLabel tooltip="Only matters for A/B or AA/BB schedules: which week is Week A.">Week A is…</FieldLabel>
+            <Select value={data.rotationsWeekAnchor || 'school_year'} onValueChange={(v) => updateData({ rotationsWeekAnchor: v })}>
+              <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="school_year">The first week of school</SelectItem>
+                <SelectItem value="rotations_start">The first week rotations run</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
         <div className="space-y-2">
           <FieldLabel tooltip="Which weekday has early dismissal, if any">Early Release Day</FieldLabel>
           <Select value={data.earlyReleaseDay || 'none'} onValueChange={(v) => updateData({ earlyReleaseDay: v === 'none' ? '' : v })}>
