@@ -1348,6 +1348,12 @@ const StepSpecialists = () => {
                   <ChevronDown className="h-3.5 w-3.5 transition-transform" />
                 </CollapsibleTrigger>
                 <CollapsibleContent className="pt-2 space-y-2">
+                  <p className="text-[11px] text-muted-foreground">
+                    <strong className="text-foreground">These are used by the scheduler.</strong>{' '}
+                    <em>Setup</em> and <em>Other</em> minutes push this specialist's first class later;{' '}
+                    <em>Travel</em> minutes end their day earlier. All of them are treated as duty
+                    time, not planning time.
+                  </p>
                   {s.additionalMinutes.length === 0 && (
                     <p className="text-[11px] text-muted-foreground italic">
                       No extra minutes added. School default is {data.setupTime || 0} min setup / {data.passingTime || 0} min passing.

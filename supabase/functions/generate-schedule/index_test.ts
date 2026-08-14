@@ -308,7 +308,7 @@ Deno.test("OccupancyTracker: overlapping interval (diff start) is not free", () 
 // Per-grade transitions + specialist weekly meeting (Jane's KK3 feedback)
 // ──────────────────────────────────────────────────────────────────────
 import { scoreSchedule } from "./_scoring.ts";
-import { buildTimeSlotsForGrade, reserveSpecialistMeetingBlocks, schoolRotationsStartMin, teacherDayStartMin, teacherDayEndMin, validateTeacherDay, validateAccompaniedSpecialists } from "./index.ts";
+import { buildTimeSlotsForGrade, reserveSpecialistMeetingBlocks, schoolRotationsStartMin, teacherDayStartMin, teacherDayEndMin, validateTeacherDay, validateAccompaniedSpecialists, specialistDayWindow } from "./index.ts";
 
 Deno.test("buildTimeSlotsForGrade: grade_time_config passingTime overrides the canonical step", () => {
   // 30-min K classes with 5-min switches → slots every 35 min; grade 1 (no
@@ -559,4 +559,47 @@ Deno.test("scoreSchedule: an accompanied specialist does not count toward teache
     ...base, specialists: [{ id: "lib", teacher_accompanies: true }],
   } as never);
   assertEquals(Math.round(accompanied.breakdown.teacher_planning * 100) / 100, -3);
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// specialistDayWindow — the wizard's "Additional Minutes (Travel, Setup,
+// etc.)" finally reach the scheduler.
+// ──────────────────────────────────────────────────────────────────────
+Deno.test("specialistDayWindow: no extra minutes leaves the day untouched", () => {
+  const school = { start_time: "08:00", end_time: "14:00" };
+  assertEquals(specialistDayWindow({ additional_minutes: [] }, school, "Mon"), { start: 8 * 60, end: 14 * 60 });
+  assertEquals(specialistDayWindow(null, school, "Mon"), { start: 8 * 60, end: 14 * 60 });
+});
+
+Deno.test("specialistDayWindow: setup delays the first class, travel ends the day earlier", () => {
+  const school = { start_time: "08:00", end_time: "14:00" };
+  const w = specialistDayWindow(
+    { additional_minutes: [
+      { label: "Grade Level Reset", minutes: 10, kind: "setup" },
+      { label: "Transition Time", minutes: 5, kind: "other" },
+      { label: "Drive to site B", minutes: 20, kind: "travel" },
+    ] },
+    school,
+    "Mon",
+  );
+  assertEquals(w.start, 8 * 60 + 15); // 10 setup + 5 other
+  assertEquals(w.end, 14 * 60 - 20);  // travel comes off the end
+});
+
+Deno.test("specialistDayWindow: respects the rotations start time and early release", () => {
+  const school = {
+    start_time: "07:45", rotations_start_time: "08:05", end_time: "14:00",
+    early_release_day: "Wed", early_release_end_time: "13:15",
+  };
+  const mon = specialistDayWindow({ additional_minutes: [{ minutes: 10, kind: "setup" }] }, school, "Mon");
+  assertEquals(mon.start, 8 * 60 + 15); // rotations start (8:05) + 10
+  assertEquals(mon.end, 14 * 60);
+  assertEquals(specialistDayWindow({ additional_minutes: [] }, school, "Wed").end, 13 * 60 + 15);
+});
+
+Deno.test("specialistDayWindow: an absurd entry can never invert the window", () => {
+  const school = { start_time: "08:00", end_time: "14:00" };
+  const w = specialistDayWindow({ additional_minutes: [{ minutes: 600, kind: "setup" }] }, school, "Mon");
+  assert(w.end >= w.start, "window must never invert");
+  assertEquals(w.start, 14 * 60);
 });

@@ -117,6 +117,39 @@ export function schoolRotationsStartMin(school: { start_time?: string | null; ro
   return rot != null && rot > base ? rot : base;
 }
 
+/**
+ * A specialist's own teachable window on a day.
+ *
+ * The wizard collects per-specialist "Additional Minutes (Travel, Setup, etc.)"
+ * but nothing consumed them, so a cart teacher who needs 15 minutes to set up
+ * was still scheduled from the first bell. Setup/other minutes push the first
+ * class later; travel minutes end the day earlier (they have to get back).
+ *
+ * Returns the same window as before when a specialist has no extra minutes, so
+ * schools that never filled this in are unaffected.
+ */
+export function specialistDayWindow(
+  spec: { additional_minutes?: Array<{ minutes?: number; kind?: string }> | null } | null | undefined,
+  school: { start_time?: string | null; rotations_start_time?: string | null; end_time?: string | null; teacher_day_end_time?: string | null; early_release_day?: string | null; early_release_end_time?: string | null },
+  day: string,
+): { start: number; end: number } {
+  const baseStart = schoolRotationsStartMin(school);
+  const baseEnd = getEndMinForDay(day, school);
+  const extras = spec?.additional_minutes ?? [];
+  let head = 0;
+  let tail = 0;
+  for (const e of extras) {
+    const mins = Number(e?.minutes ?? 0);
+    if (!Number.isFinite(mins) || mins <= 0) continue;
+    if (String(e?.kind ?? "").toLowerCase() === "travel") tail += mins;
+    else head += mins;
+  }
+  // Never invert the window: a mis-entered 8-hour setup must not delete the day.
+  const start = Math.min(baseStart + head, baseEnd);
+  const end = Math.max(baseEnd - tail, start);
+  return { start, end };
+}
+
 // ─── Teacher duty day ────────────────────────────────────────────────
 // The teacher day is not the student day. Under HSTA it is 7 hours (e.g.
 // 7:45–2:45) while students leave at 2:00, and the trailing 45 minutes are a
@@ -164,6 +197,11 @@ export interface Specialist {
   class_duration?: number | null;
   /** Per-specialist extra "PLUS" rotation: { Mon: { active, startTime, grades:[{grade,startTime?,durationMinutes?}] }, … } */
   plus_rotation?: Record<string, { active?: boolean; startTime?: string; grades?: Array<{ grade: string; startTime?: string; durationMinutes?: number }> }> | null;
+  /** Extra daily minutes the wizard collects — "Transition Time", "Grade Level
+   *  Reset", travel between rooms. `kind` decides which end of the day pays:
+   *  setup/other delay the first class, travel ends the day early. */
+  additional_minutes?: Array<{ label?: string; minutes?: number; kind?: string }> | null;
+  teacher_accompanies?: boolean | null;
 }
 
 export interface Teacher {
@@ -538,9 +576,15 @@ export function validatePlanningTime(blocks: Block[], specialists: Specialist[],
   const startMin = teacherDayStartMin(school);
   const weeklyMinutesForSpec = (spec: Specialist): number => {
     const workDays = (spec.working_days ?? DAYS).filter((d: string) => DAYS.includes(d));
+    // Setup / travel minutes are duty time, not free time — counting them as
+    // available would hide a planning shortfall the coordinator needs to see.
+    const extraPerDay = (spec.additional_minutes ?? []).reduce((acc, e) => {
+      const m = Number(e?.minutes ?? 0);
+      return acc + (Number.isFinite(m) && m > 0 ? m : 0);
+    }, 0);
     let total = 0;
     for (const day of workDays) {
-      total += Math.max(0, teacherDayEndMin(day, school) - startMin);
+      total += Math.max(0, teacherDayEndMin(day, school) - startMin - extraPerDay);
     }
     return total;
   };
@@ -1095,6 +1139,9 @@ function assignDay(
   specRotationOffset: number,
   allBlocks: Block[],
   canonicalStep: number,
+  /** Per-specialist teachable window (their setup/travel minutes). Optional so
+   *  callers that don't model extra minutes behave exactly as before. */
+  specWindowFor?: (spec: Specialist) => { start: number; end: number },
 ): AssignResult {
   const daySpecs = specialists.filter((s) => (s.working_days ?? DAYS).includes(day));
   if (daySpecs.length === 0) return { blocks: [], preferenceViolations: [] };
@@ -1181,8 +1228,13 @@ function assignDay(
       // grid stride depends on the duration. (No-op when no specialist sets a
       // custom duration — identical to the previous per-grade behavior.)
       const duration = specClassDuration(spec, gradeDefaultDuration);
+      // This specialist's own window — their setup/travel minutes shrink it.
+      const specWindow = specWindowFor?.(spec);
+      const specStartMin = specWindow ? Math.max(startMin, specWindow.start) : startMin;
+      const specEndMin = specWindow ? Math.min(endMin, specWindow.end) : endMin;
+      if (specEndMin <= specStartMin) continue;
       const specSlots = buildTimeSlotsForGrade(
-        gt.grade, duration, startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindows, canonicalStep,
+        gt.grade, duration, specStartMin, specEndMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindows, canonicalStep,
       );
       if (specSlots.length === 0) continue;
       const rankedSlots = [...specSlots].sort((a, b) => {
@@ -1403,6 +1455,7 @@ function generateStandard(
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), null, rotation, [...existingBlocks, ...blocks],
       canonicalStep,
+      (sp) => specialistDayWindow(sp, school, day),
     );
     blocks.push(...r.blocks);
     preferenceViolations.push(...r.preferenceViolations);
@@ -1491,6 +1544,7 @@ function generateABWeek(
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), null, rotation, [...existingBlocks, ...blocks],
       canonicalStep,
+      (sp) => specialistDayWindow(sp, school, day),
     );
     blocks.push(...nc.blocks);
     preferenceViolations.push(...nc.preferenceViolations);
@@ -1507,6 +1561,7 @@ function generateABWeek(
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), "A", rotation, [...existingBlocks, ...blocks],
       canonicalStep,
+      (sp) => specialistDayWindow(sp, school, day),
     );
     blocks.push(...wa.blocks);
     preferenceViolations.push(...wa.preferenceViolations);
@@ -1520,6 +1575,7 @@ function generateABWeek(
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), "B", rotationB, [...existingBlocks, ...blocks],
       canonicalStep,
+      (sp) => specialistDayWindow(sp, school, day),
     );
 
     blocks.push(...wb.blocks);
@@ -1606,6 +1662,7 @@ function generateAABBWeek(
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), null, rotation, [...existingBlocks, ...blocks],
       canonicalStep,
+      (sp) => specialistDayWindow(sp, school, day),
     );
     blocks.push(...nc.blocks);
     preferenceViolations.push(...nc.preferenceViolations);
@@ -1620,6 +1677,7 @@ function generateAABBWeek(
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), "AA", rotation, [...existingBlocks, ...blocks],
       canonicalStep,
+      (sp) => specialistDayWindow(sp, school, day),
     );
     blocks.push(...waa.blocks);
     preferenceViolations.push(...waa.preferenceViolations);
@@ -1631,6 +1689,7 @@ function generateAABBWeek(
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), "BB", rotationBB, [...existingBlocks, ...blocks],
       canonicalStep,
+      (sp) => specialistDayWindow(sp, school, day),
     );
 
     blocks.push(...wbb.blocks);
@@ -1684,6 +1743,7 @@ function generateQuick30(
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       new Set(), null, rotation, [...existingBlocks, ...blocks],
       canonicalStep,
+      (sp) => specialistDayWindow(sp, school, day),
     );
 
     blocks.push(...r.blocks);
@@ -1789,6 +1849,7 @@ function generateExtraRotation(
       startMin, endMin, defaultPassingTime, defaultSetupTime, gradeTimeConfig, recessWindowsForGrade,
       skipOccupancyGrades, null, rotation, [...existingBlocks, ...blocks],
       canonicalStep,
+      (sp) => specialistDayWindow(sp, school, day),
     );
     blocks.push(...r.blocks);
     preferenceViolations.push(...r.preferenceViolations);
