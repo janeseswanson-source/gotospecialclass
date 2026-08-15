@@ -40,6 +40,9 @@ const StepSchoolInfo = () => {
   const [extraPltTargetMinutes, setExtraPltTargetMinutes] = useState<number | ''>('');
   // '' = no cap. DB default is 120 (migration 20260718000000).
   const [maxTeamOutMinutes, setMaxTeamOutMinutes] = useState<number | ''>(120);
+  // Grade-level PD TARGET — the counterpart to the out-of-class CAP above.
+  const [gradePdTarget, setGradePdTarget] = useState<number | ''>(90);
+  const [gradePdQuorum, setGradePdQuorum] = useState<number>(100);
 
   // Inline blur validation for the required / constrained fields.
   const v = useBlurValidation();
@@ -115,6 +118,9 @@ const StepSchoolInfo = () => {
           setSuggestExtraPlt(existingSchool.suggest_extra_plt ?? false);
           setExtraPltTargetMinutes(existingSchool.extra_plt_target_minutes ?? '');
           setMaxTeamOutMinutes((existingSchool as { max_team_out_minutes?: number | null }).max_team_out_minutes ?? '');
+          const pd = existingSchool as { grade_pd_enabled?: boolean | null; grade_pd_target_minutes?: number | null; grade_pd_quorum_pct?: number | null };
+          setGradePdTarget(pd.grade_pd_enabled === false ? '' : (pd.grade_pd_target_minutes ?? 90));
+          setGradePdQuorum(pd.grade_pd_quorum_pct ?? 100);
         }
       } else {
         // Already have a school id — load just the new params.
@@ -131,6 +137,9 @@ const StepSchoolInfo = () => {
           setSuggestExtraPlt(extras.suggest_extra_plt ?? false);
           setExtraPltTargetMinutes(extras.extra_plt_target_minutes ?? '');
           setMaxTeamOutMinutes((extras as { max_team_out_minutes?: number | null }).max_team_out_minutes ?? '');
+          const pdX = extras as { grade_pd_enabled?: boolean | null; grade_pd_target_minutes?: number | null; grade_pd_quorum_pct?: number | null };
+          setGradePdTarget(pdX.grade_pd_enabled === false ? '' : (pdX.grade_pd_target_minutes ?? 90));
+          setGradePdQuorum(pdX.grade_pd_quorum_pct ?? 100);
         }
       }
       isLoaded.current = true;
@@ -175,6 +184,9 @@ const StepSchoolInfo = () => {
         suggest_extra_plt: suggestExtraPlt,
         extra_plt_target_minutes: extraPltTargetMinutes === '' ? null : Number(extraPltTargetMinutes),
         max_team_out_minutes: maxTeamOutMinutes === '' ? null : Number(maxTeamOutMinutes),
+        grade_pd_enabled: gradePdTarget !== '',
+        grade_pd_target_minutes: gradePdTarget === '' ? null : Number(gradePdTarget),
+        grade_pd_quorum_pct: gradePdQuorum,
         workspace_id: workspaceIdRef.current,
       };
 
@@ -220,7 +232,7 @@ const StepSchoolInfo = () => {
       setSaveError(err?.message ?? 'Save failed');
       setSaveStatus('error');
     }
-  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.schoolYearStart, data.schoolYearEnd, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, data.teacherDayStartTime, data.teacherDayEndTime, data.teacherPlanningBlockMinutes, data.teacherPlanningBlockWhen, data.rotationsStartDate, data.rotationsWeekAnchor, data.gradePreference, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, maxTeamOutMinutes, schoolId]);
+  }, [data.schoolName, data.website, data.startTime, data.endTime, data.rotationsStartTime, data.planningTimeWhen, data.classDuration, data.planningMinutes, data.lunchMinutes, data.passingTime, data.setupTime, data.gradeTimeConfig, data.schoolYear, data.schoolYearStart, data.schoolYearEnd, data.gradesServed, data.notes, data.earlyReleaseDay, data.earlyReleaseEndTime, data.teacherDayStartTime, data.teacherDayEndTime, data.teacherPlanningBlockMinutes, data.teacherPlanningBlockWhen, data.rotationsStartDate, data.rotationsWeekAnchor, data.gradePreference, keepGradesTogether, suggestExtraPlt, extraPltTargetMinutes, maxTeamOutMinutes, gradePdTarget, gradePdQuorum, schoolId]);
 
   useFlushOnUnmount(saveTimer, () => { if (isLoaded.current) autoSave(); });
 
@@ -632,6 +644,73 @@ const StepSchoolInfo = () => {
             ))}
           </div>
         </div>
+
+        {/* Row 2.7 — Grade-level PD target (the counterpart to the cap). */}
+        <div className="flex items-start justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Users2 className="h-4 w-4 text-muted-foreground" />
+              <FieldLabel className="text-sm font-medium" tooltip="Aim to give each grade's teachers this much time out of class AT THE SAME TIME, so they can meet as a team. The scheduler prefers wheels that create it; if it can't reach the target it says so instead of failing.">
+                Grade-level PD window
+              </FieldLabel>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Shared time for a whole grade's teachers to meet. Must not exceed the cap above.
+            </p>
+            {gradePdTarget !== '' && maxTeamOutMinutes !== '' && Number(gradePdTarget) > Number(maxTeamOutMinutes) && (
+              <p className="text-xs text-destructive">
+                The PD target can't be longer than the out-of-class cap ({maxTeamOutMinutes} min).
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5">
+            {[
+              { v: '' as const, label: 'Off' },
+              { v: 90, label: '90 min' },
+              { v: 120, label: '120 min' },
+            ].map((opt) => (
+              <button
+                key={opt.label}
+                type="button"
+                onClick={() => setGradePdTarget(opt.v)}
+                className={cn(
+                  'rounded-md border px-2.5 py-1.5 text-xs transition-colors',
+                  gradePdTarget === opt.v
+                    ? 'border-accent bg-accent/10 font-medium text-foreground'
+                    : 'border-border text-muted-foreground hover:border-primary/40',
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {gradePdTarget !== '' && (
+          <div className="flex items-start justify-between gap-4 pl-6">
+            <div className="space-y-1">
+              <FieldLabel className="text-xs" tooltip="When a grade has more classes than you have specialists, a 100% window is impossible. Allowing 80% lets a 4-of-5 window count, and the report names the class still in session.">
+                Count a window when this many classes are out
+              </FieldLabel>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {[100, 80].map((pct) => (
+                <button
+                  key={pct}
+                  type="button"
+                  onClick={() => setGradePdQuorum(pct)}
+                  className={cn(
+                    'rounded-md border px-2.5 py-1.5 text-xs transition-colors',
+                    gradePdQuorum === pct
+                      ? 'border-accent bg-accent/10 font-medium text-foreground'
+                      : 'border-border text-muted-foreground hover:border-primary/40',
+                  )}
+                >
+                  {pct === 100 ? 'All classes' : '80%'}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Row 3 — Daily sequence */}
         <div className="space-y-2">

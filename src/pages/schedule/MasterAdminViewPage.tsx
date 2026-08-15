@@ -15,6 +15,7 @@ import WeekCyclePicker from '@/components/schedule/WeekCyclePicker';
 import { buildWeekCycle, type WeekStrategy, type RotationCycleFields } from '@/lib/weekCycle';
 import { friendlyBandLabel, bandLabelMapFromStored, openSpecialistsForSlot } from '@/lib/scheduleGrid';
 import { gradeRank, formatGradeOrdinal } from '@/lib/gradeOrdinal';
+import { gradePdWindows } from '@/lib/gradePdWindow';
 import { getGradeAccentTextClass } from '@/lib/gradeColors';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'] as const;
@@ -65,6 +66,9 @@ type AdminRot = {
   weekLabel?: 'A' | 'B' | null;
   rotationLabel?: string;
 };
+
+/** Minutes-since-midnight → "HH:MM" for formatTime(). */
+const minToClock = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
 const isPlanningPrep = (s?: string | null) =>
   !!s && /planning|prep|plc/i.test(s);
@@ -288,6 +292,27 @@ export default function MasterAdminViewPage() {
     (id && specialistById.get(id)?.subject) || '';
   const teacherName = (id: string | null) =>
     (id && teacherById.get(id)?.name) || '';
+
+  // Grade-level PD windows — the block of time a whole grade's teachers are at
+  // specials together, which is what makes team PD possible. Measured here on
+  // the client (mirrors the engine's _teamtime.ts) so it also renders for a
+  // schedule generated before the feature existed.
+  const accompaniedSpecIds = new Set(
+    specialists.filter((sp) => (sp as { teacher_accompanies?: boolean | null }).teacher_accompanies).map((sp) => sp.id),
+  );
+  const pdTargetMinutes = Number((school as { grade_pd_target_minutes?: number | null })?.grade_pd_target_minutes ?? 0);
+  const pdQuorumPct = Number((school as { grade_pd_quorum_pct?: number | null })?.grade_pd_quorum_pct ?? 100);
+  const pdLabel = (school as { grade_pd_label?: string | null })?.grade_pd_label || 'Grade-Level PD';
+  const pdEnabled = (school as { grade_pd_enabled?: boolean | null })?.grade_pd_enabled !== false;
+  const pdWindows = pdEnabled
+    ? gradePdWindows(
+        blocks.filter((b) => weekVisible(b.week_label)),
+        teachers,
+        accompaniedSpecIds,
+        pdQuorumPct,
+      )
+    : new Map();
+  const pdRows = [...pdWindows.values()].sort((a, b) => gradeRank(a.grade) - gradeRank(b.grade));
 
   // ALL of a day's week-visible blocks (any kind, chrome included) — for the
   // Open computation a specialist at lunch or in PLC is busy, not Open.
@@ -531,6 +556,43 @@ export default function MasterAdminViewPage() {
             </div>
           ))}
         </div>
+
+        {/* Grade-Level PD band: when is each grade's whole team free at once? */}
+        {pdEnabled && pdRows.length > 0 && (
+          <div className="border-b border-border bg-primary/5 px-3 py-2">
+            <div className="mb-1 flex items-baseline gap-2">
+              <span className="text-[11px] font-semibold text-primary">{pdLabel}</span>
+              {pdTargetMinutes > 0 && (
+                <span className="text-[10px] text-muted-foreground">target {pdTargetMinutes} min</span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {pdRows.map((w) => {
+                const met = pdTargetMinutes <= 0 || w.minutes >= pdTargetMinutes;
+                const partial = w.outCount < w.classCount;
+                return (
+                  <span
+                    key={w.grade}
+                    className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${
+                      met
+                        ? 'border-primary/30 bg-primary/10 text-primary'
+                        : 'border-amber-400/50 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200'
+                    }`}
+                  >
+                    <strong>{formatGradeOrdinal(w.grade)}</strong>
+                    <span className="font-mono">
+                      {w.startMin !== null ? `${formatTime(minToClock(w.startMin))}–${formatTime(minToClock(w.endMin ?? w.startMin))}` : ''}
+                    </span>
+                    <span>· {w.minutes} min</span>
+                    <span className="opacity-70">{w.day}</span>
+                    {partial && <span className="opacity-70">({w.outCount}/{w.classCount})</span>}
+                    <span>{met ? '✓' : '✗'}</span>
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {/* Per-day time rails: every day column carries its own chronological
             stream — set-up window, wheel waves, recess/lunch, team PD, and a

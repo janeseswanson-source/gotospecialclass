@@ -46,6 +46,11 @@ const KNOWN_PENDING = new Set<string>([
   "schools.rotations_week_anchor",
   // 20260808030000 — written by StepSpecialists via saveRowsWithSchemaFallback
   "specialists.teacher_accompanies",
+  // 20260808040000 — grade PD target; written by StepSchoolInfo via saveSchoolRow
+  "schools.grade_pd_enabled",
+  "schools.grade_pd_target_minutes",
+  "schools.grade_pd_quorum_pct",
+  "schools.grade_pd_label",
 ]);
 
 const ADD_COLUMN_RE =

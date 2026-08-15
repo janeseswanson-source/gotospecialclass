@@ -28,12 +28,34 @@ const META: Record<string, WarningMeta> = {
   contractual_planning_shortfall: { label: "Contract: Planning",     Icon: ClipboardList },
   contractual_duty_free_shortfall:{ label: "Contract: Duty-Free",    Icon: Coffee },
   contractual_role_unmatched:     { label: "Contract: Role",         Icon: FileText },
+
+  // Engine warnings that had no entry and were rendering as raw type strings.
+  teacher_double_booked:          { label: "Class Double Booked",    Icon: AlertTriangle },
+  teacher_no_coverage:            { label: "Class Has No Specials",  Icon: GraduationCap },
+  capacity_shortfall:             { label: "Not Enough Capacity",    Icon: Layers },
+  skipped_holiday:                { label: "Skipped Holiday",        Icon: Calendar },
+  calendar_one_off:               { label: "One-Off Date",           Icon: Calendar },
+
+  // Teacher-team time: the cap and the target (see _teamtime.ts).
+  team_out_stretch:               { label: "Teachers Out Too Long",  Icon: Clock },
+  grade_pd_short:                 { label: "Short Grade PD Window",  Icon: Users },
+  grade_pd_infeasible:            { label: "Grade PD Not Possible",  Icon: Users },
+  grade_over_rotation:            { label: "Over-Rotated Grade",     Icon: Layers },
+  teacher_day_misconfigured:      { label: "Teacher Day Setup",      Icon: Clock },
+  accompanied_planning_gap:       { label: "Teacher Stays With Class", Icon: Users },
 };
 
 function titleCase(raw: string): string {
   return raw
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** True when `type` has a hand-written entry (not just the title-case
+ *  fallback). Used by the coverage guard in warningMeta.test.ts — a label that
+ *  happens to equal its fallback ("No Coverage") is still explicit. */
+export function hasExplicitWarningMeta(type: string): boolean {
+  return Object.prototype.hasOwnProperty.call(META, type);
 }
 
 export function warningMeta(type?: string | null): WarningMeta {

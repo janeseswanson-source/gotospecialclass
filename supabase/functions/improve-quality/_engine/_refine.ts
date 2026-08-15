@@ -142,10 +142,13 @@ function buildScoringInput(ctx: RefineContext): ScoreableInput {
       early_release_end_time: ctx.school.early_release_end_time,
       keep_grades_together: ctx.school.keep_grades_together ?? true,
       rotation_wheel_grades: ctx.school.rotation_wheel_grades ?? null,
+      grade_pd_enabled: ctx.school.grade_pd_enabled ?? true,
+      grade_pd_target_minutes: ctx.school.grade_pd_target_minutes ?? null,
+      grade_pd_quorum_pct: ctx.school.grade_pd_quorum_pct ?? 100,
       contractual_minutes_extracted: ctx.school.contractual_minutes_extracted ?? null,
     },
     specialists: ctx.specialists.map((s) => ({ id: s.id, subject: s.subject, working_days: s.working_days, teacher_accompanies: (s as { teacher_accompanies?: boolean | null }).teacher_accompanies ?? false })),
-    teachers: ctx.teachers.map((t) => ({ id: t.id, am_pm_preference: t.am_pm_preference ?? null, day_preference: t.day_preference ?? null, weekly_planning_minutes: t.weekly_planning_minutes ?? null })),
+    teachers: ctx.teachers.map((t) => ({ id: t.id, grade: (t as { grade?: string | null }).grade ?? null, am_pm_preference: t.am_pm_preference ?? null, day_preference: t.day_preference ?? null, weekly_planning_minutes: t.weekly_planning_minutes ?? null })),
     grades: ctx.grades,
   };
 }

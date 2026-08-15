@@ -31,6 +31,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { shuffle, deriveSeed, mulberry32, type Rng } from "./_random.ts";
 import { scoreSchedule, wheelEnabled, type ScoreableInput, type ScoreBreakdown } from "./_scoring.ts";
+import { computeGradeOutWindows, bestPdWindowPerGrade } from "./_teamtime.ts";
 import { qualityPercent } from "../_shared/scoring-rubric.ts";
 import { calibrateMonteCarlo, monteCarloRun, MonteCarloBudgetExceededError } from "./_monteCarlo.ts";
 import { computeQualityConfidence } from "./_confidence.ts";
@@ -148,6 +149,19 @@ export function specialistDayWindow(
   const start = Math.min(baseStart + head, baseEnd);
   const end = Math.max(baseEnd - tail, start);
   return { start, end };
+}
+
+/** Advisory-warning thresholds read off the school row, in one place. */
+export function warningOptsFor(school: any): {
+  maxTeamOutMinutes: number | null;
+  gradePdTargetMinutes: number | null;
+  gradePdQuorumPct: number;
+} {
+  return {
+    maxTeamOutMinutes: school?.max_team_out_minutes ?? null,
+    gradePdTargetMinutes: school?.grade_pd_enabled === false ? null : (school?.grade_pd_target_minutes ?? null),
+    gradePdQuorumPct: school?.grade_pd_quorum_pct ?? 100,
+  };
 }
 
 // ─── Teacher duty day ────────────────────────────────────────────────
@@ -356,7 +370,11 @@ export function computeWarnings(
   specialists: Specialist[],
   grades: string[],
   teachers?: Teacher[],
-  opts?: { maxTeamOutMinutes?: number | null },
+  opts?: {
+    maxTeamOutMinutes?: number | null;
+    gradePdTargetMinutes?: number | null;
+    gradePdQuorumPct?: number | null;
+  },
 ): Warning[] {
   const warnings: Warning[] = [];
   // no_coverage
@@ -442,59 +460,66 @@ export function computeWarnings(
     }
   }
 
-  // team_out_stretch — cap on how long a grade's teacher TEAM is out of
-  // their classrooms back-to-back (classes at consecutive specials/wheel
-  // blocks). Planning happens before/after school at these schools, so an
-  // all-day pull-out ("5th grade, no classroom teacher all day") is a
-  // principal-level problem. ADVISORY only: never gates strategyFailed.
+  // team_out_stretch (the CAP) and grade_pd_short (the TARGET) are two reads
+  // of ONE measurement — see _teamtime.ts. Computing them separately is how a
+  // target and a cap quietly end up fighting each other.
   const teamOutCap = opts?.maxTeamOutMinutes ?? null;
-  if (teamOutCap != null && teamOutCap > 0) {
-    const RESERVED = new Set(["lunch", "planning", "makeup", "all", ""]);
-    const RUN_GAP_MAX = 15; // passing time between wheel blocks (min)
-    const byTeacherDayWeek = new Map<string, Block[]>();
-    for (const b of blocks) {
-      if (!b.specialist_id || !b.teacher_id) continue;
-      if (RESERVED.has(String(b.grade ?? "").trim().toLowerCase())) continue;
-      const k = `${b.teacher_id}|${b.day_of_week}|${b.week_label ?? ""}`;
-      (byTeacherDayWeek.get(k) ?? byTeacherDayWeek.set(k, []).get(k)!).push(b);
-    }
-    // Worst back-to-back stretch per (grade, day, week) — one warning each.
-    const worstByGradeDay = new Map<string, { grade: string; day: string; label: string; minutes: number }>();
-    for (const [k, group] of byTeacherDayWeek) {
-      const [, day, label] = k.split("|");
-      const sorted = [...group].sort((a, b) => timeToMinutes(a.start_time) - timeToMinutes(b.start_time));
-      let runStart = timeToMinutes(sorted[0].start_time);
-      let runEnd = timeToMinutes(sorted[0].end_time);
-      let runGrade = String(sorted[0].grade ?? "?");
-      const closeRun = () => {
-        const minutes = runEnd - runStart;
-        if (minutes > teamOutCap) {
-          const gk = `${runGrade}|${day}|${label}`;
-          const cur = worstByGradeDay.get(gk);
-          if (!cur || minutes > cur.minutes) worstByGradeDay.set(gk, { grade: runGrade, day, label, minutes });
-        }
-      };
-      for (let i = 1; i < sorted.length; i++) {
-        const s = timeToMinutes(sorted[i].start_time);
-        const e = timeToMinutes(sorted[i].end_time);
-        if (s - runEnd <= RUN_GAP_MAX) {
-          runEnd = Math.max(runEnd, e);
-        } else {
-          closeRun();
-          runStart = s;
-          runEnd = e;
-          runGrade = String(sorted[i].grade ?? "?");
-        }
+  const pdTarget = opts?.gradePdTargetMinutes ?? null;
+  const needTeamTime = (teamOutCap != null && teamOutCap > 0) || (pdTarget != null && pdTarget > 0);
+
+  if (needTeamTime) {
+    // The measurement needs to know which class belongs to which grade. The
+    // teacher roster is the authority (it knows about classes with no blocks
+    // at all), but callers deep in the optimizer don't carry it — derive the
+    // mapping from the blocks so the guard still works there.
+    const teamTeachers = teachers && teachers.length > 0
+      ? teachers
+      : [...new Map(
+          blocks
+            .filter((b) => b.teacher_id && b.specialist_id && b.grade)
+            .map((b) => [b.teacher_id as string, { id: b.teacher_id as string, grade: b.grade }]),
+        ).values()];
+
+    const windows = computeGradeOutWindows(blocks, teamTeachers, specialists, {
+      quorumPct: opts?.gradePdQuorumPct ?? 100,
+    });
+
+    if (teamOutCap != null && teamOutCap > 0) {
+      // One warning per (grade, day, week) that breaches the cap.
+      for (const w of windows) {
+        if (w.maxTeacherRunMin <= teamOutCap) continue;
+        warnings.push({
+          type: "team_out_stretch",
+          severity: "warning",
+          message: `Grade ${w.grade} teachers are out of class ~${w.maxTeacherRunMin} min back-to-back on ${w.day}${w.weekLabel ? ` (Week ${w.weekLabel})` : ""} — cap is ${teamOutCap} min.`,
+          suggestion: "Split the grade's wheel across AM/PM or another day, or adjust the out-of-class cap in School Info.",
+        });
       }
-      closeRun();
     }
-    for (const v of worstByGradeDay.values()) {
-      warnings.push({
-        type: "team_out_stretch",
-        severity: "warning",
-        message: `Grade ${v.grade} teachers are out of class ~${v.minutes} min back-to-back on ${v.day}${v.label ? ` (Week ${v.label})` : ""} — cap is ${teamOutCap} min.`,
-        suggestion: "Split the grade's wheel across AM/PM or another day, or adjust the out-of-class cap in School Info.",
-      });
+
+    if (pdTarget != null && pdTarget > 0) {
+      const best = bestPdWindowPerGrade(windows);
+      const specialistCount = specialists.length;
+      for (const [grade, w] of best) {
+        if (w.allOutMin >= pdTarget) continue;
+        // More classes than specialists: a full-grade window is not merely
+        // unmet, it is impossible. Say so, and point at the real fix.
+        if (w.classCount > specialistCount && w.quorumMin > specialistCount) {
+          warnings.push({
+            type: "grade_pd_infeasible",
+            severity: "info",
+            message: `Grade ${grade} has ${w.classCount} classes but only ${specialistCount} specialists, so its teachers can never all be out at once.`,
+            suggestion: `Enable AA/BB Week for Grade ${grade}, split a class across the other rotations, or lower the PD quorum below 100%.`,
+          });
+          continue;
+        }
+        warnings.push({
+          type: "grade_pd_short",
+          severity: "info",
+          message: `Grade ${grade} gets ${w.allOutMin} min of shared PD time (best day ${w.day}) — the target is ${pdTarget} min.`,
+          suggestion: "Group that grade's rotations into consecutive blocks on one day, or lower the PD target in School Info.",
+        });
+      }
     }
   }
 
@@ -2522,11 +2547,15 @@ export function generateScheduleBlocks(
       early_release_end_time: school.early_release_end_time,
       keep_grades_together: (school as any).keep_grades_together ?? true,
       rotation_wheel_grades: (school as any).rotation_wheel_grades ?? null,
+      grade_pd_enabled: (school as any).grade_pd_enabled ?? true,
+      grade_pd_target_minutes: (school as any).grade_pd_target_minutes ?? null,
+      grade_pd_quorum_pct: (school as any).grade_pd_quorum_pct ?? 100,
       contractual_minutes_extracted: (school as any).contractual_minutes_extracted ?? null,
     },
     specialists: specialists.map((s) => ({ id: s.id, subject: s.subject, working_days: s.working_days, teacher_accompanies: (s as { teacher_accompanies?: boolean | null }).teacher_accompanies ?? false })),
     teachers: teachers.map((t) => ({
       id: t.id,
+      grade: t.grade,
       am_pm_preference: t.am_pm_preference,
       day_preference: t.day_preference,
       weekly_planning_minutes: t.weekly_planning_minutes,
@@ -2727,7 +2756,7 @@ export function generateScheduleBlocks(
   // in baseBlocks but immovable by the pass's own predicate.
   baseBlocks = reorderGradeRuns(baseBlocks as never, { school, recessConfigs, teachers, fixedContext: adjFixedOf() as never }).blocks as unknown as Block[];
 
-  const finalWarnings = computeWarnings(baseBlocks, specialists, grades, teachers, { maxTeamOutMinutes: (school as any).max_team_out_minutes ?? null });
+  const finalWarnings = computeWarnings(baseBlocks, specialists, grades, teachers, warningOptsFor(school));
   const breakdown = scoreSchedule(
     { blocks: baseBlocks, warnings: finalWarnings, preferenceViolations },
     scoringInput,
@@ -3107,7 +3136,7 @@ const __serveHandler = async (req: Request): Promise<Response> => {
     // back before the CPU budget can be exceeded by validation passes.
     const finalize = async () => {
       try {
-        const baseWarnings = computeWarnings(blocks, specialists, grades, teachers, { maxTeamOutMinutes: (school as any).max_team_out_minutes ?? null });
+        const baseWarnings = computeWarnings(blocks, specialists, grades, teachers, warningOptsFor(school));
         const extraKeys = new Set<string>();
         for (const w of schedulerResult!.extraWarnings) {
           if (w.type === "extra_rotation_failed") {

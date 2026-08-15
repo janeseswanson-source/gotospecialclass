@@ -394,3 +394,72 @@ Deno.test("scoreSchedule: wheel_alignment gating — [] disables, subset restric
   assertEquals(offSpread.breakdown.grade_day_spread, -20, "wheel off → spread active again");
   assertEquals(offSpread.breakdown.wheel_alignment, 0, "wheel off → wheel term inert");
 });
+
+
+// ─── grade_pd_window (the PD TARGET that pairs with the out-of-class CAP) ───
+// The characterization fixtures set no PD target, so the term is inert there;
+// these exercise it directly.
+const pdInput = (over: Record<string, unknown> = {}): ScoreableInput => ({
+  school: { start_time: "08:00", end_time: "15:00", grade_pd_target_minutes: 90, ...over },
+  specialists: [{ id: "art" }, { id: "pe" }, { id: "tech" }],
+  teachers: [
+    { id: "t1", grade: "3" },
+    { id: "t2", grade: "3" },
+    { id: "t3", grade: "3" },
+  ],
+  grades: ["3"],
+});
+
+const pdBlock = (teacher: string, spec: string, start: string, end: string) => ({
+  generation_id: "g", day_of_week: "Mon", start_time: start, end_time: end,
+  subject: "Art", specialist_id: spec, teacher_id: teacher, grade: "3",
+  room: null, week_label: null,
+});
+
+Deno.test("scoreSchedule: grade_pd_window prices the shortfall, and a met target costs nothing", () => {
+  // 45 min of shared release against a 90 min target = 45 short.
+  const short: ScoreableResult = {
+    blocks: [
+      pdBlock("t1", "art", "09:00", "09:45"),
+      pdBlock("t2", "pe", "09:00", "09:45"),
+      pdBlock("t3", "tech", "09:00", "09:45"),
+    ] as never,
+    warnings: [], preferenceViolations: [],
+  };
+  assertEquals(scoreSchedule(short, pdInput()).breakdown.grade_pd_window, -13.5); // 45 x -0.3
+
+  // Two back-to-back waves clear the 90 min target outright.
+  const met: ScoreableResult = {
+    blocks: [
+      pdBlock("t1", "art", "09:00", "09:45"), pdBlock("t2", "pe", "09:00", "09:45"), pdBlock("t3", "tech", "09:00", "09:45"),
+      pdBlock("t1", "pe", "09:50", "10:35"), pdBlock("t2", "tech", "09:50", "10:35"), pdBlock("t3", "art", "09:50", "10:35"),
+    ] as never,
+    warnings: [], preferenceViolations: [],
+  };
+  assertEquals(scoreSchedule(met, pdInput()).breakdown.grade_pd_window, 0);
+});
+
+Deno.test("scoreSchedule: grade_pd_window is off unless a target is set", () => {
+  const staggered: ScoreableResult = {
+    blocks: [
+      pdBlock("t1", "art", "09:00", "09:45"),
+      pdBlock("t2", "pe", "10:00", "10:45"),
+      pdBlock("t3", "tech", "11:00", "11:45"),
+    ] as never,
+    warnings: [], preferenceViolations: [],
+  };
+  // No target at all.
+  assertEquals(scoreSchedule(staggered, pdInput({ grade_pd_target_minutes: null })).breakdown.grade_pd_window, 0);
+  // Explicitly disabled.
+  assertEquals(scoreSchedule(staggered, pdInput({ grade_pd_enabled: false })).breakdown.grade_pd_window, 0);
+  // Enabled: no overlap at all, so the whole 90 is owed.
+  assertEquals(scoreSchedule(staggered, pdInput()).breakdown.grade_pd_window, -27);
+});
+
+Deno.test("scoreSchedule: a full PD miss stays cheaper than manufacturing a class repeat", () => {
+  // The guard that keeps the target from bullying the schedule: 90 min of
+  // missed PD (27) must cost less than one repeat visit (25) x2.
+  const worst = 90 * 0.3;
+  assert(worst < 25 * 2, `PD shortfall ${worst} must stay under 2x class_repeats`);
+  assert(worst < 100, "and far under full_week_coverage");
+});

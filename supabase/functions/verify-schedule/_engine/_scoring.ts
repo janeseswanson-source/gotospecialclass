@@ -19,6 +19,7 @@
 //   spec_dayload_stdev             -1  × stdev of per-day blocks per specialist
 
 import type { Block, Warning, PreferenceViolation } from "./index.ts";
+import { computeGradeOutWindows, bestPdWindowPerGrade } from "./_teamtime.ts";
 
 export interface ScoreBreakdown {
   errors: number;
@@ -38,6 +39,7 @@ export interface ScoreBreakdown {
   subject_gap: number;
   subject_day_clustering: number;
   teacher_planning: number;
+  grade_pd_window: number;
 }
 
 export interface ScoreResult {
@@ -69,10 +71,13 @@ export interface ScoreableInput {
     early_release_end_time?: string;
     keep_grades_together?: boolean | null;
     rotation_wheel_grades?: string[] | null;
+    grade_pd_enabled?: boolean | null;
+    grade_pd_target_minutes?: number | null;
+    grade_pd_quorum_pct?: number | null;
     contractual_minutes_extracted?: ContractExtract | null;
   };
   specialists: Array<{ id: string; subject?: string | null; working_days?: string[] | null; teacher_accompanies?: boolean | null }>;
-  teachers: Array<{ id: string; am_pm_preference?: string | null; day_preference?: string | null; weekly_planning_minutes?: number | null }>;
+  teachers: Array<{ id: string; grade?: string | null; am_pm_preference?: string | null; day_preference?: string | null; weekly_planning_minutes?: number | null }>;
   grades: string[];
 }
 
@@ -157,6 +162,18 @@ export const DEFAULT_WEIGHTS: Record<keyof ScoreBreakdown, number> = {
   // out at specials. Penalise each minute a teacher's weekly specials coverage
   // falls short of their guaranteed weekly_planning_minutes.
   teacher_planning: -0.05,
+  // Per MINUTE a grade falls short of its shared PD window (the PM's "block of
+  // time rotations the grade level is together for PD"). Magnitude chosen so
+  // the term guides without ever overruling structure:
+  //   * a full 90-min miss costs 27 — well under class_repeats (25) x2, so a
+  //     schedule never manufactures repeats to buy PD time;
+  //   * coverage (+100) dominates it 4:1, so a class is never dropped for PD;
+  //   * it pulls the SAME direction as wheel_alignment (-20): a pure wheel wave
+  //     IS the maximal PD intersection, so the two reinforce each other;
+  //   * a cap breach is a -50 warning vs +27 max here, so target and cap order
+  //     themselves correctly with no extra machinery.
+  // Objective-only — deliberately NOT in the quality% rubric.
+  grade_pd_window: -0.3,
 };
 
 export function scoreSchedule(
@@ -432,6 +449,31 @@ export function scoreSchedule(
     if (have < required) teacherPlanningShortfall += required - have;
   }
 
+  // 14. Grade-level PD window: minutes each grade falls short of the target
+  //     block in which its whole team is simultaneously at specials. Uses the
+  //     SAME measurement as the team_out_stretch cap (see _teamtime.ts).
+  let pdShortfallMin = 0;
+  const pdTarget = Number(input.school?.grade_pd_target_minutes ?? 0);
+  if (input.school?.grade_pd_enabled !== false && pdTarget > 0 && input.teachers.length > 0) {
+    const windows = computeGradeOutWindows(blocks, input.teachers, input.specialists, {
+      quorumPct: Number(input.school?.grade_pd_quorum_pct ?? 100),
+    });
+    const best = bestPdWindowPerGrade(windows);
+    const specialistCount = input.specialists.length;
+    for (const g of input.grades) {
+      const win = best.get(g);
+      const classCount = win?.classCount
+        ?? input.teachers.filter((t) => String(t.grade ?? "").trim() === g).length;
+      if (classCount === 0) continue;
+      // Structurally impossible windows are reported as a warning, not priced
+      // as a penalty — charging for it would just add constant noise to every
+      // candidate and drown the differences the optimizer can actually act on.
+      if (classCount > specialistCount) continue;
+      const got = win?.allOutMin ?? 0;
+      if (got < pdTarget) pdShortfallMin += pdTarget - got;
+    }
+  }
+
   const breakdown: ScoreBreakdown = {
     errors: errorCount * w.errors,
     warnings: warningCount * w.warnings,
@@ -450,6 +492,7 @@ export function scoreSchedule(
     subject_gap: subjectGapPairs * w.subject_gap,
     subject_day_clustering: dayClusterDupes * w.subject_day_clustering,
     teacher_planning: teacherPlanningShortfall * w.teacher_planning,
+    grade_pd_window: pdShortfallMin * w.grade_pd_window,
   };
 
   const total = Object.values(breakdown).reduce((a, b) => a + b, 0);

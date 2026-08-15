@@ -13,6 +13,12 @@
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { CHAR_STRATEGIES, computeSnapshot, type CharSnapshot } from "./_characterization_fixtures.ts";
 
+// DELIBERATE RE-PIN (grade_pd_window, shape only): the breakdown gained a
+// grade_pd_window key for the grade-level PD target. Every OTHER value below
+// is byte-identical to the previous pins because these fixtures set no PD
+// target, so the term measures zero — the safest kind of re-pin. The gate test
+// below asserts the invariants that must hold through any future re-pin.
+//
 // DELIBERATE RE-PIN (wheel_alignment, default-ON wheel mode): the PM's grade
 // "wheel" — every specialist services the SAME grade's classrooms in a time
 // slot so that grade's teachers can meet. The wheel_alignment term (−20 per
@@ -45,7 +51,7 @@ const EXPECTED: Record<string, CharSnapshot> = {
       k_grade_after_780: 0, spec_dayload_stdev: -0.828, class_repeats: -100,
       grade_cohesion: 0, grade_day_spread: -0, wheel_alignment: -480,
       contract_min: 0, subject_gap: 0,
-      subject_day_clustering: -105, teacher_planning: -36,
+      subject_day_clustering: -105, teacher_planning: -36, grade_pd_window: 0,
     },
     hardViolations: 0,
   },
@@ -61,7 +67,7 @@ const EXPECTED: Record<string, CharSnapshot> = {
       k_grade_after_780: -0, spec_dayload_stdev: -1.085, class_repeats: -325,
       grade_cohesion: 0, grade_day_spread: -0, wheel_alignment: -240,
       contract_min: 0, subject_gap: -40,
-      subject_day_clustering: -60, teacher_planning: 0,
+      subject_day_clustering: -60, teacher_planning: 0, grade_pd_window: 0,
     },
     hardViolations: 0,
   },
@@ -77,7 +83,7 @@ const EXPECTED: Record<string, CharSnapshot> = {
       k_grade_after_780: -0, spec_dayload_stdev: -0.986, class_repeats: -325,
       grade_cohesion: 0, grade_day_spread: -0, wheel_alignment: -200,
       contract_min: 0, subject_gap: -40,
-      subject_day_clustering: -105, teacher_planning: 0,
+      subject_day_clustering: -105, teacher_planning: 0, grade_pd_window: 0,
     },
     hardViolations: 0,
   },
@@ -96,7 +102,7 @@ const EXPECTED: Record<string, CharSnapshot> = {
       k_grade_after_780: -20, spec_dayload_stdev: -0.783, class_repeats: -225,
       grade_cohesion: 0, grade_day_spread: -0, wheel_alignment: -740,
       contract_min: 0, subject_gap: 0,
-      subject_day_clustering: -195, teacher_planning: -65.25,
+      subject_day_clustering: -195, teacher_planning: -65.25, grade_pd_window: 0,
     },
     hardViolations: 0,
   },
@@ -112,7 +118,7 @@ const EXPECTED: Record<string, CharSnapshot> = {
       k_grade_after_780: -80, spec_dayload_stdev: -1.095, class_repeats: -225,
       grade_cohesion: 0, grade_day_spread: -0, wheel_alignment: -580,
       contract_min: 0, subject_gap: -40,
-      subject_day_clustering: -180, teacher_planning: -27,
+      subject_day_clustering: -180, teacher_planning: -27, grade_pd_window: 0,
     },
     hardViolations: 0,
   },
@@ -131,6 +137,26 @@ Deno.test("characterization: generation is deterministic (same seed → identica
     const a = computeSnapshot(strategy);
     const b = computeSnapshot(strategy);
     assertEquals(a, b);
+  }
+});
+
+// Re-pin gates. A snapshot may be updated deliberately, but these properties
+// must survive every re-pin — if one of them moves, the change is a REGRESSION
+// and the pin is not the thing to edit.
+Deno.test("characterization: re-pin invariants hold for every strategy", () => {
+  for (const strategy of CHAR_STRATEGIES) {
+    const snap = computeSnapshot(strategy);
+    const b = snap.scoreBreakdown as Record<string, number>;
+    assertEquals(snap.hardViolations, 0, `${strategy}: must stay SSOT-legal`);
+    assertEquals(b.full_week_coverage, 600, `${strategy}: coverage must not drop`);
+    assertEquals(b.errors, 0, `${strategy}: no error-severity warnings`);
+    // A PD/wheel term must never be paid for by manufacturing repeat visits.
+    const pinned = EXPECTED[strategy].scoreBreakdown as Record<string, number>;
+    assertEquals(
+      b.class_repeats,
+      pinned.class_repeats,
+      `${strategy}: class_repeats moved — check the change, don't re-pin it`,
+    );
   }
 });
 
