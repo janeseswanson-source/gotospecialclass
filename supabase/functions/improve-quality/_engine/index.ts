@@ -156,11 +156,14 @@ export function warningOptsFor(school: any): {
   maxTeamOutMinutes: number | null;
   gradePdTargetMinutes: number | null;
   gradePdQuorumPct: number;
+  conflictStrategies: string[];
 } {
   return {
     maxTeamOutMinutes: school?.max_team_out_minutes ?? null,
     gradePdTargetMinutes: school?.grade_pd_enabled === false ? null : (school?.grade_pd_target_minutes ?? null),
     gradePdQuorumPct: school?.grade_pd_quorum_pct ?? 100,
+    conflictStrategies: school?.conflict_strategies
+      ?? (school?.conflict_strategy ? [school.conflict_strategy] : []),
   };
 }
 
@@ -374,6 +377,8 @@ export function computeWarnings(
     maxTeamOutMinutes?: number | null;
     gradePdTargetMinutes?: number | null;
     gradePdQuorumPct?: number | null;
+    /** Active conflict strategies — an A/B split already answers over-rotation. */
+    conflictStrategies?: string[] | null;
   },
 ): Warning[] {
   const warnings: Warning[] = [];
@@ -518,6 +523,33 @@ export function computeWarnings(
           severity: "info",
           message: `Grade ${grade} gets ${w.allOutMin} min of shared PD time (best day ${w.day}) — the target is ${pdTarget} min.`,
           suggestion: "Group that grade's rotations into consecutive blocks on one day, or lower the PD target in School Info.",
+        });
+      }
+    }
+  }
+
+  // grade_over_rotation — a grade with more classes than specialists can't run
+  // as one wheel at all. Reported independently of the PD target (a school may
+  // have PD switched off and still need to know), and suppressed once an A/B
+  // strategy is on, because that IS the fix.
+  if (teachers && teachers.length > 0 && specialists.length > 0) {
+    const usingAbSplit = Array.isArray(opts?.conflictStrategies)
+      && opts!.conflictStrategies!.some((st: string) => st === "ab_week" || st === "aa_bb_week");
+    if (!usingAbSplit) {
+      const RESERVED_G = new Set(["lunch", "planning", "makeup", "all", ""]);
+      const counts = new Map<string, number>();
+      for (const t of teachers) {
+        const g = String(t.grade ?? "").trim();
+        if (!g || RESERVED_G.has(g.toLowerCase())) continue;
+        counts.set(g, (counts.get(g) ?? 0) + 1);
+      }
+      for (const [grade, n] of counts) {
+        if (n <= specialists.length) continue;
+        warnings.push({
+          type: "grade_over_rotation",
+          severity: "info",
+          message: `Grade ${grade} has ${n} classes but only ${specialists.length} specialists, so one rotation can't cover the grade.`,
+          suggestion: `Enable AA/BB Week for Grade ${grade} so the extra class rotates across two weeks.`,
         });
       }
     }

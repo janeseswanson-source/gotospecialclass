@@ -19,6 +19,7 @@ import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, us
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { CONFLICT_STRATEGIES as strategies, getCategoryTheme } from '@/lib/conflictStrategies';
+import { detectOverRotation, describeOverRotation } from '@/lib/overRotation';
 import { StrategyPreviewModal, getStrategyPreviewBlurb } from './conflicts/StrategyPreviewModal';
 
 const allGrades = ['K', '1', '2', '3', '4', '5', '6'];
@@ -467,6 +468,20 @@ const StepConflict = () => {
 
   const unselectedStrategies = strategies.filter(s => !selected.includes(s.key));
 
+  // A grade with more classes than specialists can never run as one wheel —
+  // her 5th grade. Surface it here, where the fix (AA/BB Week) lives.
+  const overRotated = detectOverRotation({ teachers, specialistCount });
+  const applyAaBbFor = (grade: string) => {
+    const strategiesNext = data.conflictStrategies.includes('aa_bb_week')
+      ? data.conflictStrategies
+      : [...data.conflictStrategies, 'aa_bb_week'];
+    const gradesNext = data.conflictGrades.includes(grade)
+      ? data.conflictGrades
+      : [...data.conflictGrades, grade];
+    updateData({ conflictStrategies: strategiesNext, conflictGrades: gradesNext });
+    toast({ title: `AA/BB Week enabled for Grade ${grade}.` });
+  };
+
   return (
     <div className="rounded-xl border border-border bg-card p-6 space-y-6">
       {/* Header */}
@@ -479,6 +494,37 @@ const StepConflict = () => {
         </div>
         <SaveStatusIndicator status={saveStatus} />
       </div>
+
+      {/* Over-rotated grades: more classes than specialists, so no single wave
+          can hold the grade. Naming it here, next to the fix. */}
+      {overRotated.map((f) => {
+        const alreadyHandled =
+          data.conflictStrategies.includes('aa_bb_week') && data.conflictGrades.includes(f.grade);
+        return (
+          <div
+            key={f.grade}
+            className="flex flex-col gap-3 rounded-lg border border-amber-400/50 bg-amber-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between dark:bg-amber-950/20"
+          >
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <div className="text-sm">
+                <p className="font-medium text-foreground">{describeOverRotation(f)}</p>
+                <p className="text-xs text-muted-foreground">
+                  An AA/BB Week schedule splits that grade across two weeks so every class still gets
+                  its rotations — and its teachers can share a PD block.
+                </p>
+              </div>
+            </div>
+            {alreadyHandled ? (
+              <span className="shrink-0 text-xs font-medium text-primary">AA/BB Week enabled ✓</span>
+            ) : (
+              <Button size="sm" className="shrink-0" onClick={() => applyAaBbFor(f.grade)}>
+                Use AA/BB Week for Grade {f.grade}
+              </Button>
+            )}
+          </div>
+        );
+      })}
 
       {/* Post-setup, Prep & Generate is the ONE home for strategy tuning — the
           same picker exists there next to the Generate button, and both edit the

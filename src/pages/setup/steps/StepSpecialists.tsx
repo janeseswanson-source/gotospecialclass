@@ -1436,9 +1436,13 @@ const StepSpecialists = () => {
                   passingTime={(data as any).passingTime ?? 5}
                   recessWindows={(() => {
                     const out: { start: string; end: string; label: string }[] = [];
-                    const cfg = (data as any).n || {};
+                    // `data.n` was a typo for recessConfig, so this list was
+                    // always empty and the PLUS-rotation recess warnings could
+                    // never fire.
+                    const cfg = data.recessConfig || {};
                     for (const band of Object.keys(cfg)) {
-                      const c = cfg[band] || {};
+                      const c = cfg[band];
+                      if (!c) continue;
                       const label = band === 'all' ? '' : ` (${band})`;
                       if (c.amRecessStart && c.amRecessEnd) out.push({ start: c.amRecessStart, end: c.amRecessEnd, label: `AM recess${label}` });
                       if (c.lunchStart && c.lunchEnd) out.push({ start: c.lunchStart, end: c.lunchEnd, label: `lunch${label}` });

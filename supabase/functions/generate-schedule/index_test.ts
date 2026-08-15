@@ -603,3 +603,30 @@ Deno.test("specialistDayWindow: an absurd entry can never invert the window", ()
   assert(w.end >= w.start, "window must never invert");
   assertEquals(w.start, 14 * 60);
 });
+
+// ──────────────────────────────────────────────────────────────────────
+// grade_over_rotation — more classes than specialists (her 5th grade)
+// ──────────────────────────────────────────────────────────────────────
+Deno.test("computeWarnings: grade_over_rotation names the grade that can't fit one wheel", () => {
+  const teachers = [
+    ...["t1", "t2", "t3", "t4", "t5"].map((id) => ({ id, name: id, grade: "5" })),
+    ...["u1", "u2"].map((id) => ({ id, name: id, grade: "3" })),
+  ] as never;
+  const specs = [{ id: "art" }, { id: "pe" }, { id: "tech" }, { id: "mus" }] as never;
+  const blocks = [
+    { generation_id: "g", day_of_week: "Mon", start_time: "09:00", end_time: "09:45", subject: "Art", specialist_id: "art", teacher_id: "t1", grade: "5", room: null, week_label: null },
+  ] as never;
+
+  const w = computeWarnings(blocks, specs, ["3", "5"], teachers, { maxTeamOutMinutes: null });
+  const hits = w.filter((x) => x.type === "grade_over_rotation");
+  assertEquals(hits.length, 1, "only grade 5 exceeds the 4 specialists");
+  assertEquals(hits[0].severity, "info");
+  assert(hits[0].message.includes("Grade 5"));
+  assert(!strategyFailed(hits), "advisory only");
+
+  // An A/B split IS the fix, so stop nagging once it's configured.
+  const withSplit = computeWarnings(blocks, specs, ["3", "5"], teachers, {
+    maxTeamOutMinutes: null, conflictStrategies: ["aa_bb_week"],
+  });
+  assertEquals(withSplit.filter((x) => x.type === "grade_over_rotation").length, 0);
+});
