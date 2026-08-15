@@ -40,6 +40,7 @@ const CoordinatorPrep = lazyWithRetry(() => import("@/pages/setup/CoordinatorPre
 const PrepPage = lazyWithRetry(() => import("@/pages/schedule/PrepPage"));
 const MasterSchedulePage = lazyWithRetry(() => import("@/pages/schedule/MasterSchedulePage"));
 const MasterAdminViewPage = lazyWithRetry(() => import("@/pages/schedule/MasterAdminViewPage"));
+const CompliancePage = lazyWithRetry(() => import("@/pages/schedule/CompliancePage"));
 const SpecialistPlannerPage = lazyWithRetry(() => import("@/pages/schedule/SpecialistPlannerPage"));
 const LessonPlannerPage = lazyWithRetry(() => import("@/pages/schedule/LessonPlannerPage"));
 const ExportsPage = lazyWithRetry(() => import("@/pages/schedule/ExportsPage"));
@@ -100,6 +101,7 @@ const App = () => (
                   <Route path="prep" element={<GatedRoute><PrepPage /></GatedRoute>} />
                   <Route path="schedule" element={<GatedRoute><MasterSchedulePage /></GatedRoute>} />
                   <Route path="admin-view" element={<GatedRoute><MasterAdminViewPage /></GatedRoute>} />
+                  <Route path="compliance" element={<GatedRoute><CompliancePage /></GatedRoute>} />
                   <Route path="planner" element={<GatedRoute><SpecialistPlannerPage /></GatedRoute>} />
                   <Route path="lesson-planner" element={<GatedRoute><LessonPlannerPage /></GatedRoute>} />
                   <Route path="exports" element={<GatedRoute><ExportsPage /></GatedRoute>} />

@@ -51,6 +51,12 @@ const KNOWN_PENDING = new Set<string>([
   "schools.grade_pd_target_minutes",
   "schools.grade_pd_quorum_pct",
   "schools.grade_pd_label",
+  // 20260808060000 — contract compliance (read-only today; the report derives
+  // from schedule data and falls back to the built-in HSTA profile)
+  "schools.contract_profile",
+  "schools.contract_categories",
+  "classroom_teachers.contract_category",
+  "specialists.contract_category",
 ]);
 
 const ADD_COLUMN_RE =
