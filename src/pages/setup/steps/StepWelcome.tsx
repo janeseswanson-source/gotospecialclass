@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { SETUP_PATHS, PREP_SHEET_PATH } from '@/lib/setupPaths';
+import { downloadBlankPrepSheet } from '@/lib/downloadPrepSheet';
 import { SETUP_STEPS } from '../stepIndex';
 import { useSetup } from '@/contexts/SetupContext';
 import { Button } from '@/components/ui/button';
@@ -55,9 +57,9 @@ const StepWelcome = () => {
               <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-primary/15 text-primary"><Sparkles className="h-5 w-5" /></span>
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                  Set up with AI <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold uppercase text-primary-foreground">Recommended</span>
+                  {SETUP_PATHS[0].title} <span className="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold uppercase text-primary-foreground">Recommended</span>
                 </span>
-                <span className="mt-0.5 block text-xs text-muted-foreground">Drop your specialist & teacher rosters — we prefill the wizard for you.</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">{SETUP_PATHS[0].blurb}</span>
               </span>
               <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
             </button>
@@ -71,8 +73,8 @@ const StepWelcome = () => {
             >
               <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-muted text-muted-foreground"><ListChecks className="h-5 w-5" /></span>
               <span className="min-w-0 flex-1">
-                <span className="block text-sm font-semibold text-foreground">Set up step by step</span>
-                <span className="mt-0.5 block text-xs text-muted-foreground">Fill each section yourself — full control, in any order.</span>
+                <span className="block text-sm font-semibold text-foreground">{SETUP_PATHS[1].title}</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">{SETUP_PATHS[1].blurb}</span>
               </span>
               <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-muted-foreground" />
             </button>
@@ -85,21 +87,19 @@ const StepWelcome = () => {
           <div className="flex items-start gap-3">
             <ClipboardList className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-foreground">Prefer to work from a take-in template?</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Download the blank prep sheet, fill it in (or hand it to your specialists), then upload it — AI pre-fills the wizard for you.
-              </p>
+              <p className="text-sm font-medium text-foreground">{PREP_SHEET_PATH.title}</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">{PREP_SHEET_PATH.blurb}</p>
               <div className="mt-1 flex flex-wrap items-center gap-3">
                 <Button
                   variant="link"
                   size="sm"
                   className="h-auto p-0 text-xs"
-                  onClick={() => downloadTemplate('coordinator_prep', '/templates/coordinator_prep_template.pdf')}
+                  onClick={() => downloadBlankPrepSheet(data.schoolName || undefined)}
                 >
-                  <FileDown className="mr-1 h-3 w-3" /> Download blank template
+                  <FileDown className="mr-1 h-3 w-3" /> {PREP_SHEET_PATH.downloadLabel}
                 </Button>
                 <Button asChild variant="link" size="sm" className="h-auto p-0 text-xs">
-                  <Link to="/app/coordinator-prep">Upload filled template →</Link>
+                  <Link to={PREP_SHEET_PATH.uploadHref}>{PREP_SHEET_PATH.uploadLabel} →</Link>
                 </Button>
               </div>
             </div>

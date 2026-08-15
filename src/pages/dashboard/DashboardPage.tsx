@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
+import { SETUP_PATHS, PREP_SHEET_PATH } from '@/lib/setupPaths';
 import { useNavigate } from 'react-router-dom';
-import { CalendarDays, Users, School, BookOpen, Wand2, Download, CreditCard, CheckCircle2, AlertCircle, ShieldCheck, Trash2, ClipboardList, X, Sparkles, Loader2 } from 'lucide-react';
+import { CalendarDays, Users, School, BookOpen, Wand2, Download, CreditCard, CheckCircle2, AlertCircle, ShieldCheck, Trash2, ClipboardList, X, Sparkles, Loader2, ListChecks } from 'lucide-react';
 import OnboardingChecklist from '@/components/dashboard/OnboardingChecklist';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
@@ -302,18 +303,26 @@ const DashboardPage = () => {
           </div>
           <h2 className="text-lg font-bold text-foreground">Welcome to Specialist Ops!</h2>
           <p className="mt-2 max-w-md mx-auto text-sm text-muted-foreground">
-            There are two ways to set up — pick whichever feels easier. Either one gets you to your first schedule in minutes.
+            Two ways to set up — pick whichever feels easier. Either one gets you to your first schedule in minutes.
           </p>
+          {/* Same two paths the wizard offers, worded identically (setupPaths.ts).
+              The dashboard used to omit the AI path entirely. */}
           <div className="mt-5 flex flex-col sm:flex-row items-stretch justify-center gap-3 max-w-xl mx-auto">
             <Link to="/app/setup" className="flex-1 inline-flex flex-col items-center gap-1 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors">
-              <span className="inline-flex items-center gap-2"><Wand2 className="h-4 w-4" /> Set up on screen</span>
-              <span className="text-[11px] font-normal opacity-90">Click through the guided wizard</span>
+              <span className="inline-flex items-center gap-2"><Wand2 className="h-4 w-4" /> {SETUP_PATHS[0].title}</span>
+              <span className="text-[11px] font-normal opacity-90">{SETUP_PATHS[0].blurb}</span>
             </Link>
-            <Link to="/app/coordinator-prep" className="flex-1 inline-flex flex-col items-center gap-1 rounded-lg border border-primary/40 bg-card px-6 py-3 text-sm font-medium text-primary hover:bg-primary/5 transition-colors">
-              <span className="inline-flex items-center gap-2"><ClipboardList className="h-4 w-4" /> Use the paper template</span>
-              <span className="text-[11px] font-normal text-muted-foreground">Print, fill by hand, upload — AI does the rest</span>
+            <Link to="/app/setup" className="flex-1 inline-flex flex-col items-center gap-1 rounded-lg border border-primary/40 bg-card px-6 py-3 text-sm font-medium text-primary hover:bg-primary/5 transition-colors">
+              <span className="inline-flex items-center gap-2"><ListChecks className="h-4 w-4" /> {SETUP_PATHS[1].title}</span>
+              <span className="text-[11px] font-normal text-muted-foreground">{SETUP_PATHS[1].blurb}</span>
             </Link>
           </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            {PREP_SHEET_PATH.title}{' '}
+            <Link to={PREP_SHEET_PATH.uploadHref} className="text-primary underline underline-offset-2 hover:opacity-80">
+              {PREP_SHEET_PATH.uploadLabel}
+            </Link>
+          </p>
           <p className="mt-4 text-xs text-muted-foreground">
             Not sure what you'll get?{" "}
             <SampleSchedulePreview
